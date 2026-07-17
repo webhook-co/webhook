@@ -93,11 +93,19 @@ export interface EndpointsListFilters {
 /** Filters for `events.list`. */
 export interface EventsListFilters {
   readonly limit?: number;
+  /** Drill into ONE endpoint. Omit for the whole org (the canonical route's default). */
+  readonly endpointId?: string;
   readonly provider?: readonly Provider[];
   readonly verificationState?: readonly VerificationState[];
   readonly receivedAfter?: string;
   readonly receivedBefore?: string;
   readonly search?: string;
+  /** Multi-select captured HTTP method (GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS). */
+  readonly method?: readonly string[];
+  /** Multi-select dedup strategy. */
+  readonly dedupStrategy?: readonly string[];
+  /** Exact match on the normalized, provider-derived event type. */
+  readonly eventType?: string;
 }
 
 /** Filters for `deliveries.list`. */
@@ -273,11 +281,67 @@ class EndpointsResource {
   }
 }
 
+/**
+ * Guard the two silent footguns of the org-wide migration, so a caller who believes they scoped to one
+ * endpoint never silently gets the WHOLE org back:
+ *   1. `list`/`listPage` used to take `(endpointId, filters)`; they now take `(filters)`. A TypeScript caller
+ *      gets a compile error, but an UNTYPED JS caller still passing a string id would have it bound to
+ *      `filters` — undefined endpointId → a silent whole-org list. Reject a string arg with the migration.
+ *   2. `{ endpointId: "" }` (an empty/blank id from an unset env var, empty config field, blank input) would
+ *      ride through as `?endpointId=` and be dropped server-side to a whole-org list. Reject it fail-fast.
+ */
+function validateEventsListArg(arg: unknown, method: string): void {
+  if (typeof arg === "string") {
+    throw new TypeError(
+      `events.${method}() no longer takes an endpoint id as its first argument — pass an options ` +
+        `object instead: events.${method}({ endpointId: "${arg}" }), or events.${method}() for the whole org.`,
+    );
+  }
+  const endpointId = (arg as EventsListFilters | undefined)?.endpointId;
+  if (typeof endpointId === "string" && endpointId.trim() === "") {
+    throw new TypeError(
+      `events.${method}(): endpointId is an empty string — omit it to list the whole org, or pass a ` +
+        `real endpoint id.`,
+    );
+  }
+}
+
+/**
+ * The deprecated by-endpoint methods take the endpoint id as a POSITIONAL argument and build the path from
+ * it. Since `endpointId` now also exists on the shared EventsListFilters, a caller could put it in BOTH the
+ * positional and the filter object; the filter one would be silently ignored (filterQuery never reads it).
+ * Reject that ambiguity, and an empty positional id, rather than scoping to the wrong (or a malformed)
+ * endpoint.
+ */
+function assertByEndpointArgs(
+  endpointId: string,
+  filters: EventsListFilters,
+  method: string,
+): void {
+  // typeof guard first: an untyped JS caller passing undefined/null must get this friendly message, not a
+  // raw "cannot read .trim of undefined" (matches validateEventsListArg's string-arg handling).
+  if (typeof endpointId !== "string" || endpointId.trim() === "") {
+    throw new TypeError(
+      `events.${method}(): endpointId (the first argument) must be a non-empty endpoint id.`,
+    );
+  }
+  if (filters.endpointId !== undefined) {
+    throw new TypeError(
+      `events.${method}() takes the endpoint id as its FIRST argument — don't also set it in filters ` +
+        `(it would be ignored). Use list({ endpointId }) for the canonical route instead.`,
+    );
+  }
+}
+
 class EventsResource {
   constructor(private readonly req: Requester) {}
 
-  private path(endpointId: string, filters: EventsListFilters, cursor: string | undefined): string {
-    return withQuery(`/v1/endpoints/${enc(endpointId)}/events`, {
+  /** The shared filter → query mapping (everything except the route + endpointId placement). */
+  private filterQuery(
+    filters: EventsListFilters,
+    cursor: string | undefined,
+  ): Record<string, QueryValue> {
+    return {
       cursor,
       limit: filters.limit,
       provider: filters.provider as readonly string[] | undefined,
@@ -285,20 +349,55 @@ class EventsResource {
       receivedAfter: filters.receivedAfter,
       receivedBefore: filters.receivedBefore,
       search: filters.search,
-    } satisfies Record<string, QueryValue>);
+      method: filters.method,
+      dedupStrategy: filters.dedupStrategy,
+      eventType: filters.eventType,
+    } satisfies Record<string, QueryValue>;
   }
 
-  /** Auto-paginating iterator over an endpoint's captured events. */
-  list(endpointId: string, filters: EventsListFilters = {}): Paginator<EventSummary> {
-    return this.req.paginate<EventSummary>((cursor) => this.path(endpointId, filters, cursor));
+  /** The CANONICAL route: org-wide by default, or one endpoint via `filters.endpointId`. */
+  private canonicalPath(filters: EventsListFilters, cursor: string | undefined): string {
+    return withQuery(`/v1/events`, {
+      endpointId: filters.endpointId,
+      ...this.filterQuery(filters, cursor),
+    });
   }
 
-  /** A single page of an endpoint's events. */
-  listPage(
+  /** Auto-paginating iterator over captured events — org-wide, or `{ endpointId }` for one endpoint. */
+  list(filters: EventsListFilters = {}): Paginator<EventSummary> {
+    validateEventsListArg(filters, "list");
+    return this.req.paginate<EventSummary>((cursor) => this.canonicalPath(filters, cursor));
+  }
+
+  /** A single page of captured events — org-wide, or `{ endpointId }` for one endpoint. */
+  listPage(params: EventsListFilters & { cursor?: string } = {}): Promise<Page<EventSummary>> {
+    validateEventsListArg(params, "listPage");
+    return this.req.get<Page<EventSummary>>(this.canonicalPath(params, params.cursor));
+  }
+
+  /**
+   * @deprecated Use {@link list} with `{ endpointId }`. Hits the deprecated nested route
+   * `GET /v1/endpoints/{endpointId}/events`; the canonical `list({ endpointId })` is preferred.
+   */
+  listByEndpoint(endpointId: string, filters: EventsListFilters = {}): Paginator<EventSummary> {
+    assertByEndpointArgs(endpointId, filters, "listByEndpoint");
+    return this.req.paginate<EventSummary>((cursor) =>
+      withQuery(`/v1/endpoints/${enc(endpointId)}/events`, this.filterQuery(filters, cursor)),
+    );
+  }
+
+  /**
+   * @deprecated Use {@link listPage} with `{ endpointId }`. Hits the deprecated nested route
+   * `GET /v1/endpoints/{endpointId}/events`; the canonical `listPage({ endpointId })` is preferred.
+   */
+  listPageByEndpoint(
     endpointId: string,
     params: EventsListFilters & { cursor?: string } = {},
   ): Promise<Page<EventSummary>> {
-    return this.req.get<Page<EventSummary>>(this.path(endpointId, params, params.cursor));
+    assertByEndpointArgs(endpointId, params, "listPageByEndpoint");
+    return this.req.get<Page<EventSummary>>(
+      withQuery(`/v1/endpoints/${enc(endpointId)}/events`, this.filterQuery(params, params.cursor)),
+    );
   }
 
   /** A single event in full fidelity. */

@@ -1,4 +1,10 @@
-import { CAPABILITIES, CAPABILITY_REGISTRY, requiredSurfaces } from "@webhook-co/contract";
+import {
+  CAPABILITIES,
+  CAPABILITY_REGISTRY,
+  eventsList,
+  requiredSurfaces,
+} from "@webhook-co/contract";
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import { ROUTES, matchRoute, pathParamNames, type RouteDef, type DispatchKind } from "./routes.js";
@@ -32,17 +38,63 @@ const VALID_DISPATCH: readonly DispatchKind[] = [
 ];
 
 describe("ROUTES manifest — the single source of HTTP truth", () => {
-  it("binds exactly one route per API-surface capability (bijection, no gaps, no dupes)", () => {
+  it("binds exactly one CANONICAL route per API-surface capability (aliases excluded)", () => {
     const apiCapabilities = CAPABILITIES.filter((c) => requiredSurfaces(c).includes("api"))
       .map((c) => c.name)
       .sort();
-    const routeCapabilities = ROUTES.map((r) => r.capability)
+    // Bijection over CANONICAL routes only — an alias is a second HTTP shape for a capability that already
+    // has a canonical route, so it must NOT count here (else it reads as a duplicate binding).
+    const canonicalCapabilities = ROUTES.filter((r) => !r.alias)
+      .map((r) => r.capability)
       .filter((c): c is string => c !== null)
       .sort();
-    // No capability is bound twice.
-    expect(new Set(routeCapabilities).size).toBe(routeCapabilities.length);
-    // Every API capability has a route, and every capability-route names a real capability.
-    expect(routeCapabilities).toEqual(apiCapabilities);
+    // No capability has two CANONICAL routes.
+    expect(new Set(canonicalCapabilities).size).toBe(canonicalCapabilities.length);
+    // Every API capability has exactly one canonical route, and every canonical route names a real capability.
+    expect(canonicalCapabilities).toEqual(apiCapabilities);
+  });
+
+  it("every events.list filter facet is exposed as an API query param (HTTP-route half of the parity guard)", () => {
+    // Four-surface parity for FILTERS, the HTTP-ROUTE half. This asserts every field in the contract's
+    // `filter` object appears as a `filter.<field>` query param on BOTH events routes. The OTHER surfaces are
+    // guarded elsewhere: MCP takes the input shape verbatim (structural — can't miss a facet); the CLI has
+    // its own completeness+executable guard (packages/cli events.test.ts, "exposes a CLI flag for every
+    // contract events.list filter facet"). Together these stop a facet shipping on some surfaces only.
+    const filterSchema = (eventsList.input as z.ZodObject).shape
+      .filter as z.ZodOptional<z.ZodObject>;
+    const filterFacets = Object.keys(filterSchema.unwrap().shape);
+    expect(filterFacets.length).toBeGreaterThanOrEqual(8); // provider…eventType — a floor, not a magic number
+    for (const route of ROUTES.filter((r) => r.capability === "events.list")) {
+      const exposed = new Set(
+        (route.query ?? [])
+          .map((q) => q.schemaFrom)
+          .filter((s) => s.startsWith("filter."))
+          .map((s) => s.slice("filter.".length)),
+      );
+      for (const facet of filterFacets) {
+        expect(
+          exposed.has(facet),
+          `filter.${facet} not exposed on ${route.method} ${route.path}`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("every ALIAS names a capability with a canonical route, is deprecated, and has its own operationId", () => {
+    const canonical = new Set(
+      ROUTES.filter((r) => !r.alias && r.capability !== null).map((r) => r.capability),
+    );
+    const aliases = ROUTES.filter((r) => r.alias);
+    // The feature exists (the deprecated nested events route) — guard against the marker silently vanishing.
+    expect(aliases.length).toBeGreaterThan(0);
+    for (const r of aliases) {
+      expect(r.capability, `alias ${r.method} ${r.path} must name a capability`).not.toBeNull();
+      expect(canonical.has(r.capability!), `alias ${r.path} → no canonical route`).toBe(true);
+      expect(r.deprecated, `alias ${r.path} must be deprecated`).toBe(true);
+      // An explicit operationId, distinct from the capability-derived one its canonical route uses, so the
+      // two operations don't collide in the generated spec / SDK.
+      expect(r.operationId, `alias ${r.path} needs an explicit operationId`).toBeTruthy();
+    }
   });
 
   it("includes the scope-free whoami identity route (capability null, dispatch whoami)", () => {
@@ -98,9 +150,31 @@ describe("matchRoute — routing + input construction (ported behavior)", () => 
     expect(match("GET", "/v1/endpoints?name=")?.input).toEqual({});
   });
 
-  it("GET /v1/endpoints/:id/events → events.list with a multi-select provider filter", () => {
+  it("GET /v1/events → canonical events.list, org-wide (no endpointId) with filters", () => {
+    const m = match("GET", "/v1/events?provider=stripe&method=GET");
+    expect(m?.def.capability).toBe("events.list");
+    expect(m?.def.alias).toBeFalsy(); // the canonical route, not the alias
+    // No endpointId → org-wide browse.
+    expect(m?.input).toEqual({ filter: { provider: ["stripe"], method: ["GET"] } });
+  });
+
+  it("GET /v1/events?endpointId= → canonical events.list; a valid id drills in, a present-but-empty one is passed through (→ 400)", () => {
+    expect(match("GET", `/v1/events?endpointId=${EP}&provider=github`)?.input).toEqual({
+      endpointId: EP,
+      filter: { provider: ["github"] },
+    });
+    // A PRESENT-but-empty ?endpointId= is passed through (NOT silently dropped to org-wide) so the contract
+    // 400s it — otherwise a caller who meant to scope to one endpoint silently gets the whole org.
+    expect(match("GET", "/v1/events?endpointId=")?.input).toEqual({ endpointId: "" });
+    // Only an ABSENT endpointId means org-wide.
+    expect(match("GET", "/v1/events")?.input).toEqual({});
+  });
+
+  it("GET /v1/endpoints/:id/events → the DEPRECATED alias route (endpointId from the path)", () => {
     const m = match("GET", `/v1/endpoints/${EP}/events?provider=stripe&provider=github`);
     expect(m?.def.capability).toBe("events.list");
+    expect(m?.def.alias).toBe(true);
+    expect(m?.def.deprecated).toBe(true);
     expect(m?.input).toEqual({ endpointId: EP, filter: { provider: ["stripe", "github"] } });
   });
 

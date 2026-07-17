@@ -42,6 +42,7 @@ import {
   listDeliveries,
   listEndpoints,
   listEvents,
+  listOrgEvents,
   readUsageSummary,
   resolveSince,
   tailEvents,
@@ -196,7 +197,8 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
   handlers.set(eventsList.name, async (ctx, input) => {
     ensureScope(ctx, eventsList);
     const { endpointId, cursor, limit, filter } = parse(eventsList, input) as {
-      endpointId: string;
+      // OPTIONAL: absent = org-wide (every endpoint in the org, RLS-scoped); present = drill down to one.
+      endpointId?: string;
       cursor?: string;
       limit?: number;
       filter?: {
@@ -220,30 +222,38 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     const receivedAfter = resolveReceivedAfter(filter?.receivedAfter);
     const receivedBefore = toInstantBound(filter?.receivedBefore, "receivedBefore");
     const decoded = await decode(cursor);
+    // The filter half of the browse is identical org-wide vs endpoint-scoped; only endpointId + the
+    // existence gate + the (endpoint-only) headCursor differ.
+    const browseFilters = {
+      cursor: decoded,
+      limit,
+      provider,
+      receivedAfter,
+      receivedBefore,
+      verificationState,
+      search: filter?.search,
+      // A typed cast, NOT `as never`: the value is contract-validated to the DedupStrategy enum, and this
+      // keeps that contract legible instead of silencing the checker (which would also mask a real
+      // regression if the contract validation were ever dropped). The security review flagged the smell.
+      dedupStrategy: asArray(filter?.dedupStrategy) as DedupStrategy[] | undefined,
+      method: asArray(filter?.method),
+      eventType: filter?.eventType,
+    };
     const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
-      // Distinguish "no such endpoint for this org" (NOT_FOUND) from "endpoint with no events".
-      // includeDeleted (ADR-0076): a soft-deleted endpoint's captured events are RETAINED + stay
+      if (endpointId === undefined) {
+        // ORG-WIDE browse: no endpoint to gate on, so no existence check (RLS supplies the org boundary),
+        // and NO headCursor — it's the resume position for the endpoint-scoped events.tail, meaningless
+        // for an org-wide feed (the contract already declares headCursor optional).
+        return { page: await listOrgEvents(tx, browseFilters), headCursor: null };
+      }
+      // ENDPOINT drill-down. Distinguish "no such endpoint for this org" (NOT_FOUND) from "endpoint with no
+      // events". includeDeleted (ADR-0076): a soft-deleted endpoint's captured events are RETAINED + stay
       // listable by id — so the existence gate resolves a deleted endpoint (endpoints.list hides it).
       const endpoint = await getEndpoint(tx, endpointId, { includeDeleted: true });
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
-      const browsed = await listEvents(tx, {
-        endpointId,
-        cursor: decoded,
-        limit,
-        provider,
-        receivedAfter,
-        receivedBefore,
-        verificationState,
-        search: filter?.search,
-        // A typed cast, NOT `as never`: the value is contract-validated to the DedupStrategy enum, and this
-        // keeps that contract legible instead of silencing the checker (which would also mask a real
-        // regression if the contract validation were ever dropped). The security review flagged the smell.
-        dedupStrategy: asArray(filter?.dedupStrategy) as DedupStrategy[] | undefined,
-        method: asArray(filter?.method),
-        eventType: filter?.eventType,
-      });
-      // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
-      // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).
+      const browsed = await listEvents(tx, { endpointId, ...browseFilters });
+      // A newest-first browse; surface the watermark-bounded head as a resumable checkpoint (caughtUp/lag
+      // are forward-tail concepts and don't apply to a DESC browse).
       return { page: browsed, headCursor: await latestTailCursor(tx, { endpointId }) };
     });
     return {

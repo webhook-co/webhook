@@ -28,8 +28,8 @@ console.log(endpoint.ingestUrl);
 // rotate (rotating would revoke the live URL and break every sender still posting to it).
 const { ingestUrl } = await webhook.endpoints.revealIngestUrl(endpoint.id);
 
-// List events for that endpoint (auto-paginates).
-for await (const event of webhook.events.list(endpoint.id)) {
+// List events for that endpoint (auto-paginates). Omit `endpointId` to list the whole org.
+for await (const event of webhook.events.list({ endpointId: endpoint.id })) {
   console.log(event.id, event.provider, event.verificationState);
 }
 ```

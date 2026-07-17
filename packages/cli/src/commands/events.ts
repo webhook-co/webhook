@@ -1,6 +1,12 @@
 import { buildCommand } from "@stricli/core";
 import { SEARCH_MIN_LENGTH } from "@webhook-co/contract";
-import { bytesToB64, PROVIDERS, VERIFICATION_STATES } from "@webhook-co/shared";
+import {
+  bytesToB64,
+  DEDUP_STRATEGIES,
+  HTTP_METHODS,
+  PROVIDERS,
+  VERIFICATION_STATES,
+} from "@webhook-co/shared";
 
 import { ENV_DASHBOARD_URL_VAR, resolveDashboardUrl } from "../api-client.js";
 import type { AppContext } from "../context.js";
@@ -37,11 +43,15 @@ interface ListFlags extends GlobalFlags {
   before?: string;
   status?: (typeof VERIFICATION_STATES)[number][];
   search?: string;
+  method?: (typeof HTTP_METHODS)[number][];
+  dedupStrategy?: (typeof DEDUP_STRATEGIES)[number][];
+  eventType?: string;
 }
 
 type GetFlags = GlobalFlags;
 
-export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
+// endpointId is an OPTIONAL positional: omit it for the whole org, pass it to drill into one endpoint.
+export const eventsListCommand = buildCommand<ListFlags, [string | undefined], AppContext>({
   async func(this: AppContext, flags, endpointId) {
     const client = await authedClient(this, flags);
     if (client instanceof NotLoggedInError) return client;
@@ -56,6 +66,9 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
           receivedBefore: flags.before,
           verificationState: flags.status,
           search: flags.search,
+          method: flags.method,
+          dedupStrategy: flags.dedupStrategy,
+          eventType: flags.eventType,
         }),
       { cursor: flags.cursor, all: flags.all },
     );
@@ -65,7 +78,22 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
     positional: {
       kind: "tuple",
       parameters: [
-        { parse: (value: string) => value, brief: "the endpoint id", placeholder: "endpointId" },
+        {
+          // Reject an explicitly-EMPTY endpointId (a usage error → a footgun, e.g. `events list "$EP"` with
+          // an unset shell var, which would otherwise silently list the WHOLE org). Omitting the argument
+          // entirely is the intended org-wide path and never reaches this parser.
+          parse: (value: string) => {
+            if (value.trim() === "") {
+              throw new Error(
+                "endpointId is empty — omit it entirely to list the whole org, or pass a real endpoint id.",
+              );
+            }
+            return value;
+          },
+          brief: "the endpoint id (omit for the whole org)",
+          placeholder: "endpointId",
+          optional: true,
+        },
       ],
     },
     flags: {
@@ -133,9 +161,38 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
           "substring (min 3 chars) over the provider event id + dedup key, or an exact event id (uuid)",
         optional: true,
       },
+      method: {
+        kind: "enum",
+        values: HTTP_METHODS,
+        brief: "filter by captured HTTP method (repeatable / comma-separated for multi-select)",
+        variadic: ",",
+        optional: true,
+      },
+      dedupStrategy: {
+        kind: "enum",
+        values: DEDUP_STRATEGIES,
+        brief: "filter by dedup strategy (repeatable / comma-separated for multi-select)",
+        variadic: ",",
+        optional: true,
+      },
+      eventType: {
+        kind: "parsed",
+        // Reject an explicitly-empty value (e.g. `--event-type "$T"` with $T unset) rather than forwarding
+        // `?eventType=`, which the server drops to NO filter — the operator would read the unfiltered list as
+        // if it were scoped. Mirrors the endpointId positional + the --search floor.
+        parse: (value: string) => {
+          if (value.trim() === "") {
+            throw new Error("--event-type is empty — omit it, or pass a real event type.");
+          }
+          return value;
+        },
+        brief:
+          "exact match on the normalized event type (e.g. charge.succeeded); only parsed for some providers",
+        optional: true,
+      },
     },
   },
-  docs: { brief: "list captured events for an endpoint" },
+  docs: { brief: "list captured events across the org, or for one endpoint" },
 });
 
 export const eventsGetCommand = buildCommand<GetFlags, [string], AppContext>({

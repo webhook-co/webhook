@@ -234,7 +234,11 @@ export const endpointsRevealIngestUrl = defineCapability({
 export const eventsList = defineCapability({
   name: "events.list",
   input: z.object({
-    endpointId: uuid,
+    // OPTIONAL: absent = the ORG-WIDE browse (every endpoint in the caller's org, RLS-scoped); present =
+    // drill down to one endpoint (and the handler's existence gate then 404s an unknown/other-org id). The
+    // canonical route is `GET /v1/events?endpointId=`; `GET /v1/endpoints/{endpointId}/events` is a
+    // deprecated alias that supplies endpointId from the path. Shape-validated (a uuid) when present.
+    endpointId: uuid.optional(),
     cursor: cursor.optional(),
     limit: z.number().int().positive().max(200).optional(),
     // All filter fields are optional and AND together. `provider` is index-covered

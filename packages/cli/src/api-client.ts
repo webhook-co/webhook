@@ -166,7 +166,7 @@ export interface EndpointsListParams extends ListParams {
   readonly name?: string;
 }
 
-/** events.list adds optional provider + received-at range + verification-state + search filters. */
+/** events.list adds optional provider + received-at range + verification-state + search + facet filters. */
 export interface EventsListParams extends ListParams {
   /** Multi-select — each value rides as a repeated `?provider=` query param. */
   readonly provider?: readonly string[];
@@ -175,6 +175,12 @@ export interface EventsListParams extends ListParams {
   /** Multi-select — each value rides as a repeated `?verificationState=` query param. */
   readonly verificationState?: readonly string[];
   readonly search?: string;
+  /** Multi-select captured HTTP method (`?method=`). */
+  readonly method?: readonly string[];
+  /** Multi-select dedup strategy (`?dedupStrategy=`). */
+  readonly dedupStrategy?: readonly string[];
+  /** Exact event-type match (`?eventType=`). */
+  readonly eventType?: string;
 }
 
 /** deliveries.list adds optional destination / subscription / status (multi-select) filters. */
@@ -250,8 +256,14 @@ export interface ApiClient {
     endpointId: string;
     secretId: string;
   }): Promise<RevokedProviderSecret>;
-  /** A page of an endpoint's captured events (`GET /v1/endpoints/:id/events`). */
-  eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
+  /**
+   * A page of captured events via the canonical `GET /v1/events` — org-wide when `endpointId` is undefined,
+   * or drilled to one endpoint via `?endpointId=` when given.
+   */
+  eventsList(
+    endpointId: string | undefined,
+    params?: EventsListParams,
+  ): Promise<Page<EventSummary>>;
   /** A single event in full fidelity by id (`GET /v1/events/:id`). */
   eventsGet(eventId: string): Promise<Event>;
   eventsDelete(eventId: string): Promise<DeletedEvent>;
@@ -559,7 +571,10 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       );
     },
     async eventsList(endpointId, params = {}): Promise<Page<EventSummary>> {
-      const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/events`, {
+      // The CANONICAL route: org-wide by default, drilled to one endpoint via ?endpointId= (withQuery drops
+      // it when undefined). The nested /v1/endpoints/{id}/events is a deprecated alias we no longer call.
+      const path = withQuery(`/v1/events`, {
+        endpointId,
         cursor: params.cursor,
         limit: params.limit,
         provider: params.provider,
@@ -567,6 +582,9 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         receivedBefore: params.receivedBefore,
         verificationState: params.verificationState,
         search: params.search,
+        method: params.method,
+        dedupStrategy: params.dedupStrategy,
+        eventType: params.eventType,
       });
       return parseOrThrow(eventsListCap.output, await getJson(path), "events");
     },

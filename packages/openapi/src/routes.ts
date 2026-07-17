@@ -69,6 +69,21 @@ export interface RouteDef {
   /** One-line OpenAPI summary. */
   readonly summary: string;
   readonly query?: readonly QueryParamDef[];
+  /**
+   * An ALIAS route: a second HTTP shape for a capability that also has a CANONICAL route. Kept for
+   * backward compatibility (published SDKs / hardcoded URLs) while the canonical form is preferred. Excluded
+   * from the one-canonical-route-per-capability bijection; every alias must name a capability that HAS a
+   * canonical route. Aliases carry `deprecated: true` and an explicit `operationId` (so the two routes don't
+   * collide on the capability-derived one).
+   */
+  readonly alias?: boolean;
+  /** Emit `deprecated: true` on the generated OpenAPI operation (and thus the SDK method). */
+  readonly deprecated?: boolean;
+  /**
+   * Override the generated operationId (→ SDK method name). Defaults to the capability-derived name
+   * (`events.list` → `eventsList`). REQUIRED on an alias, so the alias and its canonical route stay unique.
+   */
+  readonly operationId?: string;
   /** Construct the capability input from the matched path params + the query string. */
   readonly buildInput: (
     params: Readonly<Record<string, string>>,
@@ -112,6 +127,97 @@ const PAGINATION_QUERY: readonly QueryParamDef[] = [
   },
   { name: "limit", description: "Max items to return (1–200, default 50).", schemaFrom: "limit" },
 ];
+
+/**
+ * The events.list filter query params — shared by the canonical `GET /v1/events` and the deprecated nested
+ * alias so the two routes describe an identical filter surface (they differ only in where endpointId comes
+ * from). Every facet the contract's `filter` accepts appears here; a facet added to the contract but not to
+ * this list would ship on web only — the four-surface parity matrix test guards against that.
+ */
+const EVENT_FILTER_QUERY: readonly QueryParamDef[] = [
+  {
+    name: "provider",
+    multi: true,
+    description: "Filter by provider (repeatable).",
+    schemaFrom: "filter.provider",
+  },
+  {
+    name: "verificationState",
+    multi: true,
+    description:
+      "Filter by verification state: verified | authenticated | failed | unattempted (repeatable).",
+    schemaFrom: "filter.verificationState",
+  },
+  {
+    name: "receivedAfter",
+    description:
+      "Inclusive lower bound: an RFC 3339 instant, a relative duration (7d / 30m — the last N), or `beginning`.",
+    schemaFrom: "filter.receivedAfter",
+  },
+  {
+    name: "receivedBefore",
+    description: "Exclusive upper bound (RFC 3339 instant).",
+    schemaFrom: "filter.receivedBefore",
+  },
+  {
+    name: "search",
+    description:
+      "Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id.",
+    schemaFrom: "filter.search",
+  },
+  {
+    name: "dedupStrategy",
+    multi: true,
+    description:
+      "Filter by dedup strategy: sw_webhook_id | provider_event_id | content_hash | fields | unique (repeatable).",
+    schemaFrom: "filter.dedupStrategy",
+  },
+  {
+    name: "method",
+    multi: true,
+    description:
+      "Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable).",
+    schemaFrom: "filter.method",
+  },
+  {
+    name: "eventType",
+    description:
+      "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value.",
+    schemaFrom: "filter.eventType",
+  },
+];
+
+/**
+ * Build the events.list input (pagination + the AND'd filter) from the query, onto a base (which carries
+ * endpointId — from the path on the nested alias, from the query on the canonical route, or absent for the
+ * org-wide browse). Drops empty/whitespace params so a cleared filter never trips the contract's `.min(1)`.
+ */
+function eventListInput(
+  q: URLSearchParams,
+  base: Record<string, unknown>,
+): Record<string, unknown> {
+  const input = listInput(q, base);
+  const filter: Record<string, unknown> = {};
+  const providers = q.getAll("provider").filter((p) => p !== "");
+  if (providers.length > 0) filter.provider = providers;
+  const receivedAfter = q.get("receivedAfter");
+  if (receivedAfter) filter.receivedAfter = receivedAfter;
+  const receivedBefore = q.get("receivedBefore");
+  if (receivedBefore) filter.receivedBefore = receivedBefore;
+  const verificationStates = q.getAll("verificationState").filter((s) => s !== "");
+  if (verificationStates.length > 0) filter.verificationState = verificationStates;
+  // A whitespace-only / empty search means "no search" (the contract trims + min(1)s it).
+  const search = q.get("search");
+  if (search && search.trim() !== "") filter.search = search;
+  const dedupStrategies = q.getAll("dedupStrategy").filter((d) => d !== "");
+  if (dedupStrategies.length > 0) filter.dedupStrategy = dedupStrategies;
+  const methods = q.getAll("method").filter((m) => m !== "");
+  if (methods.length > 0) filter.method = methods;
+  const eventType = q.get("eventType");
+  if (eventType && eventType.trim() !== "") filter.eventType = eventType;
+  if (Object.keys(filter).length > 0) input.filter = filter;
+  return input;
+}
 
 // ── the manifest ────────────────────────────────────────────────────────────────────────────────
 
@@ -244,90 +350,50 @@ export const ROUTES: readonly RouteDef[] = [
   },
   // ── events.* ──────────────────────────────────────────────────────────────────────────────────
   {
+    // CANONICAL events list: org-wide by default, or drilled to one endpoint via `?endpointId=`. This is the
+    // preferred route and owns the `eventsList` operationId (→ SDK method). The nested route below is a
+    // deprecated alias kept for backward compatibility.
     method: "GET",
-    path: "/v1/endpoints/{endpointId}/events",
+    path: "/v1/events",
     capability: "events.list",
     successStatus: 200,
     dispatch: "shared",
     body: false,
-    summary: "List captured events for an endpoint",
+    summary: "List captured events across the org (optionally one endpoint)",
     query: [
       ...PAGINATION_QUERY,
       {
-        name: "provider",
-        multi: true,
-        description: "Filter by provider (repeatable).",
-        schemaFrom: "filter.provider",
+        name: "endpointId",
+        description: "Drill down to one endpoint (a uuid). Omit for the whole org.",
+        schemaFrom: "endpointId",
       },
-      {
-        name: "verificationState",
-        multi: true,
-        description:
-          "Filter by verification state: verified | authenticated | failed | unattempted (repeatable).",
-        schemaFrom: "filter.verificationState",
-      },
-      {
-        name: "receivedAfter",
-        description:
-          "Inclusive lower bound: an RFC 3339 instant, a relative duration (7d / 30m — the last N), or `beginning`.",
-        schemaFrom: "filter.receivedAfter",
-      },
-      {
-        name: "receivedBefore",
-        description: "Exclusive upper bound (RFC 3339 instant).",
-        schemaFrom: "filter.receivedBefore",
-      },
-      {
-        name: "search",
-        description:
-          "Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id.",
-        schemaFrom: "filter.search",
-      },
-      {
-        name: "dedupStrategy",
-        multi: true,
-        description:
-          "Filter by dedup strategy: sw_webhook_id | provider_event_id | content_hash | fields | unique (repeatable).",
-        schemaFrom: "filter.dedupStrategy",
-      },
-      {
-        name: "method",
-        multi: true,
-        description:
-          "Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable).",
-        schemaFrom: "filter.method",
-      },
-      {
-        name: "eventType",
-        description:
-          "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value.",
-        schemaFrom: "filter.eventType",
-      },
+      ...EVENT_FILTER_QUERY,
     ],
-    buildInput: (params, q) => {
-      const input = listInput(q, { endpointId: params.endpointId });
-      const filter: Record<string, unknown> = {};
-      // Multi-select: repeated params → an array; drop empties so a cleared filter never 400s multiEnum.
-      const providers = q.getAll("provider").filter((p) => p !== "");
-      if (providers.length > 0) filter.provider = providers;
-      const receivedAfter = q.get("receivedAfter");
-      if (receivedAfter) filter.receivedAfter = receivedAfter;
-      const receivedBefore = q.get("receivedBefore");
-      if (receivedBefore) filter.receivedBefore = receivedBefore;
-      const verificationStates = q.getAll("verificationState").filter((s) => s !== "");
-      if (verificationStates.length > 0) filter.verificationState = verificationStates;
-      // A whitespace-only / empty search means "no search" (the contract trims + min(1)s it).
-      const search = q.get("search");
-      if (search && search.trim() !== "") filter.search = search;
-      const dedupStrategies = q.getAll("dedupStrategy").filter((d) => d !== "");
-      if (dedupStrategies.length > 0) filter.dedupStrategy = dedupStrategies;
-      const methods = q.getAll("method").filter((m) => m !== "");
-      if (methods.length > 0) filter.method = methods;
-      const eventType = q.get("eventType");
-      if (eventType && eventType.trim() !== "") filter.eventType = eventType;
-      if (Object.keys(filter).length > 0) input.filter = filter;
-      return input;
+    buildInput: (_params, q) => {
+      // endpointId is an OPTIONAL query param here (vs a path param on the alias). ABSENT (`?endpointId=`
+      // not present at all → null) = the org-wide browse. PRESENT-but-empty (`?endpointId=`) is passed
+      // THROUGH so the contract's `uuid.optional()` rejects it with a 400 — NOT silently dropped to org-wide,
+      // which would widen a caller who believes they scoped to one endpoint (the SDK's `{ endpointId: "" }`
+      // lands here as `?endpointId=` too). A whitespace-only value likewise fails the uuid check.
+      const endpointId = q.get("endpointId");
+      return eventListInput(q, endpointId !== null ? { endpointId } : {});
     },
+  },
+  {
+    // DEPRECATED ALIAS of GET /v1/events?endpointId= — kept so published SDKs / hardcoded nested URLs keep
+    // working. Distinct operationId (`eventsListByEndpoint`) so it doesn't collide with the canonical route.
+    method: "GET",
+    path: "/v1/endpoints/{endpointId}/events",
+    capability: "events.list",
+    alias: true,
+    deprecated: true,
+    operationId: "eventsListByEndpoint",
+    successStatus: 200,
+    dispatch: "shared",
+    body: false,
+    summary: "List captured events for an endpoint (deprecated — use GET /v1/events?endpointId=)",
+    query: [...PAGINATION_QUERY, ...EVENT_FILTER_QUERY],
+    buildInput: (params, q) => eventListInput(q, { endpointId: params.endpointId }),
   },
   {
     method: "GET",

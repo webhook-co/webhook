@@ -115,6 +115,27 @@ describe("drift guard L2 — the paths bijection with the route manifest", () =>
     }
   });
 
+  it("every operationId is unique (SDK method names can't collide — incl. a capability's alias)", () => {
+    const operationIds = Object.values(paths).flatMap((item) =>
+      Object.values(item).map((op) => op.operationId as string),
+    );
+    expect(new Set(operationIds).size).toBe(operationIds.length);
+  });
+
+  it("emits `deprecated: true` for an alias route, and NOT for its canonical route", () => {
+    for (const route of ROUTES) {
+      const op = paths[route.path][route.method.toLowerCase()];
+      if (route.deprecated) expect(op.deprecated, `${route.path} should be deprecated`).toBe(true);
+      else expect(op.deprecated, `${route.path} should not be deprecated`).toBeUndefined();
+    }
+    // The canonical events list owns the clean method name; the nested route is the deprecated alias.
+    expect((paths["/v1/events"].get as JsonObject).operationId).toBe("eventsList");
+    expect((paths["/v1/events"].get as JsonObject).deprecated).toBeUndefined();
+    const alias = paths["/v1/endpoints/{endpointId}/events"].get as JsonObject;
+    expect(alias.operationId).toBe("eventsListByEndpoint");
+    expect(alias.deprecated).toBe(true);
+  });
+
   it("declares every path param + flags body routes with a request component", () => {
     for (const route of ROUTES) {
       const op = paths[route.path][route.method.toLowerCase()];

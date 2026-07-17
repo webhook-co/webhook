@@ -1,6 +1,8 @@
 import { run } from "@stricli/core";
+import { eventsList } from "@webhook-co/contract";
 import { bytesToB64 } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { app } from "../app.js";
 import { CorruptConfigError } from "../config/errors.js";
@@ -76,13 +78,108 @@ describe("wbhk events list", () => {
     expect(t.stdout()).toContain("unverified");
   });
 
-  it("passes the --provider filter through to the request", async () => {
+  it("drills into one endpoint via the canonical /v1/events?endpointId=", async () => {
     const cap = capturingFetch({ items: [], nextCursor: null });
     const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
     await run(app, ["events", "list", EP, "--provider", "stripe"], t.ctx);
     const u = new URL(cap.urls[0]);
-    expect(u.pathname).toBe(`/v1/endpoints/${EP}/events`);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.get("endpointId")).toBe(EP);
     expect(u.searchParams.get("provider")).toBe("stripe");
+  });
+
+  it("lists the whole org when no endpointId is given (no endpointId param)", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["events", "list", "--provider", "stripe"], t.ctx);
+    const u = new URL(cap.urls[0]);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.has("endpointId")).toBe(false);
+    expect(u.searchParams.get("provider")).toBe("stripe");
+  });
+
+  it("passes the --method / --dedup-strategy / --event-type facets through", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      [
+        "events",
+        "list",
+        "--method",
+        "GET,POST",
+        "--dedup-strategy",
+        "unique",
+        "--event-type",
+        "charge.succeeded",
+      ],
+      t.ctx,
+    );
+    const u = new URL(cap.urls[0]);
+    expect(u.searchParams.getAll("method")).toEqual(["GET", "POST"]);
+    expect(u.searchParams.get("dedupStrategy")).toBe("unique");
+    expect(u.searchParams.get("eventType")).toBe("charge.succeeded");
+  });
+
+  it("rejects an unknown --method as a usage error", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", "--method", "TRACE"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
+  it("rejects an explicitly-empty endpointId (the unset-shell-var footgun), but lists org-wide when omitted", async () => {
+    // `events list "$EP"` with an unset $EP would otherwise silently list the WHOLE org.
+    const bad = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", ""], bad.ctx);
+    expect(normalizeStricliExitCode(bad.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    // Omitting it entirely is the intended org-wide path — succeeds.
+    const ok = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list"], ok.ctx);
+    expect(normalizeStricliExitCode(ok.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+  });
+
+  // FOUR-SURFACE PARITY (CLI half). The openapi matrix test guards contract↔HTTP-route; MCP is structural
+  // (verbatim input shape); this guards the CLI. Every contract events.list FILTER facet must be reachable
+  // via a CLI flag. The sample table is asserted COMPLETE against the contract (a new facet with no entry
+  // fails), and each flag is EXERCISED (an unwired/unknown flag is a usage error) — so a facet can't ship on
+  // the contract/web/api/mcp while silently missing from the CLI.
+  const CLI_FACET_FLAG_SAMPLES: Record<string, { flag: string; value: string }> = {
+    provider: { flag: "--provider", value: "stripe" },
+    verificationState: { flag: "--status", value: "verified" },
+    receivedAfter: { flag: "--after", value: "2026-06-01T00:00:00Z" },
+    receivedBefore: { flag: "--before", value: "2026-06-01T00:00:00Z" },
+    search: { flag: "--search", value: "abc" },
+    method: { flag: "--method", value: "GET" },
+    dedupStrategy: { flag: "--dedup-strategy", value: "unique" },
+    eventType: { flag: "--event-type", value: "charge.succeeded" },
+  };
+
+  it("exposes a WIRED CLI flag for every contract events.list filter facet (completeness + forwarded)", async () => {
+    const filterShape = (eventsList.input as z.ZodObject).shape
+      .filter as z.ZodOptional<z.ZodObject>;
+    const facets = Object.keys(filterShape.unwrap().shape);
+    // Completeness: the sample table covers EXACTLY the contract facets (a new facet with no entry fails).
+    expect(new Set(Object.keys(CLI_FACET_FLAG_SAMPLES))).toEqual(new Set(facets));
+    // WIRED, not merely parsed: the flag's value must actually reach the request as `?<facet>=` (the facet
+    // name IS the query-param name). A flag that's registered but never threaded into client.eventsList()
+    // would parse fine yet emit no query param — that's the silent-ignore this asserts against.
+    for (const [facet, { flag, value }] of Object.entries(CLI_FACET_FLAG_SAMPLES)) {
+      const cap = capturingFetch({ items: [], nextCursor: null });
+      const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+      await run(app, ["events", "list", flag, value], t.ctx);
+      expect(cap.urls.length, `${flag} issued no request (rejected?)`).toBeGreaterThan(0);
+      const u = new URL(cap.urls[0]);
+      expect(u.searchParams.has(facet), `${flag} was not forwarded as ?${facet}=`).toBe(true);
+    }
   });
 
   it("rejects an unknown --provider as a usage error", async () => {

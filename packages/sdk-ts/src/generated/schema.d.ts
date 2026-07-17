@@ -98,8 +98,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List captured events for an endpoint */
-        get: operations["eventsList"];
+        /**
+         * List captured events for an endpoint (deprecated — use GET /v1/events?endpointId=)
+         * @deprecated
+         */
+        get: operations["eventsListByEndpoint"];
         put?: never;
         post?: never;
         delete?: never;
@@ -188,6 +191,23 @@ export interface paths {
         put?: never;
         /** Rotate an endpoint's ingest token (revokes the old URL, returns the new one) */
         post: operations["endpointsRotate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List captured events across the org (optionally one endpoint) */
+        get: operations["eventsList"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1295,7 +1315,7 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
-    eventsList: {
+    eventsListByEndpoint: {
         parameters: {
             query?: {
                 /** @description Opaque keyset cursor from a prior page's nextCursor. */
@@ -1511,6 +1531,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CreatedEndpoint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    eventsList: {
+        parameters: {
+            query?: {
+                /** @description Opaque keyset cursor from a prior page's nextCursor. */
+                cursor?: string;
+                /** @description Filter by dedup strategy: sw_webhook_id | provider_event_id | content_hash | fields | unique (repeatable). */
+                dedupStrategy?: ("sw_webhook_id" | "provider_event_id" | "content_hash" | "fields" | "unique")[];
+                /** @description Drill down to one endpoint (a uuid). Omit for the whole org. */
+                endpointId?: string;
+                /** @description Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value. */
+                eventType?: string;
+                /** @description Max items to return (1–200, default 50). */
+                limit?: number;
+                /** @description Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable). */
+                method?: ("GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS")[];
+                /** @description Filter by provider (repeatable). */
+                provider?: ("stripe" | "github" | "shopify" | "slack" | "standard_webhooks" | "clerk" | "resend" | "stytch" | "supabase" | "render" | "brex" | "openai" | "replicate" | "polar" | "gemini" | "incident_io" | "etsy" | "vanta" | "pusher" | "quickbooks" | "chargify" | "launchdarkly" | "modern_treasury" | "autodesk_aps" | "mongodb_atlas" | "xero" | "segment" | "aftership" | "onfleet" | "webflow" | "klaviyo" | "mux" | "shippo" | "buildkite" | "ms_teams" | "ably" | "squarespace" | "nylas" | "linkedin" | "tiktok" | "airship" | "lob" | "persona" | "bolt" | "primer" | "airwallex" | "affirm" | "keygen" | "constant_contact" | "telegram" | "mixpanel" | "new_relic" | "fillout" | "zapier" | "tally" | "loops" | "customer_io" | "framer" | "box" | "configcat" | "ashby" | "merge_dev" | "cronofy" | "increase" | "finch" | "knock" | "deel" | "razorpay" | "sentry" | "linear" | "dropbox" | "checkout_com" | "lemon_squeezy" | "coinbase_commerce" | "dwolla" | "gocardless" | "notion" | "meta" | "woocommerce" | "bitbucket" | "atlassian_jira" | "x" | "clickup" | "npm" | "heroku" | "dub" | "cal_com" | "asana" | "circleci" | "pagerduty" | "airtable" | "calendly" | "zoom" | "customerio" | "sinch" | "workos" | "front" | "zendesk" | "twitch" | "paddle" | "recurly" | "docusign" | "vercel" | "intercom" | "paystack" | "authorize_net" | "sanity" | "square" | "trello" | "twilio" | "mandrill" | "hubspot" | "adyen" | "mailgun" | "mercado_pago" | "braintree" | "contentful" | "plivo" | "typeform" | "messagebird" | "netlify" | "vonage" | "monday" | "jira_connect" | "discord" | "telnyx" | "sendgrid" | "wise" | "kinde" | "paypal" | "aws_sns" | "plaid" | "ebay" | "gitlab" | "microsoft_graph" | "chargebee" | "postmark" | "sparkpost" | "okta" | "bigcommerce" | "datadog" | "brevo")[];
+                /** @description Inclusive lower bound: an RFC 3339 instant, a relative duration (7d / 30m — the last N), or `beginning`. */
+                receivedAfter?: string;
+                /** @description Exclusive upper bound (RFC 3339 instant). */
+                receivedBefore?: string;
+                /** @description Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id. */
+                search?: string;
+                /** @description Filter by verification state: verified | authenticated | failed | unattempted (repeatable). */
+                verificationState?: ("verified" | "authenticated" | "failed" | "unattempted")[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsListResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

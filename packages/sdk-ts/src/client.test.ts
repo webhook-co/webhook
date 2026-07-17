@@ -260,23 +260,27 @@ describe("endpoints", () => {
 });
 
 describe("events", () => {
-  it("list() builds the full filter query with repeated multi-selects", async () => {
+  it("list() builds the full filter query with repeated multi-selects (canonical route)", async () => {
     const { client, calls } = make([json(200, { items: [], nextCursor: null })]);
     await client.events
-      .list("e1", {
+      .list({
+        endpointId: "e1",
         provider: ["stripe", "github"],
         verificationState: ["verified"],
         receivedAfter: "2026-01-01T00:00:00Z",
         search: "checkout",
+        method: ["GET", "POST"],
         limit: 25,
       })
       .collect();
     const url = calls[0]!.url;
-    expect(url).toContain("/v1/endpoints/e1/events?");
+    expect(url).toContain("/v1/events?");
+    expect(url).toContain("endpointId=e1");
     expect(url).toContain("provider=stripe&provider=github");
     expect(url).toContain("verificationState=verified");
     expect(url).toContain("receivedAfter=2026-01-01T00%3A00%3A00Z");
     expect(url).toContain("search=checkout");
+    expect(url).toContain("method=GET&method=POST");
     expect(url).toContain("limit=25");
   });
 
@@ -286,11 +290,74 @@ describe("events", () => {
     expect(calls[0]!.url).toBe("https://api.webhook.co/v1/events/ev1");
   });
 
-  it("listPage() returns one page of events with its cursor", async () => {
+  it("listPage() hits the canonical /v1/events, org-wide by default", async () => {
     const { client, calls } = make([json(200, { items: [{ id: "ev1" }], nextCursor: "n" })]);
-    const page = await client.events.listPage("e1", { limit: 1, search: "x" });
+    const page = await client.events.listPage({ limit: 1, search: "xyz" });
     expect(page.nextCursor).toBe("n");
-    expect(calls[0]!.url).toContain("/v1/endpoints/e1/events?");
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.has("endpointId")).toBe(false);
+    expect(u.searchParams.get("search")).toBe("xyz");
+  });
+
+  it("listPage({ endpointId }) drills into one endpoint via ?endpointId= (still canonical)", async () => {
+    const { client, calls } = make([json(200, { items: [], nextCursor: null })]);
+    await client.events.listPage({
+      endpointId: "e1",
+      method: ["GET", "POST"],
+      dedupStrategy: ["unique"],
+      eventType: "charge.succeeded",
+    });
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.get("endpointId")).toBe("e1");
+    expect(u.searchParams.getAll("method")).toEqual(["GET", "POST"]);
+    expect(u.searchParams.get("dedupStrategy")).toBe("unique");
+    expect(u.searchParams.get("eventType")).toBe("charge.succeeded");
+  });
+
+  it("listPageByEndpoint() hits the DEPRECATED nested route", async () => {
+    const { client, calls } = make([json(200, { items: [], nextCursor: null })]);
+    await client.events.listPageByEndpoint("e1", { limit: 1 });
+    expect(new URL(calls[0]!.url).pathname).toBe("/v1/endpoints/e1/events");
+  });
+
+  it("list()/listPage() reject a legacy string endpointId arg with a migration error (JS-caller footgun)", () => {
+    const { client } = make([]);
+    // An UNTYPED JS caller still passing `list('ep_123')` must get a loud error, not a silent whole-org list.
+    const list = client.events.list as unknown as (a: unknown) => unknown;
+    const listPage = client.events.listPage as unknown as (a: unknown) => unknown;
+    expect(() => list.call(client.events, "ep_123")).toThrow(/no longer takes an endpoint id/);
+    expect(() => listPage.call(client.events, "ep_123")).toThrow(/no longer takes an endpoint id/);
+  });
+
+  it("list()/listPage() reject an EMPTY endpointId rather than silently listing the whole org", () => {
+    const { client } = make([]);
+    // `{ endpointId: "" }` (unset env var / blank config) must fail fast, not silently widen to org-wide.
+    expect(() => client.events.list({ endpointId: "" })).toThrow(/endpointId is an empty string/);
+    expect(() => client.events.listPage({ endpointId: "  " })).toThrow(
+      /endpointId is an empty string/,
+    );
+  });
+
+  it("listByEndpoint() rejects an endpointId ALSO placed in filters (it would be silently ignored)", () => {
+    const { client } = make([]);
+    // The positional is authoritative; a filters.endpointId would be dropped, scoping the wrong endpoint.
+    expect(() => client.events.listByEndpoint("ep_1", { endpointId: "ep_2" })).toThrow(
+      /don't also set it in filters/,
+    );
+    expect(() => client.events.listPageByEndpoint("ep_1", { endpointId: "ep_2" })).toThrow(
+      /don't also set it in filters/,
+    );
+    // An empty positional id fails fast rather than building /v1/endpoints//events.
+    expect(() => client.events.listByEndpoint("")).toThrow(/must be a non-empty endpoint id/);
+    // An untyped JS caller passing undefined/null gets the SAME friendly message, not a raw ".trim of
+    // undefined" crash.
+    const byEndpoint = client.events.listByEndpoint as unknown as (a: unknown) => unknown;
+    expect(() => byEndpoint.call(client.events, undefined)).toThrow(
+      /must be a non-empty endpoint id/,
+    );
+    expect(() => byEndpoint.call(client.events, null)).toThrow(/must be a non-empty endpoint id/);
   });
 
   it("getPayload() decodes the base64 envelope to bytes", async () => {
