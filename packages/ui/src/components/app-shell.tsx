@@ -155,6 +155,17 @@ export interface AppNavItemProps extends React.AnchorHTMLAttributes<HTMLAnchorEl
   /** Marks the current page — sets `aria-current` and the active treatment. */
   active?: boolean;
   /**
+   * Renders as a SUB-item of the entry above it: indented to where a top-level item's label starts, and
+   * without its own icon — the indent is what carries the hierarchy.
+   *
+   * a11y note, stated rather than implied: the nav is a flat column of anchors (no `<ul>`), so this is a
+   * VISUAL nesting only — assistive tech announces a sub-item as a sibling. That matches how `AppNavSection`
+   * headings already work here (they group nothing semantically either). Making the relationship real means
+   * giving the whole nav list semantics, which is a design-system change with blast radius across every item
+   * and does not belong to whichever feature adds the first sub-item.
+   */
+  nested?: boolean;
+  /**
    * Render the child element instead of a bare `<a>`, keeping the nav styling. This is how a router link
    * (next/link) gets in: without it the sidebar emits plain anchors and every click is a FULL DOCUMENT
    * NAVIGATION — the whole app shell torn down and re-fetched on each nav.
@@ -167,9 +178,14 @@ export interface AppNavItemProps extends React.AnchorHTMLAttributes<HTMLAnchorEl
  * carries `aria-current="page"`, an inverse-ink left rail, and a sunken fill.
  */
 export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
-  ({ icon, count, active, asChild = false, className, children, ...props }, ref) => {
+  (
+    { icon, count, active, nested = false, asChild = false, className, children, ...props },
+    ref,
+  ) => {
     const navClass = cn(
       "relative flex h-9 items-center gap-2.5 rounded-control px-2.5 text-base text-fg-secondary",
+      // Line the label up with a top-level item's label: 18px icon + the 10px gap.
+      nested && "pl-[2.375rem]",
       "transition-colors hover:bg-surface-sunken hover:text-fg",
       "outline-none focus-visible:shadow-[var(--wh-focus-ring)]",
       "[&_svg]:size-[1.125rem] [&_svg]:shrink-0",

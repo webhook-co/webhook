@@ -27,6 +27,8 @@ export interface EventFilters {
   /** Multi-select verification tri-state — OR'd. Set only when non-empty. */
   readonly verificationState?: readonly VerificationState[];
   readonly search?: string;
+  /** Drill down to ONE endpoint (the org-wide browse). Absent = every endpoint in the org. */
+  readonly endpointId?: string;
 }
 
 /** The raw, human-facing filter values as they ride in the URL query + across the load-more boundary. */
@@ -42,6 +44,8 @@ export interface EventFilterParams {
   readonly search?: string | null;
   /** A relative date preset (`?range=`): 1h | 24h | 7d | 30d — resolves to a receivedAfter bound. */
   readonly range?: string | null;
+  /** Drill down to ONE endpoint (`?endpointId=`) — org-wide browse only; the per-endpoint page ignores it. */
+  readonly endpointId?: string | string[] | null;
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -96,6 +100,7 @@ export function parseEventFilters(
     receivedBefore?: Date;
     verificationState?: VerificationState[];
     search?: string;
+    endpointId?: string;
   } = {};
   // Multi-select: validate each provider against the vocabulary (a hand-edited `?provider=foo` member
   // is dropped, not passed to SQL), de-dup, and only set the filter when at least one valid one remains.
@@ -133,8 +138,22 @@ export function parseEventFilters(
   // API/CLI/MCP (cross-surface parity); a hand-edited over-long `?search=` is dropped rather than run.
   const search = cleanString(params.search);
   if (search !== undefined && search.length <= 256) filters.search = search;
+  // SHAPE-validated only, deliberately NOT membership-validated — a departure from the provider filter
+  // above, which checks its value against a static vocabulary.
+  //
+  // A non-uuid is dropped because `endpoint_id = 'oops'` raises 22P02: a hand-edited URL would 500. But an
+  // unknown-yet-well-formed uuid is NOT dropped, because it is indistinguishable from "an endpoint you
+  // cannot see" — RLS already answers it correctly with an empty page (no oracle, matching listDeliveries),
+  // and hasAppliedFilters keeps the empty copy honest ("No events match these filters", not the onboarding
+  // copy). Membership-checking here would also force an endpoint query on EVERY load-more.
+  const endpointId = firstParam(params.endpointId ?? undefined);
+  if (endpointId !== undefined && isUuid(endpointId)) filters.endpointId = endpointId;
   return filters;
 }
+
+/** A canonical v4/v7 uuid — the only shape `endpoint_id = $1` can take without raising 22P02. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v: string): boolean => UUID_RE.test(v);
 
 /**
  * True when at least one filter is actually APPLIED to the query. Takes the parsed `EventFilters` (not
@@ -147,6 +166,7 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
     filters.receivedAfter !== undefined ||
     filters.receivedBefore !== undefined ||
     filters.verificationState !== undefined ||
-    filters.search !== undefined
+    filters.search !== undefined ||
+    filters.endpointId !== undefined
   );
 }

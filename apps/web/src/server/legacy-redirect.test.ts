@@ -16,7 +16,10 @@ describe("isLegacyDashboardPath", () => {
 
   it("is false for an unknown first segment, so genuine 404s stay 404s (not redirect-then-404)", () => {
     expect(isLegacyDashboardPath(["nope"])).toBe(false);
-    expect(isLegacyDashboardPath(["events"])).toBe(false); // never a top-level route (events are endpoint-scoped)
+    // `events` USED to assert false here, with the note "never a top-level route (events are endpoint-scoped)".
+    // That stopped being true when the consolidated org-wide browse landed at /org/{slug}/events — so the
+    // assertion is inverted rather than deleted, and it now pins the new truth.
+    expect(isLegacyDashboardPath(["events"])).toBe(true);
     expect(isLegacyDashboardPath(["org"])).toBe(false); // the new prefix is not itself a legacy path
   });
 

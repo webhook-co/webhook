@@ -28,6 +28,7 @@ import {
   likeContains,
   listEndpoints,
   listEvents,
+  listEndpointNames,
   listOrgEvents,
   resolveSince,
   tailEvents,
@@ -1222,5 +1223,33 @@ describe("listOrgEvents (org-wide browse)", () => {
     expect(new Set(ids).size).toBe(ids.length); // no dup
     const all = await withTenant(app, orgA, (tx) => listOrgEvents(tx, { limit: 200 }));
     expect(ids).toEqual(all.items.map((e) => e.id).slice(0, ids.length)); // no skip
+  });
+});
+
+describe("listEndpointNames (labels for the org-wide events list)", () => {
+  it("returns every endpoint in the org, and marks soft-deleted ones", async () => {
+    const gone = (await createEndpoint(app, { orgId: orgA, name: "gone-ep" }, hasher)).id;
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update endpoints set deleted_at = now() where id = ${gone}`,
+    );
+    const names = await withTenant(app, orgA, (tx) => listEndpointNames(tx));
+    // A live endpoint and a soft-deleted one must BOTH be labelled: ADR-0076 keeps a deleted endpoint's
+    // events listable, so the org-wide list has rows for it — and a name map from listEndpoints (which
+    // filters deleted_at is null) would leave exactly those rows showing a raw uuid.
+    expect(names[epA]).toEqual({ name: "ep-a", deleted: false });
+    expect(names[gone]).toEqual({ name: "gone-ep", deleted: true });
+  });
+
+  it("is RLS-scoped: another org's endpoints are absent", async () => {
+    const names = await withTenant(app, orgA, (tx) => listEndpointNames(tx));
+    expect(names[epB]).toBeUndefined();
+  });
+
+  it("is a null-prototype map (an id can never alias Object.prototype)", async () => {
+    const names = await withTenant(app, orgA, (tx) => listEndpointNames(tx));
+    expect(Object.getPrototypeOf(names)).toBeNull();
+    expect(names["toString"]).toBeUndefined();
   });
 });

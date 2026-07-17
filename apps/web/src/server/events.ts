@@ -1,7 +1,14 @@
 import "server-only";
 
 import { withTenant, type Sql, type TenantTx } from "@webhook-co/db/client";
-import { getEndpoint, getEvent, listEvents } from "@webhook-co/db/reads";
+import {
+  getEndpoint,
+  getEvent,
+  listEndpointNames,
+  listEvents,
+  listOrgEvents,
+  type EndpointNameEntry,
+} from "@webhook-co/db/reads";
 import type { Cursor, Event, EventSummary } from "@webhook-co/shared";
 
 import type { EventFilters } from "@/lib/event-filters";
@@ -73,6 +80,23 @@ export type EventsResult =
   | { readonly status: "not_found" }
   | { readonly status: "error" };
 
+/**
+ * The ORG-WIDE events browse result.
+ *
+ * No `not_found` arm, deliberately: `EventsResult` has one because an endpoint-scoped read must distinguish
+ * "no events" from "no such endpoint". Org-wide there is no endpoint to be absent — an org with no events is
+ * `ok` with an empty list. The arm would be unreachable, and an unreachable arm is a lie the type tells.
+ */
+export type OrgEventsResult =
+  | {
+      readonly status: "ok";
+      readonly items: readonly EventSummaryItem[];
+      readonly nextCursor: Cursor | null;
+      /** Endpoint id → name + deleted, for labelling rows. INCLUDES soft-deleted endpoints (ADR-0076). */
+      readonly endpointNames: Readonly<Record<string, EndpointNameEntry>>;
+    }
+  | { readonly status: "error" };
+
 export type EventResult =
   | { readonly status: "ok"; readonly event: EventDetailItem }
   | { readonly status: "not_found" }
@@ -95,6 +119,13 @@ export interface EventReaders {
     filters?: EventFilters,
   ): Promise<EventsPage>;
   getEvent(orgId: string, eventId: string): Promise<EventDetailItem | null>;
+  /** First page of the ORG's events (filtered) + the endpoint-name map, in ONE tenant tx. */
+  orgFirstPage(
+    orgId: string,
+    filters?: EventFilters,
+  ): Promise<{ page: EventsPage; endpointNames: Readonly<Record<string, EndpointNameEntry>> }>;
+  /** A subsequent page of the org's events. The name map is already on the client. */
+  listOrgEvents(orgId: string, cursor: Cursor, filters?: EventFilters): Promise<EventsPage>;
   /** The raw value of a SENSITIVE header (re-read under RLS); null if the endpoint/event/header is absent
    *  or the header isn't sensitive. */
   revealHeader(orgId: string, input: RevealHeaderInput): Promise<{ value: string } | null>;
@@ -190,6 +221,25 @@ function boundReaders(app: Sql): EventReaders {
         const e = await getEvent(tx, eventId);
         return e ? toDetailItem(e) : null;
       }),
+    orgFirstPage: (orgId, filters) =>
+      withTenant(app, orgId, async (tx) => {
+        // ONE tenant tx for both, so the rows and the labels can't come from different snapshots. The name
+        // map is bounded by the 100-endpoint-per-org cap, so this is one small round trip — not an N+1, and
+        // not a join (which would make `id` ambiguous in the events browse).
+        const [page, endpointNames] = await Promise.all([
+          listOrgEvents(tx, { ...filters }),
+          listEndpointNames(tx),
+        ]);
+        return {
+          page: { items: page.items.map(toSummaryItem), nextCursor: page.nextCursor },
+          endpointNames,
+        };
+      }),
+    listOrgEvents: (orgId, cursor, filters) =>
+      withTenant(app, orgId, async (tx) => {
+        const page = await listOrgEvents(tx, { cursor, ...filters });
+        return { items: page.items.map(toSummaryItem), nextCursor: page.nextCursor };
+      }),
     revealHeader: (orgId, { endpointId, eventId, index }) =>
       withTenant(app, orgId, async (tx) => {
         const e = await getEventForEndpoint(tx, endpointId, eventId);
@@ -210,6 +260,52 @@ function boundReaders(app: Sql): EventReaders {
  * A soft-deleted endpoint still resolves (its events are retained) and is flagged `deleted` for the
  * inspection banner. Tests inject `readers` and skip the pool.
  */
+/**
+ * First page of the ORG's events + the labels for them (the consolidated /org/{slug}/events page).
+ *
+ * No endpointId, so no uuid guard and no not_found: RLS is the whole boundary, and an org with no events is
+ * an `ok` empty list.
+ */
+export async function loadOrgEvents(
+  orgId: string,
+  filters?: EventFilters,
+  readers?: EventReaders,
+): Promise<OrgEventsResult> {
+  if (readers) return readOrgEvents(orgId, filters, readers);
+  return withTenantDb((app) => readOrgEvents(orgId, filters, boundReaders(app)));
+}
+
+async function readOrgEvents(
+  orgId: string,
+  filters: EventFilters | undefined,
+  r: EventReaders,
+): Promise<OrgEventsResult> {
+  try {
+    const { page, endpointNames } = await r.orgFirstPage(orgId, filters);
+    return { status: "ok", items: page.items, nextCursor: page.nextCursor, endpointNames };
+  } catch (error) {
+    logActionError("events.org_list_failed", error);
+    return { status: "error" };
+  }
+}
+
+/** A subsequent page of the org's events (the "Load older" path). */
+export async function loadMoreOrgEvents(
+  orgId: string,
+  cursor: Cursor,
+  filters?: EventFilters,
+  readers?: EventReaders,
+): Promise<EventsPage | null> {
+  const run = (r: EventReaders) => r.listOrgEvents(orgId, cursor, filters);
+  try {
+    if (readers) return await run(readers);
+    return await withTenantDb((app) => run(boundReaders(app)));
+  } catch (error) {
+    logActionError("events.org_list_more_failed", error);
+    return null;
+  }
+}
+
 export async function loadEvents(
   orgId: string,
   endpointId: string,
