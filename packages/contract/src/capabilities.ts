@@ -241,7 +241,9 @@ export const eventsList = defineCapability({
         provider: multiEnum(ProviderSchema).optional(),
         receivedAfter: z.string().optional(),
         receivedBefore: z.string().optional(),
-        // The truthful verification tri-state (verified | failed | unattempted), multi-select.
+        // The verification state, multi-select. FOUR states, not three: `authenticated` is a real, weaker
+        // positive than `verified` — the source was proven by a shared static token / HTTP Basic (Tier-4
+        // providers), not a cryptographic signature. verified | authenticated | failed | unattempted.
         verificationState: multiEnum(VerificationStateSchema).optional(),
         // Case-insensitive substring search across `provider_event_id` and `dedup_key`, plus an exact match
         // on the event id when the term is a uuid. A plain string (no coerce) → JSON-Schema-clean. Both

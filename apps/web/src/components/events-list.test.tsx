@@ -146,7 +146,7 @@ describe("EventsList", () => {
     });
   });
 
-  it("renders the tri-state verification pill: verified (ok) / failed (red) / unattempted (neutral)", () => {
+  it("renders the verification pill: verified (ok) / failed (red) / unattempted (neutral)", () => {
     render(
       <EventsList
         endpointId={ENDPOINT_ID}

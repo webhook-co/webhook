@@ -269,7 +269,7 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(page.items.map((e) => e.id)).toEqual([eTail3]);
   });
 
-  it("listEvents projects + filters the verification tri-state (verified | failed | unattempted)", async () => {
+  it("listEvents projects + filters the verification state (verified | failed | unattempted; authenticated has its own test)", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-verif" }, hasher)).id;
     const vId = await seedEvent(orgA, ep, {
       provider: "stripe",

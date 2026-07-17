@@ -1310,7 +1310,7 @@ export interface operations {
                 receivedBefore?: string;
                 /** @description Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id. */
                 search?: string;
-                /** @description Filter by verification state: verified | failed | unattempted (repeatable). */
+                /** @description Filter by verification state: verified | authenticated | failed | unattempted (repeatable). */
                 verificationState?: ("verified" | "authenticated" | "failed" | "unattempted")[];
             };
             header?: never;

@@ -1,6 +1,7 @@
 import type { VerificationState } from "@webhook-co/shared";
 
-// Pure, client-safe mapping for the events-list verification tri-state. `failed` (an adapter ran and
+// Pure, client-safe mapping for the events-list verification state (four: verified | authenticated | failed
+// | unattempted). `failed` (an adapter ran and
 // rejected the signature) is the only state shown as a danger/red — `unattempted` (no signature was
 // checked: no secret, header absent, or a rare KMS/internal error, all collapsed to one bucket) stays
 // neutral so an unsigned event never alarms, and an unknown/absent state degrades to neutral too.

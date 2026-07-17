@@ -14,7 +14,7 @@ import {
 const uuid = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 
 describe("deriveVerificationState", () => {
-  it("maps the (verified, verification) pair to the truthful tri-state", () => {
+  it("maps the (verified, verification) pair to its truthful state (3 of the 4; authenticated is next)", () => {
     expect(deriveVerificationState(true, { ok: true })).toBe("verified");
     // verified=false WITH a non-null verification = an adapter ran and rejected.
     expect(deriveVerificationState(false, { ok: false, reason: { code: "WRONG_SECRET" } })).toBe(

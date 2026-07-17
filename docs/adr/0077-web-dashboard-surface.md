@@ -192,7 +192,8 @@ verified-status → substring search). Two refinements to the `truthful UX` abov
   `failed` (an adapter ran and REJECTED the signature) danger/red, and **`unattempted` stays neutral**:
   `verification IS NULL` collapses no-secret / signature-header-absent / a rare KMS-or-internal error into one
   bucket the row cannot disambiguate, so it must never be presented as a failure (only engine logs can tell
-  those apart). The same tri-state is a contract `events.list.filter.verificationState` enum at CLI/API/web/MCP
+  those apart). The same enum — `verified | authenticated | failed | unattempted` (a QUAD; `authenticated`, a
+  weaker token/Basic positive, was always the 4th) — is `events.list.filter.verificationState` at CLI/API/web/MCP
   parity. `verificationState` is an **OPTIONAL** `EventSummary` field (a required one would throw in `getEvent`
   and silently drop `wbhk listen` frames under version skew).
 - **Date-range filter is half-open `[from, to)` — `to` is EXCLUSIVE** (PR 1a), to hold byte-for-byte

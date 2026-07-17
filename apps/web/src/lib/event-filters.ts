@@ -24,7 +24,7 @@ export interface EventFilters {
   readonly provider?: readonly string[];
   readonly receivedAfter?: Date;
   readonly receivedBefore?: Date;
-  /** Multi-select verification tri-state — OR'd. Set only when non-empty. */
+  /** Multi-select verification state — OR'd. Set only when non-empty. */
   readonly verificationState?: readonly VerificationState[];
   readonly search?: string;
   /** Drill down to ONE endpoint (the org-wide browse). Absent = every endpoint in the org. */
@@ -38,7 +38,7 @@ export interface EventFilterParams {
   /** A `YYYY-MM-DD` calendar day (from a date input) or a full ISO instant. */
   readonly from?: string | null;
   readonly to?: string | null;
-  /** Verification tri-state (`?status=`), multi-select: verified | failed | unattempted. */
+  /** Verification state (`?status=`), multi-select: verified | authenticated | failed | unattempted. */
   readonly status?: string | string[] | null;
   /** Free-text substring over provider_event_id + dedup_key (`?search=`); min 3 chars (pg_trgm's floor). */
   readonly search?: string | null;

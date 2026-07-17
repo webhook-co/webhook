@@ -56,7 +56,7 @@ describe("EventsTable", () => {
     );
   });
 
-  it("renders the tri-state verification pill and the null-provider placeholder", () => {
+  it("renders the verification pill and the null-provider placeholder", () => {
     render(
       <EventsTable
         items={[

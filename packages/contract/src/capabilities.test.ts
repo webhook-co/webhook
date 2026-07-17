@@ -24,6 +24,7 @@ import {
   requiredSurfaces,
   RESERVED_SCOPES,
 } from "./capability";
+import { VERIFICATION_STATES } from "@webhook-co/shared";
 
 const EXPECTED_NAMES = [
   "endpoints.list",
@@ -209,6 +210,33 @@ describe("events.list filter (provider + received-at range)", () => {
     });
     expect(parsed.filter?.provider).toBeUndefined();
     expect(parsed.filter?.receivedAfter).toBe("2026-06-01T00:00:00Z");
+  });
+
+  // `authenticated` IS a real, accepted verification state — the 4th one, weaker than `verified` (a shared
+  // static token / HTTP Basic, not a signature). Five doc surfaces called this a TRI-state (verified | failed
+  // | unattempted) and silently dropped it; on MCP, where the description IS the interface, an agent was told
+  // a filter value that works does not exist. This pins the accept-side truth so the prose can't drift from it
+  // again without a red test.
+  it("accepts `authenticated` — the verification state is a QUAD, not a tri-state", () => {
+    const parsed = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { verificationState: ["verified", "authenticated", "failed", "unattempted"] },
+    });
+    expect(parsed.filter?.verificationState).toEqual([
+      "verified",
+      "authenticated",
+      "failed",
+      "unattempted",
+    ]);
+  });
+
+  it("the canonical vocabulary is exactly those four, in order", () => {
+    expect([...VERIFICATION_STATES]).toEqual([
+      "verified",
+      "authenticated",
+      "failed",
+      "unattempted",
+    ]);
   });
 
   it("accepts a scalar provider/verificationState for backward-compat (not just an array)", () => {

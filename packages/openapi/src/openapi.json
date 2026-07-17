@@ -887,7 +887,7 @@
             "name": "verificationState",
             "in": "query",
             "required": false,
-            "description": "Filter by verification state: verified | failed | unattempted (repeatable).",
+            "description": "Filter by verification state: verified | authenticated | failed | unattempted (repeatable).",
             "style": "form",
             "explode": true,
             "schema": {
