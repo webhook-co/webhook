@@ -182,7 +182,19 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
   );
 }
 
-/** Mirrors the contract's `.trim().min(3).max(256)`. Web bypasses contract validation, so it re-states it. */
+/**
+ * The search bounds, mirroring the contract's `.trim().min().max()`.
+ *
+ * DECLARED here rather than imported, deliberately. This module is imported by the CLIENT filter bar, and the
+ * contract's constants live in `capabilities.ts` alongside every zod schema — importing them would drag the
+ * whole schema module into the browser bundle for two integers. The barrel is worse still: `@webhook-co/
+ * contract`'s `export *` re-exports resolve to `undefined` under Turbopack (its own header says so), which is
+ * a runtime 500, not a build error.
+ *
+ * Drift is prevented by a TEST that imports both and asserts they are equal (event-filters.test.ts), which is
+ * this repo's usual answer for a value that must agree across a bundling boundary. The contract remains the
+ * source of truth; this is a mirror the build can afford, with a guard that fails if it stops matching.
+ */
 export const SEARCH_MIN_LENGTH = 3;
 export const SEARCH_MAX_LENGTH = 256;
 

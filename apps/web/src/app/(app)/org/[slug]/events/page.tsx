@@ -135,7 +135,15 @@ export default async function OrgEventsPage({
         // A read FAULT is not an empty result. Rendering the list here printed "No events match these
         // filters" over a database error — telling the reader their filters found nothing when in fact we
         // failed. The per-endpoint page uses a danger Banner for exactly this; match it.
-        <Banner tone="danger">We couldn&apos;t load your events. Refresh to try again.</Banner>
+        //
+        // The two messages differ because the two situations differ. A timed-out browse is DETERMINISTIC: the
+        // same query will time out again, so "Refresh to try again" is advice that cannot work, and the only
+        // thing that helps is a narrower window — which the reader has no way to guess unless we say it.
+        <Banner tone="danger">
+          {result.reason === "timeout"
+            ? "That's a lot of history to search at once, and the query timed out. Narrow the date range (or filter to one endpoint) and try again."
+            : "We couldn't load your events. Refresh to try again."}
+        </Banner>
       ) : (
         <OrgEventsList
           key={listKey}

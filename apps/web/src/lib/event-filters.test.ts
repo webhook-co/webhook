@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { firstParam, hasAppliedFilters, parseEventFilters, searchTooShort } from "./event-filters";
+import {
+  firstParam,
+  hasAppliedFilters,
+  parseEventFilters,
+  SEARCH_MAX_LENGTH,
+  SEARCH_MIN_LENGTH,
+  searchTooShort,
+} from "./event-filters";
 
 const PROVIDERS = ["stripe", "github", "shopify"] as const;
 
@@ -229,5 +236,40 @@ describe("a below-floor search term is reported, not silently swallowed", () => 
   it("counts the TRIMMED term, matching the contract's .trim().min(3)", () => {
     expect(searchTooShort({ search: " ab " })).toBe(true);
     expect(searchTooShort({ search: " abc " })).toBe(false);
+  });
+});
+
+// THE DRIFT GUARD for a value duplicated across a bundling boundary.
+//
+// event-filters.ts declares the search bounds rather than importing them: it is client-imported, and the
+// contract's constants sit alongside every zod schema (importing them would ship the schemas to the browser),
+// while the contract BARREL's `export *` resolves to undefined under Turbopack — a runtime 500, not a build
+// error. So the mirror is deliberate, and this test is the thing that keeps it honest. It runs in node, where
+// importing the contract is free and safe.
+//
+// If this fails, the API and the web now disagree about the floor: web would silently drop a term the API
+// accepts, or forward one it 400s.
+describe("the web's search bounds match the contract's", () => {
+  it("mirrors SEARCH_MIN_LENGTH / SEARCH_MAX_LENGTH exactly", async () => {
+    const contract = await import("@webhook-co/contract");
+    expect(SEARCH_MIN_LENGTH).toBe(contract.SEARCH_MIN_LENGTH);
+    expect(SEARCH_MAX_LENGTH).toBe(contract.SEARCH_MAX_LENGTH);
+  });
+
+  // And the constants must be the ones the SHIPPED schema enforces — not merely two numbers that agree with
+  // each other while the schema hardcodes something else.
+  it("is the floor the contract's schema actually enforces", async () => {
+    const { eventsList } = await import("@webhook-co/contract");
+    const schema = eventsList.input;
+    const tooShort = schema.safeParse({
+      endpointId: crypto.randomUUID(),
+      filter: { search: "ab" },
+    });
+    const longEnough = schema.safeParse({
+      endpointId: crypto.randomUUID(),
+      filter: { search: "abc" },
+    });
+    expect(tooShort.success).toBe(false);
+    expect(longEnough.success).toBe(true);
   });
 });

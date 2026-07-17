@@ -95,7 +95,15 @@ export type OrgEventsResult =
       /** Endpoint id → name + deleted, for labelling rows. INCLUDES soft-deleted endpoints (ADR-0076). */
       readonly endpointNames: Readonly<Record<string, EndpointNameEntry>>;
     }
-  | { readonly status: "error" };
+  /**
+   * `reason` exists so the page can say something the reader can ACT on.
+   *
+   * A browse that blows the 5s statement_timeout will blow it again on refresh — the query is deterministic —
+   * so "Refresh to try again" is advice that cannot work. The only thing that helps is narrowing the window,
+   * and the reader cannot know that unless we say it. `unknown` keeps the honest generic message for a real
+   * blip, where refreshing IS the right advice.
+   */
+  | { readonly status: "error"; readonly reason: "timeout" | "unknown" };
 
 export type EventResult =
   | { readonly status: "ok"; readonly event: EventDetailItem }
@@ -273,6 +281,17 @@ function boundReaders(app: Sql): EventReaders {
  * No endpointId, so no uuid guard and no not_found: RLS is the whole boundary, and an org with no events is
  * an `ok` empty list.
  */
+/**
+ * Postgres cancels a statement that exceeds `statement_timeout` with SQLSTATE 57014 (query_canceled) — the
+ * bound browseEvents sets on every events browse. Distinguishing it is what lets the page give advice that
+ * can actually work; everything else is a genuine fault where "refresh" is right.
+ */
+function browseErrorReason(error: unknown): "timeout" | "unknown" {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "57014"
+    ? "timeout"
+    : "unknown";
+}
+
 export async function loadOrgEvents(
   orgId: string,
   filters?: EventFilters,
@@ -292,7 +311,7 @@ async function readOrgEvents(
     return { status: "ok", items: page.items, nextCursor: page.nextCursor, endpointNames };
   } catch (error) {
     logActionError("events.org_list_failed", error);
-    return { status: "error" };
+    return { status: "error", reason: browseErrorReason(error) };
   }
 }
 

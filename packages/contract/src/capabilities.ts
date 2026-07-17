@@ -37,6 +37,18 @@ function multiEnum<T extends z.ZodTypeAny>(schema: T) {
 // reuse the shared entity schemas (one definition). The cursor is the opaque string
 // from packages/shared (HMAC-signed); pagination wraps items + nextCursor.
 
+/**
+ * The events-search bounds — THE canonical figures, exported because three surfaces enforce them and a
+ * duplicated literal drifts silently.
+ *
+ * The floor is not a preference: `pg_trgm` extracts ZERO trigrams from a 1-2 character pattern, so `%ab%`
+ * cannot be served by any index — it scans every row in the org and rechecks them. The web mirrors these to
+ * drop a short term before SQL, and the CLI to reject one client-side with a readable message rather than
+ * forwarding it into a raw 400. All three now read the same numbers.
+ */
+export const SEARCH_MIN_LENGTH = 3;
+export const SEARCH_MAX_LENGTH = 256;
+
 const uuid = z.uuid();
 const cursor = z.string();
 
@@ -241,7 +253,7 @@ export const eventsList = defineCapability({
         //
         // min(3), not min(1): pg_trgm extracts ZERO trigrams below 3 characters, so a 1-2 char term can never
         // use an index — it degrades to scanning and rechecking every row in the org.
-        search: z.string().trim().min(3).max(256).optional(),
+        search: z.string().trim().min(SEARCH_MIN_LENGTH).max(SEARCH_MAX_LENGTH).optional(),
       })
       .optional(),
   }),

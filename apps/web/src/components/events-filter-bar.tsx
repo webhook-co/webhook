@@ -28,7 +28,8 @@ import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verificati
 
 // `endpointId` is listed unconditionally: Clear deleting a param the per-endpoint page never sets is a no-op.
 const FILTER_KEYS = ["provider", "status", "from", "to", "search", "range", "endpointId"] as const;
-const SEARCH_DEBOUNCE_MS = 300;
+/** Exported so tests wait on the REAL window rather than a duplicated guess that could drift from it. */
+export const SEARCH_DEBOUNCE_MS = 300;
 
 export interface EventsFilterBarProps {
   /** The provider vocabulary (passed from the server so `@webhook-co/webhooks-spec` stays off the client). */
@@ -189,11 +190,22 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     const handle = setTimeout(() => {
       searchPendingRef.current = false;
       const trimmed = searchInput.trim();
-      if (trimmed === search) return;
+      // Compare what would actually be APPLIED, not what was typed. A 1-2 char term applies as "no search"
+      // (parseEventFilters drops it — pg_trgm extracts no trigrams below 3 chars), so typing "ab" with no
+      // search active is a no-op and must not navigate at all. Comparing the raw input instead pushed an
+      // IDENTICAL url: a wasted RSC round trip on every keystroke below the floor.
+      const effective = trimmed.length >= SEARCH_MIN_LENGTH ? trimmed : "";
+      if (effective === search) return;
       // Inlined (not the `apply` closure) so the deps stay stable — listing `apply` would reset the
       // debounce timer every render. Merge against the last-pushed value to keep concurrent control changes.
       const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
-      if (trimmed) next.set("search", trimmed);
+      // Only a term that can actually RUN reaches the URL. A 1-2 char term is dropped by parseEventFilters
+      // (pg_trgm extracts no trigrams below 3 chars, so no index can serve it), so pushing it would put a
+      // filter in the URL that is not applied: Clear lights up, the address bar is shareable, a round trip is
+      // spent — and the list still shows every event in the org. The "keep typing" hint carries the state
+      // instead. Deleting (not skipping) is deliberate: backspacing "abc" -> "ab" must REMOVE the applied
+      // search, not strand it.
+      if (effective) next.set("search", effective);
       else next.delete("search");
       const qs = next.toString();
       lastPushedRef.current = qs;
@@ -240,12 +252,20 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
       {/* A term below pg_trgm's 3-char floor cannot be run (no index can serve `%ab%`), and it used to be
           dropped in SILENCE — so the reader got the full unfiltered list back and had to guess that their
           search never happened. Say so instead. Reads off searchInput, not the URL: the point is to answer
-          the reader WHILE they type, before the debounce would (not) push anything. */}
-      {tooShort ? (
-        <p id="events-search-hint" role="status" className="mt-1.5 text-sm text-fg-muted">
-          Keep typing — search needs at least {SEARCH_MIN_LENGTH} characters.
-        </p>
-      ) : null}
+          the reader WHILE they type, before the debounce would (not) push anything.
+
+          The live region is ALWAYS MOUNTED and toggles its TEXT, rather than being mounted on demand. A
+          role="status" node inserted into the DOM at announce time is unreliable across screen readers —
+          several only announce changes to regions they were already observing, so a conditionally-rendered
+          one can stay silent. The wrapper is always present and empty; only the sentence appears. */}
+      <p
+        id="events-search-hint"
+        role="status"
+        aria-live="polite"
+        className={tooShort ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
+      >
+        {tooShort ? `Keep typing — search needs at least ${SEARCH_MIN_LENGTH} characters.` : ""}
+      </p>
 
       {/* Tier 2 — narrow: the faceting controls, with Clear right-aligned (disabled when nothing's set). */}
       <div className="flex flex-wrap items-center gap-2">

@@ -1,4 +1,5 @@
 import { buildCommand } from "@stricli/core";
+import { SEARCH_MIN_LENGTH } from "@webhook-co/contract";
 import { bytesToB64, PROVIDERS, VERIFICATION_STATES } from "@webhook-co/shared";
 
 import { ENV_DASHBOARD_URL_VAR, resolveDashboardUrl } from "../api-client.js";
@@ -116,13 +117,14 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
       search: {
         kind: "parsed",
         // A CLIENT-side floor, so `--search ab` fails HERE with a sentence a human can act on rather than as
-        // a raw server 400. The server floor (contract `.trim().min(3)`) is the real boundary and stays — this
-        // only buys a better message. 3 is not arbitrary: pg_trgm extracts zero trigrams below it, so no index
-        // can serve `%ab%` and it degrades to scanning every row in the org.
+        // a raw server 400. The server floor is the real boundary and stays — this only buys a better
+        // message, off the SAME constant, so the two can never disagree about where the floor is.
         parse: (value: string) => {
           const term = value.trim();
-          if (term.length > 0 && term.length < 3) {
-            throw new Error(`--search needs at least 3 characters (got ${term.length}).`);
+          if (term.length > 0 && term.length < SEARCH_MIN_LENGTH) {
+            throw new Error(
+              `--search needs at least ${SEARCH_MIN_LENGTH} characters (got ${term.length}).`,
+            );
           }
           return value;
         },

@@ -1,16 +1,22 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EventsFilterBar } from "./events-filter-bar";
+import { EventsFilterBar, SEARCH_DEBOUNCE_MS } from "./events-filter-bar";
+
+// A STABLE spy: the router hook must return the same fn across renders, or a fresh vi.fn() per call makes
+// what the bar pushed unobservable — and what it pushes to the URL is the contract under test.
+const replace = vi.fn();
 
 // The bar is URL-driven (next/navigation); stub the hooks so it renders deterministically with no query.
 vi.mock("next/navigation", () => ({
   useParams: () => ({ slug: "acme" }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: (...args: unknown[]) => replace(...args) }),
   usePathname: () => "/endpoints/ep/events",
   useSearchParams: () => new URLSearchParams(""),
 }));
+
+beforeEach(() => replace.mockClear());
 
 describe("EventsFilterBar", () => {
   it("renders provider options as display names with brand logos (not raw slugs)", async () => {
@@ -99,5 +105,34 @@ describe("EventsFilterBar — the search floor is explained, not silently enforc
     render(<EventsFilterBar providers={["stripe"]} />);
     await user.type(screen.getByLabelText("Search events"), "  ");
     expect(screen.queryByText(/Keep typing/)).not.toBeInTheDocument();
+  });
+});
+
+// A TERM THAT CANNOT RUN MUST NOT REACH THE URL.
+//
+// The debounce pushed ANY non-empty term, so typing "ab" wrote `?search=ab`, lit up Clear, and cost a server
+// round trip — for a term parseEventFilters then DROPS (pg_trgm extracts no trigrams below 3 chars, so no
+// index can serve it). The URL claimed a filter, the Clear affordance claimed a filter, and the list showed
+// every event in the org. Two comments in this file asserted the term was never passed on; they described the
+// SQL, not the URL, and the URL is what the reader sees and shares.
+describe("EventsFilterBar — the URL never carries a search that cannot run", () => {
+  it("does not push a 1-2 char term", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    await user.type(screen.getByLabelText("Search events"), "ab");
+    // Past the debounce window with room to spare: if it were going to push, it has had its chance.
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 150));
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("pushes as soon as the term can run", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    await user.type(screen.getByLabelText("Search events"), "abc");
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(expect.stringContaining("search=abc"), {
+        scroll: false,
+      }),
+    );
   });
 });
