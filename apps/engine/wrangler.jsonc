@@ -27,13 +27,21 @@
     // from (summaries are addressed by meter id, not event_name). Unset → the transport cron is dark.
     "STRIPE_METER_ID": "<STRIPE_METER_ID>",
   },
-  // Two Hyperdrive bindings (ADR-0002 / review finding C1):
-  //   HYPERDRIVE_TENANT  — query caching DISABLED. ALL tenant-scoped reads use this.
-  //     Hyperdrive's query cache is keyed on SQL+params and is blind to the RLS
-  //     session GUC (app.current_org), so a cached tenant query could serve one
-  //     org's rows to another. Tenant isolation must not rest on cache behavior.
-  //   HYPERDRIVE_CACHED  — query caching ON. Only for non-tenant, cache-safe
-  //     lookups; never for rows gated solely by RLS.
+  // HYPERDRIVE_TENANT — query caching DISABLED. ALL tenant-scoped reads use this.
+  //   Hyperdrive's query cache is keyed on SQL+params and is blind to the RLS
+  //   session GUC (app.current_org), so a cached tenant query could serve one
+  //   org's rows to another. Tenant isolation must not rest on cache behavior.
+  //
+  // There is deliberately NO caching binding here. One existed (HYPERDRIVE_CACHED,
+  // "only for non-tenant, cache-safe lookups") and was read by ZERO source files for
+  // its entire life — but its existence forced the cache-posture guard to carry a
+  // by-name exemption, and TWO separate review rounds walked the leak straight through
+  // that exemption: an app could bind the caching pool beside the tenant one and route
+  // org-wide reads (which bind no org_id, so their cache key is identical across orgs)
+  // through it with every layer green. A binding nothing reads is not worth a hole in a
+  // tenant boundary. The webhook-prod-cached config still exists on the account; if a
+  // genuinely cache-safe read ever needs it, re-add the binding AND the exemption
+  // together, scoped to (app, binding) rather than by name.
   // `id` is the per-environment Hyperdrive config id (set at deploy; not a secret).
   // `localConnectionString` is what `wrangler dev` uses, so local dev hits the
   // local Postgres directly (Hyperdrive doesn't run locally). Real ids + the
@@ -56,11 +64,6 @@
     {
       "binding": "HYPERDRIVE_TENANT",
       "id": "<HYPERDRIVE_TENANT_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
-    },
-    {
-      "binding": "HYPERDRIVE_CACHED",
-      "id": "<HYPERDRIVE_CACHED_ID>",
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
     {

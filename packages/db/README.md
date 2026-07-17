@@ -25,7 +25,11 @@ In Workers, the connection string comes from a Hyperdrive binding, not
 - `HYPERDRIVE_TENANT` — query caching **disabled**; used for **all** tenant-scoped
   reads (Hyperdrive's cache is keyed on SQL+params and is blind to the RLS session
   GUC, so caching tenant rows could cross tenants).
-- `HYPERDRIVE_CACHED` — caching on; only for non-tenant, cache-safe lookups.
+- There is deliberately NO caching binding. One existed (`HYPERDRIVE_CACHED`, "only for non-tenant,
+  cache-safe lookups") and was read by zero source files for its entire life, while forcing the cache-posture
+  guard to carry a by-name exemption that two review rounds walked a cross-tenant leak straight through. A
+  binding nothing reads is not worth a hole in a tenant boundary. The `webhook-prod-cached` Hyperdrive config
+  still exists; re-adding the binding means re-adding the guard's exemption, scoped to an (app, binding) pair.
 
 `wrangler dev` uses each binding's `localConnectionString`, so local dev hits a
 local Postgres while dev/prod use Hyperdrive → Neon.

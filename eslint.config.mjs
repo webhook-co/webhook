@@ -39,10 +39,28 @@ export default tseslint.config(
       // C1 (ADR-0002): the cached Hyperdrive binding must NEVER serve tenant-scoped
       // reads — its query cache is keyed on SQL+params and is blind to the RLS session
       // GUC, so a cached tenant query could serve one org's rows to another. Every
-      // *value* access to the binding is flagged (this catches both
-      // `createClient(env.HYPERDRIVE_CACHED.connectionString)` and any indirection);
-      // an interface/type declaration of the binding is not a MemberExpression, so it
-      // isn't matched. If a read is genuinely non-tenant/cache-safe, opt in explicitly:
+      // four STATIC access forms are flagged: member (`env.HYPERDRIVE_CACHED`),
+      // computed-literal (`env["HYPERDRIVE_CACHED"]`), and destructuring
+      // (`const { HYPERDRIVE_CACHED } = env`, plain / renamed / string-keyed).
+      //
+      // The destructure selectors are load-bearing, not belt-and-braces: a destructure is
+      // an ObjectPattern, NOT a MemberExpression, so the first two miss it entirely —
+      // `const { HYPERDRIVE_CACHED } = env; createClient(HYPERDRIVE_CACHED.connectionString)`
+      // passed this rule cleanly until a code review probed it. Exercised by
+      // scripts/eslint-c1-rule.test.mjs, which is what would have caught that.
+      //
+      // NOT flagged, and not claimed to be: a VARIABLE-keyed access (`env[k]`), which no
+      // syntactic selector can resolve, and a type/interface declaration of the binding
+      // (neither node type). This comment used to say "every value access ... and any
+      // indirection" is caught; that was false — `env[k]` escapes all four.
+      //
+      // It then said the dynamic case was "covered by the deploy-time posture check".
+      // That was ALSO false: the posture check reads wrangler configs, not source, and it
+      // exempted the cached binding by name. Nothing covered it. The real answer is that
+      // there is no longer a caching binding to reach: the dead HYPERDRIVE_CACHED binding
+      // was deleted, so `env[k]` cannot resolve to a caching pool from app code. If one is
+      // ever re-added, this gap is REAL again and this comment must say so.
+      // If a read is genuinely non-tenant/cache-safe, opt in explicitly:
       //   // eslint-disable-next-line no-restricted-syntax -- cache-safe (C1): <reason>
       "no-restricted-syntax": [
         "error",
@@ -53,6 +71,18 @@ export default tseslint.config(
         },
         {
           selector: "MemberExpression[computed=true] > Literal[value='HYPERDRIVE_CACHED']",
+          message:
+            "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
+        },
+        {
+          // `const { HYPERDRIVE_CACHED } = env` / `const { HYPERDRIVE_CACHED: x } = env`.
+          selector: "ObjectPattern > Property[key.name='HYPERDRIVE_CACHED']",
+          message:
+            "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
+        },
+        {
+          // `const { "HYPERDRIVE_CACHED": x } = env` — a string-keyed pattern.
+          selector: "ObjectPattern > Property > Literal[value='HYPERDRIVE_CACHED']",
           message:
             "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
         },
