@@ -218,7 +218,16 @@ export default {
       )
       .first<{ id: number }>();
 
-    if (!inserted) return; // already ingested
+    if (!inserted) {
+      // Already ingested. Mark the row we already wrote rather than leaving it 'parsed' with no linked
+      // report — that shape is indistinguishable from "parsed, but the write failed and we lost it",
+      // precisely the ambiguity this pipeline exists to eliminate. The UPDATE comes AFTER the insert on
+      // purpose: record-before-understanding survives, we only sharpen the verdict.
+      await env.DMARC_DB.prepare(`UPDATE inbound_message SET is_duplicate = 1 WHERE id = ?`)
+        .bind(messageId)
+        .run();
+      return;
+    }
 
     const stmt = env.DMARC_DB.prepare(
       `INSERT INTO aggregate_record

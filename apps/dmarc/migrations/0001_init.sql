@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS inbound_message (
   auth_results   TEXT,
   attachments    TEXT,
   raw_bytes      INTEGER NOT NULL,
-  status         TEXT    NOT NULL CHECK (status IN ('parsed', 'rejected')),
+  status         TEXT    NOT NULL CHECK (status IN ('parsed', 'rejected')), -- superseded by 0002: adds 'duplicate'
   error          TEXT
 );
 
