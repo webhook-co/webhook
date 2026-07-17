@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { EventSummaryItem } from "@/server/events";
 
 import type { MintTicketResult } from "./live-events";
-import { useLiveEvents } from "./use-live-events";
+import { LIVE_RESUME_MAX_PAUSE_MS, useLiveEvents } from "./use-live-events";
 
 const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const ORG_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f50aa";
@@ -242,5 +242,57 @@ describe("useLiveEvents — the seed distinguishes going live from carrying on",
     expect(relit).toBeDefined();
     expect(relit.url).toContain("since=now");
     expect(relit.url).not.toContain("sinceCursor");
+  });
+});
+
+// A PAUSE HAS A SHELF LIFE. Resuming from the last cursor is right for a tab switch and wrong for a weekend.
+//
+// The ref survives indefinitely: hiding a tab does not unmount the component, it only flips `visible`. So a
+// reader who turned Live on at 17:00 Friday and shut the lid would, on Monday, resume from Friday's cursor
+// and watch the DO drain the entire weekend into the live list, oldest-first. That is the history-replay the
+// whole change removes, re-entering through the resume path the change adds — and the ONE rule here is that
+// Live never shows history.
+describe("useLiveEvents — a stale pause restarts live rather than replaying the gap", () => {
+  const realNow = Date.now;
+  afterEach(() => {
+    Date.now = realNow;
+  });
+
+  async function hideThenShow(afterMs: number) {
+    const t0 = realNow();
+    Date.now = () => t0;
+    const { result } = renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    act(() => FakeWebSocket.instances[0].ready());
+    act(() =>
+      FakeWebSocket.instances[0].event("0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5081", "cur-friday"),
+    );
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    // The lid is shut. Wall-clock advances; Date.now() is the only thing that can see it.
+    Date.now = () => t0 + afterMs;
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    return { result, resumed: FakeWebSocket.instances[1] };
+  }
+
+  it("a BRIEF pause resumes from the cursor (no events lost)", async () => {
+    const { resumed } = await hideThenShow(30_000);
+    expect(resumed.url).toContain("sinceCursor=cur-friday");
+  });
+
+  it("a LONG pause starts live again instead of dumping the backlog", async () => {
+    const { resumed } = await hideThenShow(LIVE_RESUME_MAX_PAUSE_MS + 1);
+    expect(resumed.url).toContain("since=now");
+    expect(resumed.url).not.toContain("sinceCursor");
   });
 });

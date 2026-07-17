@@ -236,7 +236,14 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     //   * seedFrom = the tail was PAUSED (hidden tab ⇒ the hook stops the session) and is resuming from the
     //     last cursor it saw. Those events arrived while Live was ON, so they are not history and dropping
     //     them would be a data-loss bug wearing the fix's clothes. `sinceCursor` is opaque + HMAC-verified by
-    //     the DO, so a resume also costs no connect-time DB query.
+    //     the DO, so the SEED costs no DB round trip on this path — the connect still runs backlogMeta, which
+    //     is advisory. The hook bounds how stale a resume may be; a pause is an interruption, not an absence.
+    //
+    // COST, stated rather than glossed: `since=now` opts this connect into the DO's LOAD-BEARING seed
+    // resolution, which 503s the upgrade if the tenant DB hiccups (the client then re-mints and retries on
+    // backoff). Before this, the dashboard's only connect-time DB touch was backlogMeta, which is deliberately
+    // advisory and never fails an upgrade. That is a real new dependency, and it is the trade we want: failing
+    // closed and retrying beats connecting cheerfully and flooding the reader with history.
     //
     // Both only matter on a FIRST-BIND. A reconnect that still has its sticky sessionId lands on a DO that
     // already holds a binding, and listen-session's `existing` branch leaves the durable cursor untouched

@@ -43,6 +43,25 @@ export interface LiveEventsState {
   readonly error: string | null;
 }
 
+/**
+ * How long a paused tail may resume from its cursor before it is treated as a NEW go-live.
+ *
+ * A pause is an interruption — a tab switch, a screen lock, a five-minute meeting — and resuming exactly is
+ * right for those: the events arrived while Live was on, so they are not history. A shut laptop lid is a
+ * different thing wearing the same clothes. Hiding a tab does not unmount the hook, so without a bound the ref
+ * survives indefinitely and a Friday-evening Live toggle resumes on Monday by draining the whole weekend into
+ * the list, oldest-first — the exact history-replay this feature exists to prevent, re-entering through the
+ * resume path that prevents data loss.
+ *
+ * 5 minutes is a judgement call, not a derivation: long enough that every real interruption resumes
+ * losslessly, short enough that no plausible backlog is a flood. Tune it here if it reads wrong in practice.
+ *
+ * Measured with `Date.now()` deltas ON PURPOSE: it is a DURATION on one clock, so server skew cannot touch it,
+ * and unlike `performance.now()` the wall clock keeps advancing while the machine sleeps — which is precisely
+ * the case being bounded.
+ */
+export const LIVE_RESUME_MAX_PAUSE_MS = 5 * 60 * 1000;
+
 /** Read the document's current visibility (SSR-safe: treat a missing `document` as visible). */
 function isDocumentVisible(): boolean {
   if (typeof document === "undefined") return true;
@@ -113,6 +132,22 @@ export function useLiveEvents({
   React.useEffect(() => {
     if (!enabled) lastCursorRef.current = null;
   }, [enabled]);
+
+  /** When the tail last went inactive, so a resume can tell an interruption from an absence. */
+  const pausedAtRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (active) {
+      // Resuming: a pause older than the bound is not a pause. Drop the cursor so the connect below asks for
+      // `since=now` and the reader starts watching again rather than replaying however long they were away.
+      const pausedAt = pausedAtRef.current;
+      if (pausedAt !== null && Date.now() - pausedAt > LIVE_RESUME_MAX_PAUSE_MS) {
+        lastCursorRef.current = null;
+      }
+      pausedAtRef.current = null;
+    } else {
+      pausedAtRef.current = Date.now();
+    }
+  }, [active]);
 
   React.useEffect(() => {
     if (!active) {
