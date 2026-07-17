@@ -86,6 +86,17 @@ export function useLiveEvents({
   /**
    * The last cursor this tail delivered — the resume position across a PAUSE.
    *
+   * KNOWN GAP, filed not hidden: this is only populated once an event has been DELIVERED. The listen protocol
+   * deliberately keeps `headCursor` HTTP-only ("a streaming client tracks position from the event-frame
+   * cursors" — listen-protocol.ts), which was safe while the tail replayed from the oldest event and could
+   * not lose anything. It no longer is: if the tab hides BEFORE the first event arrives, there is no cursor,
+   * the resume falls back to `since=now`, and whatever landed while hidden is skipped.
+   *
+   * The honest fix is a protocol change — the ReadyFrame carrying the position the DO actually seeded at, so
+   * a client always has one from connect, server-resolved and immune to browser clock skew. Seeding from a
+   * client-side `new Date()` instead would close the gap and introduce a worse one: a laptop clock minutes
+   * off silently skips or replays minutes of events.
+   *
    * A ref, not state: it must survive the effect teardown/re-run that a visibility change causes, and writing
    * it must not re-render (every event would).
    */
