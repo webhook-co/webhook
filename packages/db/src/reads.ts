@@ -251,9 +251,18 @@ export interface EndpointNameEntry {
 export async function listEndpointNames(tx: TenantTx): Promise<Record<string, EndpointNameEntry>> {
   const rows = await tx<{ id: string; name: string; deleted_at: Date | null }[]>`
     select id, name, deleted_at from endpoints`;
-  // null-prototype: an endpoint id is a uuid, but a map keyed by external data must never let a key alias
-  // an Object.prototype member and read back a bogus entry.
-  const out: Record<string, EndpointNameEntry> = Object.create(null);
+  // A PLAIN object, deliberately — NOT Object.create(null).
+  //
+  // This map crosses the RSC -> Client Component boundary, and React refuses to serialize a null-prototype
+  // object: "Only plain objects, and a few built-ins, can be passed to Client Components from Server
+  // Components. Classes or null prototypes are not supported." A null prototype here throws at RENDER, taking
+  // the whole page down — and no unit test sees it, because a component test passes the prop directly and
+  // never crosses that boundary. (This shipped, and a Playwright spec caught it.)
+  //
+  // The prototype-key safety a null prototype would have bought is provided at the LOOKUP instead, via
+  // Object.hasOwn — see EventsTable. Belt-and-braces anyway: these keys are `endpoints.id`, a uuid column, so
+  // no key here can ever be "__proto__".
+  const out: Record<string, EndpointNameEntry> = {};
   for (const r of rows) out[r.id] = { name: r.name, deleted: r.deleted_at !== null };
   return out;
 }

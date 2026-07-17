@@ -1,5 +1,5 @@
 import { PROVIDERS } from "@webhook-co/webhooks-spec";
-import { PageContainer, PageHeader } from "@webhook-co/ui";
+import { Banner, PageContainer, PageHeader } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { EventsFilterBar } from "@/components/events-filter-bar";
@@ -48,13 +48,24 @@ export default async function OrgEventsPage({
   // and cursor — a shared, filtered events link must survive a rename intact.
   const session = await requireActiveOrgAccess(slug, `/events${queryString(sp)}`);
 
-  // DEFAULT RANGE. Unlike the per-endpoint page, an unfiltered org-wide browse defaults to a window rather
-  // than all time. Measured: the keyset's `limit + 1` early-stop does NOT hold once a residual filter makes
-  // the planner abandon the ordered index — the resulting Sort is a BLOCKING operator that consumes the whole
-  // input before emitting row 1 (578ms @1.8M rows, ~32s @100M; 29ms with a bound). 7d is also the Free plan's
-  // retention window, so for most orgs it hides nothing that exists. The chip is visible and "Any time" is one
-  // click away — the filter is disclosed, never silent.
-  const range = firstParam(sp.range) ?? DEFAULT_ORG_EVENTS_RANGE;
+  // DEFAULT RANGE — applied ONLY when the reader has expressed no date intent at all.
+  //
+  // Unlike the per-endpoint page, an unfiltered org-wide browse defaults to a window rather than all time.
+  // Measured: the keyset's `limit + 1` early-stop does NOT hold once a residual filter makes the planner
+  // abandon the ordered index — the resulting Sort is a BLOCKING operator that consumes the entire input
+  // before emitting row 1 (578ms @1.8M rows, ~32s @100M; 29ms with a bound). 7d is also the Free plan's
+  // retention window, so for most orgs it hides nothing that still exists.
+  //
+  // The `hasDateIntent` guard is load-bearing, not defensive. A bare `?? DEFAULT` is WRONG: picking a custom
+  // calendar range pushes `{from, to, range: ""}` (the two modes are mutually exclusive, so each clears the
+  // other), and with no `?range` the default re-injected itself — the preset branch then OWNS the window and
+  // parseEventFilters IGNORES from/to. A reader who picked Jan 1-9 saw the last 7 days while the chip read
+  // "Custom range": silently wrong data, with the UI asserting the opposite. Caught in review, on prod.
+  const hasDateIntent =
+    firstParam(sp.range) !== undefined ||
+    firstParam(sp.from) !== undefined ||
+    firstParam(sp.to) !== undefined;
+  const range = hasDateIntent ? firstParam(sp.range) : DEFAULT_ORG_EVENTS_RANGE;
 
   const rawParams: EventFilterParams = {
     provider: sp.provider,
@@ -110,15 +121,10 @@ export default async function OrgEventsPage({
       <PageHeader title="Events" description="Every event captured across all your endpoints." />
       <EventsFilterBar providers={[...PROVIDERS]} endpoints={endpointOptions} />
       {result.status === "error" ? (
-        <OrgEventsList
-          key={listKey}
-          initialItems={[]}
-          initialCursor={null}
-          filterParams={filterParams}
-          isFiltered={hasAppliedFilters(filters)}
-          endpointNames={endpointNames}
-          loadMore={loadMoreOrgEventsAction.bind(null, session.slug)}
-        />
+        // A read FAULT is not an empty result. Rendering the list here printed "No events match these
+        // filters" over a database error — telling the reader their filters found nothing when in fact we
+        // failed. The per-endpoint page uses a danger Banner for exactly this; match it.
+        <Banner tone="danger">We couldn&apos;t load your events. Refresh to try again.</Banner>
       ) : (
         <OrgEventsList
           key={listKey}

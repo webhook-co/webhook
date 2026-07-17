@@ -162,3 +162,24 @@ describe("parseEventFilters — endpointId (the org-wide browse's drill-down)", 
     expect(hasAppliedFilters(parseEventFilters({ endpointId: "oops" }))).toBe(false);
   });
 });
+
+// REGRESSION (review of #640, found ON PROD). The org page defaults ?range to 7d when the reader has
+// expressed no date intent. A bare `?? DEFAULT` was WRONG: picking a custom calendar range pushes
+// `{from, to, range: ""}` — the two modes are mutually exclusive, so each clears the other — and with no
+// ?range the default re-injected itself. The preset branch then OWNS the window and from/to are IGNORED, so
+// a reader who picked Jan 1-9 saw the last 7 days while the chip read "Custom range".
+//
+// These pin the PARSER's half of that contract: a preset owns the range; from/to apply only without one.
+describe("parseEventFilters — a preset OWNS the range (why the page must not blanket-default it)", () => {
+  it("a preset DISCARDS from/to entirely", () => {
+    const f = parseEventFilters({ range: "7d", from: "2026-01-01", to: "2026-01-10" });
+    expect(f.receivedBefore).toBeUndefined(); // `to` silently dropped — the page must not cause this
+    expect(f.receivedAfter).toBeDefined();
+  });
+
+  it("without a preset, from/to are honoured", () => {
+    const f = parseEventFilters({ from: "2026-01-01", to: "2026-01-10" });
+    expect(f.receivedAfter).toEqual(new Date("2026-01-01T00:00:00.000Z"));
+    expect(f.receivedBefore).toEqual(new Date("2026-01-10T00:00:00.000Z"));
+  });
+});

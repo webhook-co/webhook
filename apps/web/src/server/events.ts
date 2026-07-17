@@ -205,7 +205,13 @@ function boundReaders(app: Sql): EventReaders {
         }
         if (!meta) return { meta: null, page: { items: [], nextCursor: null } };
         // No limit → the shared DB default (clampLimit) so the page size can't drift from other surfaces.
-        const page = await listEvents(tx, { endpointId, ...filters });
+        // endpointId AFTER the spread: this page is scoped by its PATH, and a client-supplied
+        // filters.endpointId must never override it. `filters` is re-parsed from client input in
+        // loadMoreEventsAction, and EventFilters gained an endpointId for the org-wide browse — so with the
+        // old `{ endpointId, ...filters }` order a caller could append endpoint B's events into endpoint A's
+        // list (rows that then 404, since loadEvent scopes the detail read to A). RLS still bounds it to the
+        // caller's own org, so this is a correctness break, not a tenant one.
+        const page = await listEvents(tx, { ...filters, endpointId });
         return {
           meta,
           page: { items: page.items.map(toSummaryItem), nextCursor: page.nextCursor },
@@ -213,7 +219,8 @@ function boundReaders(app: Sql): EventReaders {
       }),
     listEvents: (orgId, endpointId, cursor, filters) =>
       withTenant(app, orgId, async (tx) => {
-        const page = await listEvents(tx, { endpointId, cursor, ...filters });
+        // endpointId AFTER the spread — see firstPage above.
+        const page = await listEvents(tx, { ...filters, cursor, endpointId });
         return { items: page.items.map(toSummaryItem), nextCursor: page.nextCursor };
       }),
     getEvent: (orgId, eventId) =>
