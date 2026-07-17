@@ -183,3 +183,22 @@ describe("parseEventFilters — a preset OWNS the range (why the page must not b
     expect(f.receivedBefore).toEqual(new Date("2026-01-10T00:00:00.000Z"));
   });
 });
+
+describe("parseEventFilters — the search floor (pg_trgm needs 3 chars)", () => {
+  // Below 3 chars pg_trgm extracts NO trigrams, so `%ab%` returns everything from the GIN and rechecks it —
+  // unservable by any index, at any volume. Matches the contract's .min(3) so the four surfaces agree.
+  it("DROPS a term shorter than 3 characters", () => {
+    expect(parseEventFilters({ search: "a" })).toEqual({});
+    expect(parseEventFilters({ search: "ab" })).toEqual({});
+  });
+
+  it("keeps a 3-character term", () => {
+    expect(parseEventFilters({ search: "abc" })).toEqual({ search: "abc" });
+  });
+
+  // The uuid short-circuit is unaffected — it resolves by PK, not by trigram.
+  it("keeps a full uuid (the paste-an-id-to-jump-to-it path)", () => {
+    const id = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
+    expect(parseEventFilters({ search: id })).toEqual({ search: id });
+  });
+});

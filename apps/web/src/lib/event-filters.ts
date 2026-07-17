@@ -40,7 +40,7 @@ export interface EventFilterParams {
   readonly to?: string | null;
   /** Verification tri-state (`?status=`), multi-select: verified | failed | unattempted. */
   readonly status?: string | string[] | null;
-  /** Free-text substring search over the event ID fields + headers (`?search=`). */
+  /** Free-text substring over provider_event_id + dedup_key (`?search=`); min 3 chars (pg_trgm's floor). */
   readonly search?: string | null;
   /** A relative date preset (`?range=`): 1h | 24h | 7d | 30d — resolves to a receivedAfter bound. */
   readonly range?: string | null;
@@ -134,10 +134,14 @@ export function parseEventFilters(
     ),
   ] as VerificationState[];
   if (statuses.length > 0) filters.verificationState = statuses;
-  // Cap at 256 to match the contract's `.max(256)` so the web surface doesn't accept a longer term than
-  // API/CLI/MCP (cross-surface parity); a hand-edited over-long `?search=` is dropped rather than run.
+  // Match the contract's `.min(3).max(256)` exactly — the web bypasses contract validation, so this IS the
+  // web's copy of that rule and the surfaces disagree the moment it drifts.
+  //
+  // The floor is not arbitrary: `pg_trgm` extracts ZERO trigrams from a 1-2 char pattern, so `%ab%` returns
+  // every row from the GIN and rechecks all of them — no index can ever serve it. A 1-char substring search
+  // is also useless on its own terms. Dropped (not run) rather than passed to SQL.
   const search = cleanString(params.search);
-  if (search !== undefined && search.length <= 256) filters.search = search;
+  if (search !== undefined && search.length >= 3 && search.length <= 256) filters.search = search;
   // SHAPE-validated only, deliberately NOT membership-validated — a departure from the provider filter
   // above, which checks its value against a static vocabulary.
   //

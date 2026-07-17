@@ -928,7 +928,7 @@
             "description": "Case-insensitive substring across id fields + header names/values.",
             "schema": {
               "type": "string",
-              "minLength": 1,
+              "minLength": 3,
               "maxLength": 256
             }
           }

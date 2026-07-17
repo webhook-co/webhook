@@ -155,25 +155,38 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // The events.list free-text search. A FULL-uuid term is an exact event-id lookup (the user pasted an
 // event id to jump to it) — resolved by the PK alone, NOT OR'd into the substring scans (which would run
-// three wasted trigram scans alongside the PK probe; and a non-uuid term must never reach `id =`, which
-// would raise 22P02). Any other term is a case-insensitive substring across the ID fields
-// (provider_event_id, external_id, dedup_key), backed by trigram GIN indexes (migration 0023). All inputs
-// are bound params.
+// two wasted trigram scans alongside the PK probe; and a non-uuid term must never reach `id =`, which
+// would raise 22P02). Any other term is a case-insensitive substring across `provider_event_id` and
+// `dedup_key` — BOTH trigram-GIN-indexed (migration 0023), which is the point: Postgres can only bitmap-OR a
+// disjunction when EVERY branch is index-backed. All inputs are bound params.
 function eventSearchFilter(tx: TenantTx, search: string | undefined) {
   if (!search) return tx``;
+  // A FULL uuid is an exact event-id lookup (the user pasted an id to jump to it) — resolved by the PK alone,
+  // never OR'd into the substring scans (which would run wasted trigram scans beside a PK probe), and a
+  // non-uuid must never reach `id =`, which raises 22P02.
   if (UUID_RE.test(search)) return tx`and id = ${search}`;
   const pattern = likeContains(search);
-  // The three ID columns are trigram-GIN-indexed (migration 0023). `headers::text` is a RESIDUAL scan
-  // (no GIN — indexing the large headers jsonb on the hot ingest path isn't worth the write-amp), and it
-  // serializes the whole jsonb so a term matches a header NAME or VALUE.
-  //   ⚠️ PERF: Postgres can only bitmap-OR an indexed disjunction when EVERY branch is index-backed, so
-  //   adding the unindexed headers branch forgoes the 0023 trigram path for the WHOLE search — it becomes
-  //   a per-endpoint seq scan. This is bounded (endpoint_id leads every index; the browse stops at
-  //   limit+1 matches) and only bites at very large per-endpoint volumes (where the trigram was the win);
-  //   at typical volumes the planner seq-scanned anyway. Revisit with a trigram GIN on (headers::text) if
-  //   header-inclusive search becomes hot. Header values aren't EXPOSED by a match — they stay redacted in
-  //   the UI; matching only LOCATES the event within the caller's own RLS-scoped org.
-  return tx`and (provider_event_id ilike ${pattern} or external_id ilike ${pattern} or dedup_key ilike ${pattern} or headers::text ilike ${pattern})`;
+  // Two branches, both trigram-GIN-indexed (migration 0023), so Postgres can BitmapOr them.
+  //
+  // TWO BRANCHES WERE REMOVED, and neither was a capability loss worth the cost:
+  //
+  //  * `headers::text` — the reason the 0023 GINs were DEAD WEIGHT for their whole life. Postgres can only
+  //    bitmap-OR a disjunction when EVERY branch is index-backed, so this one unindexed branch forgot the
+  //    trigram path for the WHOLE search: all three GINs paid ingest write-amp for ZERO read benefit, on
+  //    every surface. The obvious fix — a trigram GIN on (headers::text) — was MEASURED and refused: p99
+  //    0.69ms -> 8.80ms, a 12.8x write-amp on the metered ingest hot path, against a pre-committed 1.25x
+  //    budget (test/ingest-gin-writeamp.pg.test.ts, which now asserts the refusal). Dropping the branch is
+  //    what makes the remaining GINs work.
+  //
+  //  * `external_id` — searched a column that is NEVER WRITTEN. ingest-event.ts binds `null::text` for it,
+  //    unconditionally, always has. The design record (internal build plan) is explicit: external_id is v1's
+  //    idempotency key, SUPERSEDED by dedup_key, "retained nullable for human correlation only" — it is not
+  //    the Standard Webhooks id the code comment guessed at, and no inbound source ever populated it. A
+  //    branch that cannot match is not a feature.
+  //
+  // What this costs a user: a term is no longer matched against header names/values. Nothing else. The SW
+  // `webhook-id` remains findable — dedup_key holds it verbatim under the `sw_webhook_id` strategy.
+  return tx`and (provider_event_id ilike ${pattern} or dedup_key ilike ${pattern})`;
 }
 
 interface EndpointRow {
@@ -375,7 +388,7 @@ export interface EventBrowseFilters extends ListOptions {
   readonly receivedBefore?: Date;
   /** Multi-select verification tri-state filter (verified | failed | unattempted) — OR'd. */
   readonly verificationState?: readonly VerificationState[];
-  /** Case-insensitive substring across the event ID fields + headers (+ exact id match when a uuid). */
+  /** Case-insensitive substring across provider_event_id + dedup_key (+ exact id match when a uuid). */
   readonly search?: string;
 }
 

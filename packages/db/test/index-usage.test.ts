@@ -209,3 +209,20 @@ describe("reveal rate-limit COUNT rides the audit_log action-window index (migra
     });
   });
 });
+
+// NO trigram-plan assertion here, deliberately — and the absence is the honest answer, not an omission.
+//
+// Dropping the `headers::text` and dead `external_id` branches makes the search disjunction BITMAP-ABLE for
+// the first time: Postgres can only bitmap-OR when every branch is index-backed, so with those two present no
+// plan could ever use the 0023 GINs, and all three paid ingest write-amp for zero read benefit.
+//
+// But that property cannot be shown at THIS fixture's ~300 rows. RLS always adds `org_id = current_org_id()`,
+// and events_org_ordered_idx serves it more cheaply than a trigram bitmap at any size this file will ever
+// seed — the planner rides the org index with the ILIKE as a recheck, which is CORRECT. I tried forcing it
+// (enable_seqscan/indexscan off) and got a Bitmap Index Scan on events_org_ordered_idx: still the org index.
+//
+// Coaxing GUCs until an assertion goes green would manufacture a plan production never runs — precisely the
+// "green and worthless" failure this file already carries (see the header: enable_seqscan=off on 300 rows
+// proves an ordered path EXISTS, never that the planner PICKS it). So the trigram-vs-org-index question is
+// owned by the realistic-volume plan guard, which runs WITHOUT forcing GUCs. What IS pinned here, above, is
+// every plan this fixture can honestly show.

@@ -373,23 +373,22 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(ev?.verificationState).toBe("failed");
   });
 
-  it("listEvents searches across provider_event_id / external_id / dedup_key (+ uuid id exact)", async () => {
+  // The search surface, as it now IS — two trigram-indexed columns plus an exact uuid id match.
+  //
+  // It used to OR in `external_id` and `headers::text` as well. Both are gone, and the reason is the same for
+  // both: a disjunction is only index-usable when EVERY branch is index-backed, so those two branches forced
+  // the whole search off the 0023 trigram GINs — which then paid ingest write-amp for zero read benefit.
+  it("listEvents searches provider_event_id + dedup_key (+ exact uuid id)", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-search" }, hasher)).id;
-    const a = await seedEvent(orgA, ep, { providerEventId: "evt_STRIPE_abc", externalId: null });
-    const b = await seedEvent(orgA, ep, { providerEventId: "pi_xyz", externalId: "order-9981" });
-    const c = await seedEvent(orgA, ep, {
-      providerEventId: null,
-      externalId: null,
-      dedupKey: "whid_special_777",
-    });
+    const a = await seedEvent(orgA, ep, { providerEventId: "evt_STRIPE_abc" });
+    const b = await seedEvent(orgA, ep, { providerEventId: "pi_xyz" });
+    const c = await seedEvent(orgA, ep, { providerEventId: null, dedupKey: "whid_special_777" });
 
     const search = (term: string) =>
       withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50, search: term }));
 
     // case-insensitive substring on provider_event_id
     expect((await search("stripe")).items.map((e) => e.id)).toEqual([a]);
-    // substring on external_id
-    expect((await search("9981")).items.map((e) => e.id)).toEqual([b]);
     // substring on dedup_key
     expect((await search("special")).items.map((e) => e.id)).toEqual([c]);
     // exact id match when the term is a uuid (the PK)
@@ -398,22 +397,48 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect((await search("no-such-token")).items).toEqual([]);
   });
 
-  it("listEvents search also matches the request headers (name + value, residual scan)", async () => {
+  // external_id search is GONE, and this pins WHY so nobody "restores" it as a regression.
+  //
+  // `events.external_id` is bound `null::text` unconditionally at ingest (ingest-event.ts) — it is v1's
+  // superseded idempotency key, retained per the design record "for human correlation only", with no inbound
+  // source and none ever designed. So the branch could never match a real row: the only reason the OLD test
+  // passed is that it SEEDED a value by hand that production cannot produce. A test fixture was the sole
+  // evidence for a capability. That is exactly how a dead branch survives review — and it cost every search
+  // the trigram path, because an unindexable branch poisons the whole disjunction.
+  it("does not search external_id — the column is never written, so the branch was unreachable", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-extid" }, hasher)).id;
+    // Hand-seed the value production cannot: even so, it must not be findable.
+    await seedEvent(orgA, ep, { providerEventId: "evt_e1", externalId: "order-9981" });
+    const hits = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, search: "9981" }),
+    );
+    expect(hits.items).toEqual([]);
+  });
+
+  // A DELIBERATE, MEASURED LOSS — not an oversight. Header search worked, via an unindexed `headers::text
+  // ilike` residual, and dropping it is a real narrowing for users.
+  //
+  // The alternative was a trigram GIN on (headers::text), which would have kept it AND made the disjunction
+  // bitmap-able. It was benchmarked on the ingest hot path against a rule written before the number was known
+  // (see ingest-gin-writeamp.pg.test.ts): allowed 1.25x p99, MEASURED 12.80x. `webhook_ingest` has a 5s
+  // statement_timeout and WATERMARK_DELTA_MS derives from it — a GIN pending-list flush inside that budget is
+  // a DROPPED WEBHOOK. Header search is not worth dropping webhooks for.
+  it("no longer matches request headers (refused: a GIN on headers cost 12.8x ingest p99)", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-hsearch" }, hasher)).id;
-    const withHeader = await seedEvent(orgA, ep, {
+    await seedEvent(orgA, ep, {
       providerEventId: "evt_h1",
       headers: [
         ["content-type", "application/json"],
         ["x-shopify-topic", "orders/create"],
       ],
     });
-    await seedEvent(orgA, ep, { providerEventId: "evt_h2" }); // default headers, no match
     const search = (term: string) =>
       withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50, search: term }));
-    // a header VALUE
-    expect((await search("orders/create")).items.map((e) => e.id)).toEqual([withHeader]);
-    // a header NAME
-    expect((await search("x-shopify-topic")).items.map((e) => e.id)).toEqual([withHeader]);
+
+    expect((await search("orders/create")).items).toEqual([]); // a header VALUE
+    expect((await search("x-shopify-topic")).items).toEqual([]); // a header NAME
+    // The row is still findable by what search DOES cover — the narrowing is scoped, not a black hole.
+    expect((await search("evt_h1")).items).toHaveLength(1);
   });
 
   it("listEvents multi-selects provider (OR) and verificationState (OR)", async () => {
