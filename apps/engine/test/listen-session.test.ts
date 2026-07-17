@@ -436,6 +436,33 @@ describe("ListenSession — session pinning", () => {
     expect(binding?.endpointId).toBeUndefined();
   });
 
+  // Deploy compat: a binding persisted by the PRE-scope build has no `scope` field. An endpoint tab whose
+  // hibernated session spans the deploy must reconnect cleanly (101) and have its binding UPGRADED in place —
+  // not 403 forever on `undefined !== "endpoint"`.
+  it("upgrades a legacy scope-less endpoint binding on reconnect (no 403)", async () => {
+    const b = newBinding();
+    const stub = stubFor(b.sessionId);
+    // Seed a PRE-scope binding (no `scope`) and inject the poll seams, exactly as the old build left it.
+    await runInDurableObject(stub, async (inst, state) => {
+      (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as Pollable).backlogMeta = EMPTY_META;
+      (inst as Pollable).checkStillMember = async () => true;
+      await state.storage.put("binding", {
+        orgId: b.orgId,
+        endpointId: b.endpointId,
+        sessionId: b.sessionId,
+        boundAtMs: Date.now(),
+      });
+    });
+    // Reconnect with the new scoped header set → must upgrade, not wedge.
+    expect((await connect(stub, b)).status).toBe(101);
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ scope?: string; endpointId?: string }>("binding"),
+    );
+    expect(binding?.scope).toBe("endpoint"); // upgraded in place
+    expect(binding?.endpointId).toBe(b.endpointId);
+  });
+
   it("refuses a reconnect that FLIPS scope (org↔endpoint) on the same session (403)", async () => {
     const b = newOrgBinding();
     const { stub } = await openSession(b);

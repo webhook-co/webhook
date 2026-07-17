@@ -47,15 +47,18 @@ the engine via the WebSocket **subprotocol**:
 ## amendment (2026-07-17) — org-scope discriminator (v2), for the consolidated events page
 
 The consolidated `/org/{slug}/events` page (org-wide events lane) needs a live tail across EVERY endpoint,
-not one. The ticket envelope gains a **required scope discriminator** and bumps to **v2**:
+not one. The ticket envelope gains an **additive scope discriminator** — no version bump:
 
-- **Codec**: `{v: 2, o: orgId, s: "org" | "endpoint", e?: endpointId, u?: userId, exp}`. `s` is REQUIRED and
-  verify enforces scope↔endpoint agreement: `s:"endpoint"` MUST carry a non-empty `e`; `s:"org"` MUST omit
-  `e` (a contradictory envelope is rejected). An absent or unknown `s` returns `null` — **absence never
-  grants**, and it can never silently degrade to the broader org scope. This is deliberately NOT the
-  additive-optional-`e` shape (which would turn a malformed envelope into an org grant); it is a clean v2
-  break so the verifier reads as "unknown scope → null, full stop". The v1→v2 break costs a brief window of
-  401→re-mint reconnects during a rolling deploy — fail-closed and self-healing.
+- **Codec**: `{v: 1, o: orgId, s?: "org" | "endpoint", e?: endpointId, u?: userId, exp}`. `s` is OPTIONAL and
+  additive, exactly like `u` before it. verify: absent or `"endpoint"` → endpoint scope (still REQUIRES a
+  non-empty `e`); `"org"` → org scope (MUST omit `e`; a contradictory `s:"org"`+`e` is rejected); any OTHER
+  value → null. **Endpoint tickets omit `s`**, so they are byte-identical to a pre-scope v1 ticket — a
+  rolling web/engine deploy therefore never 401s the shipped endpoint feature. Safety holds WITHOUT a version
+  bump because **absence defaults to the NARROWER endpoint scope**: a malformed/truncated envelope resolves
+  to endpoint (or null), never to org; only an explicit, signed `s:"org"` widens, and forging it needs the
+  HMAC key. (A version bump was rejected on review — it would have reintroduced exactly the deploy-window
+  401 the additive `u` design was written to avoid.) verify also guards that the decoded payload is a
+  non-null object before reading `env.v`, preserving the never-throws contract for a `null`-literal payload.
 - **Web mint**: a new `mintOrgListenTicketAction(slug)` mints `{scope:"org", orgId}` after the session gate
   ONLY — there is **no per-endpoint ownership check** because the ticket names no endpoint. That is sound:
   RLS already scopes every tail read to `orgId`, so an org ticket grants nothing the caller's session did

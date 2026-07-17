@@ -36,18 +36,18 @@ export const LISTEN_SUBPROTOCOL = "wbhk.listen.v1";
 export const LISTEN_TICKET_SUBPROTOCOL_PREFIX = "ticket.";
 
 /**
- * The current envelope version. `verifyListenTicket` rejects any envelope whose `v` is missing or != this,
- * so a codec change is a clean break: mismatched tickets fail closed (→ null) and the client re-mints.
+ * The current envelope version. `verifyListenTicket` rejects any envelope whose `v` is missing or != this.
  *
- * v2 (slice 9) adds the required `s` scope discriminator so a ticket can grant EITHER one endpoint or the
- * whole org. A v1 ticket (no `s`, endpoint-only) no longer verifies — a deliberate clean break, not additive.
- * Making `s` REQUIRED (rather than defaulting an absent `s` to endpoint scope) is what lets the auditor read
- * `verifyListenTicket` as "unknown or absent scope → null, full stop", with no default to reason about — the
- * right posture for a signed authorization boundary. The cost is a brief window of 401→re-mint reconnects
- * during a rolling deploy where engine and web are on different versions; that fails CLOSED (a skewed ticket
- * is rejected, never mis-scoped) and self-heals once both sides land.
+ * Stays **1** across the slice-9 scope addition: the `s` scope discriminator is ADDITIVE, exactly like `u`
+ * before it. An endpoint ticket omits `s` entirely, so it is byte-identical to a pre-scope v1 ticket — a
+ * rolling web/engine deploy therefore NEVER 401s the shipped endpoint live-events feature (old engine
+ * verifies new web's endpoint tickets and vice-versa). A version bump would have reintroduced exactly the
+ * deploy-window 401 that keeping `u` additive was written to avoid. Safety is preserved without a bump
+ * because absence defaults to the NARROWER endpoint scope: only an explicit, signed `s:"org"` ever widens,
+ * and forging that needs the HMAC key. (Org tickets ARE understood only by a new engine, but the org feature
+ * is new too — no old client mints them, and its own first rollout self-heals.)
  */
-export const LISTEN_TICKET_VERSION = 2;
+export const LISTEN_TICKET_VERSION = 1;
 
 /**
  * Ticket lifetime (seconds). Kept SHORT — the ticket only has to survive the round-trip from mint to the
@@ -70,11 +70,16 @@ interface ListenTicketEnvelope {
   v: number;
   /** The org the ticket authorizes (set from the minting session, never the client). */
   o: string;
-  /** The scope discriminator. REQUIRED — an absent or unknown `s` fails closed (→ null); it never defaults. */
-  s: ListenTicketScope;
   /**
-   * The endpoint the ticket authorizes tailing (validated to belong to `o` at mint time). Present iff
-   * `s === "endpoint"`; an org-scoped envelope MUST omit it, and an `s`/`e` disagreement is rejected.
+   * The scope discriminator. OPTIONAL and ADDITIVE: absent or "endpoint" → endpoint scope (so a legacy /
+   * endpoint ticket with no `s` is byte-identical to a v1 ticket); "org" → org scope; any OTHER value → null.
+   * Absence defaults to the NARROWER endpoint scope and still requires an endpoint — it never grants org.
+   */
+  s?: ListenTicketScope;
+  /**
+   * The endpoint the ticket authorizes tailing (validated to belong to `o` at mint time). Present for endpoint
+   * scope (incl. an `s`-less endpoint ticket); an org-scoped envelope MUST omit it, and an `s:"org"`/`e`
+   * disagreement is rejected.
    */
   e?: string;
   /**
@@ -145,8 +150,9 @@ export async function mintListenTicket(
   const env: ListenTicketEnvelope = {
     v: LISTEN_TICKET_VERSION,
     o: grant.orgId,
-    s: grant.scope,
-    ...(grant.scope === "endpoint" ? { e: grant.endpointId } : {}),
+    // Endpoint tickets OMIT `s` → byte-identical to a pre-scope v1 ticket, so a rolling deploy never 401s the
+    // shipped endpoint feature. Only org tickets carry the widening `s:"org"`.
+    ...(grant.scope === "org" ? { s: "org" } : { e: grant.endpointId }),
     ...(grant.userId ? { u: grant.userId } : {}),
     exp: nowSeconds + LISTEN_TICKET_TTL_SECONDS,
   };
@@ -161,10 +167,11 @@ export async function mintListenTicket(
  * endpoint agree. Any malformed, tampered, forged, wrong-key, stale-version, expired, or shape-inconsistent
  * ticket returns null (never throws) — the cases are indistinguishable to the caller (no oracle).
  *
- * Scope safety — "absence never grants": `s` is REQUIRED and must be a known value; an absent/unknown scope
- * is null, never a default. An endpoint-scoped ticket must carry a non-empty `e`; an org-scoped ticket must
- * NOT carry `e` (a contradictory `s:"org"`+`e` envelope is rejected rather than silently narrowed/widened).
- * So a truncated or old-shape envelope can only ever resolve to null — never to the broader org grant.
+ * Scope safety — "absence never grants ORG": `s` is optional and ADDITIVE. Absent or "endpoint" → endpoint
+ * scope, which still REQUIRES a non-empty `e`; "org" → org scope, which must NOT carry `e` (a contradictory
+ * `s:"org"`+`e` envelope is rejected); any OTHER `s` value → null. So a truncated or old-shape envelope
+ * (no `s`) resolves to the NARROWER endpoint scope and still needs an endpoint — it can never widen to org.
+ * Only an explicit, signed `s:"org"` grants org scope.
  */
 export async function verifyListenTicket(
   key: CryptoKey,
@@ -189,6 +196,9 @@ export async function verifyListenTicket(
   } catch {
     return null;
   }
+  // JSON.parse succeeds on the literals `null`/`true`/`123`/`"x"`; guard that `env` is a non-null object
+  // before dereferencing `env.v` — otherwise `null.v` throws, breaking the never-throws (no-oracle) contract.
+  if (typeof env !== "object" || env === null) return null;
   if (env.v !== LISTEN_TICKET_VERSION) return null;
   if (typeof env.exp !== "number" || nowSeconds > env.exp) return null;
   if (typeof env.o !== "string" || env.o === "") return null;
@@ -198,8 +208,8 @@ export async function verifyListenTicket(
   if (env.u !== undefined && (typeof env.u !== "string" || env.u === "")) return null;
   const userId = env.u ? { userId: env.u } : {};
 
-  if (env.s === "endpoint") {
-    // Endpoint scope REQUIRES a non-empty endpoint.
+  if (env.s === undefined || env.s === "endpoint") {
+    // Endpoint scope (incl. an `s`-less v1/legacy ticket) REQUIRES a non-empty endpoint.
     if (typeof env.e !== "string" || env.e === "") return null;
     return { scope: "endpoint", orgId: env.o, endpointId: env.e, ...userId };
   }

@@ -227,12 +227,20 @@ export class ListenSession extends DurableObject<ListenEnv> {
     // BOTH sides, so an org reconnect matches itself (R1).
     const existing = await this.ctx.storage.get<Binding>("binding");
     if (existing) {
-      if (existing.orgId !== orgId || existing.scope !== scope) {
+      // A binding persisted by the PRE-scope build has no `scope` field; it was always endpoint-scoped, so
+      // normalize a missing scope to "endpoint". Without this, an endpoint tab whose HIBERNATED session spans
+      // the deploy would read `existing.scope === undefined`, hit `undefined !== "endpoint"`, and 403 on every
+      // reconnect — a permanent wedge on the already-shipped endpoint feature that never self-heals (the
+      // 403 returns before the re-persist below). `?? "endpoint"` mirrors reauthReason's legacy boundAtMs
+      // handling; the re-persist then upgrades the binding to a scoped one.
+      const existingScope: "org" | "endpoint" = existing.scope ?? "endpoint";
+      const existingEndpointId = (existing as { endpointId?: string }).endpointId;
+      if (existing.orgId !== orgId || existingScope !== scope) {
         return new Response("session binding mismatch", { status: 403 });
       }
       // Scopes match here; only an endpoint binding has an endpoint to compare (an org binding has none on
-      // either side, so it matches itself — the R1 fix). The narrow is on `existing.scope`.
-      if (existing.scope === "endpoint" && existing.endpointId !== endpointId) {
+      // either side, so it matches itself — the R1 fix).
+      if (existingScope === "endpoint" && existingEndpointId !== endpointId) {
         return new Response("session binding mismatch", { status: 403 });
       }
       // RESET the lifetime clock on this reconnect. Reaching here means the upgrade handler already verified
@@ -240,14 +248,23 @@ export class ListenSession extends DurableObject<ListenEnv> {
       // client just re-authorized. The absolute-lifetime cap exists to FORCE that periodic re-auth, not to
       // kill a session that keeps proving itself: without this reset a client that reconnects with the same
       // sticky sessionId would land on the same DO with the old boundAtMs and be re-closed 1008 immediately,
-      // permanently wedging the tail (and hot-looping the CLI). The membership subject may also have arrived
-      // (an older userless ticket upgrading to a userful one), so refresh it too. Cursor/binding identity are
-      // unchanged, so the resume stays seamless.
-      await this.ctx.storage.put<Binding>("binding", {
-        ...existing,
-        ...(userId ? { userId } : {}),
+      // permanently wedging the tail (and hot-looping the CLI). REBUILD the binding from the validated headers
+      // (rather than spreading `existing`) so a legacy scope-less binding is upgraded to a scoped one in place;
+      // org/endpoint/session are proven-equal above so identity is unchanged and the resume stays seamless.
+      // The membership subject may also have arrived (an older userless ticket upgrading to a userful one), so
+      // carry the newly-arrived userId, else keep the persisted one.
+      const finalUserId = userId ?? existing.userId;
+      const base = {
+        orgId,
+        sessionId,
+        ...(finalUserId ? { userId: finalUserId } : {}),
         boundAtMs: Date.now(),
-      });
+      };
+      const rebound: Binding =
+        scope === "endpoint"
+          ? { ...base, scope: "endpoint", endpointId: endpointId! }
+          : { ...base, scope: "org" };
+      await this.ctx.storage.put<Binding>("binding", rebound);
     } else {
       // Resolve the seed cursor BEFORE persisting the binding, so a load-bearing `--since` resolution
       // failure leaves NO binding behind — the CLI's retry re-enters first-bind and re-seeds, rather

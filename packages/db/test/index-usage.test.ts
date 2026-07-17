@@ -134,6 +134,23 @@ describe("keyset browse reads use their covering index (no Sort node)", () => {
     });
   });
 
+  it("tailOrgEventsWithCursors (org-wide ASC tail) rides events_org_ordered_idx forward (no Sort)", async () => {
+    await withTenant(app, orgId, async (tx) => {
+      // The consolidated events page's LIVE tail: no endpoint predicate (RLS supplies org_id), a watermark
+      // upper-bound on received_at, ordered received_at ASC. Must ride events_org_ordered_idx (org_id,
+      // received_at, id) forward with NO Sort node — a Sort here would sort the org's whole event history at
+      // every 2s poll. Mirrors tailEventRows' org-wide WHERE + ORDER BY (the watermark is a received_at range,
+      // the index's 2nd column, so it stays index-usable).
+      const asc = await planOf(
+        tx,
+        (t) =>
+          t`select id from events where deleted_at is null and received_at <= now()
+            order by received_at asc, id asc limit 51`,
+      );
+      expect(usesIndexNoSort(asc, "events_org_ordered_idx")).toBe(true);
+    });
+  });
+
   it("the org-wide failed filter rides events_org_failed_idx (0022's partial, one scope wider)", async () => {
     await withTenant(app, orgId, async (tx) => {
       const p = await planOf(

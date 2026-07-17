@@ -86,10 +86,10 @@ describe("listen-ticket codec", () => {
     expect(await verifyListenTicket(key, `${forgedPayload}.${mac}`, NOW)).toBeNull();
   });
 
-  it("rejects a wrong-version envelope (clean break — a v1 ticket no longer verifies)", async () => {
+  it("rejects a wrong-version envelope (a future version fails closed)", async () => {
     const key = await keyA();
-    // Hand-sign the OLD v1 envelope with the real key — the MAC is valid but the version gate rejects it.
-    const token = await handSign(key, { v: 1, o: ORG, e: ENDPOINT, exp: NOW + 60 });
+    // Hand-sign a v99 envelope with the real key — the MAC is valid but the version gate rejects it.
+    const token = await handSign(key, { v: 99, o: ORG, e: ENDPOINT, exp: NOW + 60 });
     expect(await verifyListenTicket(key, token, NOW)).toBeNull();
   });
 
@@ -100,14 +100,26 @@ describe("listen-ticket codec", () => {
     }
   });
 
+  it("returns null (never throws) for a signed payload that decodes to a JSON non-object", async () => {
+    // JSON.parse succeeds on `null`/`true`/`123`/`"x"`; the guard must stop `env.v` from dereferencing a
+    // non-object. Requires a valid MAC (only a key holder can craft this) — a robustness/no-oracle contract
+    // test, not an attacker path.
+    const key = await keyA();
+    for (const payload of [null, true, 42, "a string", [1, 2]]) {
+      const token = await handSign(key, payload);
+      expect(await verifyListenTicket(key, token, NOW)).toBeNull();
+    }
+  });
+
   it("rejects a key that is not 32 bytes, loudly", async () => {
     await expect(importListenTicketKey(new Uint8Array(16))).rejects.toThrow(/32 bytes/);
   });
 });
 
-// The scope discriminator (slice 9): a ticket grants EITHER one endpoint OR the whole org. The invariant that
-// makes this safe is "absence never grants" — every ticket must NAME its scope, and scope + endpoint must
-// agree. A malformed, truncated, or old-shape envelope resolves to null, never to the broader org grant.
+// The scope discriminator (slice 9): a ticket grants EITHER one endpoint OR the whole org. `s` is ADDITIVE
+// (no version bump), so the invariant is "absence never grants ORG": an absent/`"endpoint"` scope resolves to
+// endpoint (and still needs `e`); only an explicit signed `s:"org"` widens; any other `s` → null. A malformed
+// or truncated envelope thus resolves to the NARROWER endpoint scope (or null), never to the broader org grant.
 describe("listen-ticket codec — org/endpoint scope discriminator", () => {
   it("round-trips an ORG-scoped grant (no endpoint)", async () => {
     const key = await keyA();
@@ -162,9 +174,10 @@ describe("listen-ticket codec — org/endpoint scope discriminator", () => {
     expect(await verifyListenTicket(key, token, NOW)).toBeNull();
   });
 
-  it("REJECTS an envelope with NO scope field — absence never grants", async () => {
-    // The core of the safety argument: an old-shape or truncated envelope missing `s` resolves to null. It can
-    // never silently degrade to EITHER scope, and least of all to the broader org grant.
+  it("an envelope with NO scope defaults to the NARROWER endpoint scope (v1/legacy back-compat)", async () => {
+    // The additive contract: a scope-less ticket (a legacy v1 endpoint ticket, byte-identical to what mint
+    // emits for endpoint scope) resolves to ENDPOINT scope, never org. This is what lets a rolling deploy keep
+    // the shipped endpoint feature working without a version bump.
     const key = await keyA();
     const token = await handSign(key, {
       v: LISTEN_TICKET_VERSION,
@@ -172,7 +185,35 @@ describe("listen-ticket codec — org/endpoint scope discriminator", () => {
       e: ENDPOINT,
       exp: NOW + 60,
     });
+    expect(await verifyListenTicket(key, token, NOW)).toEqual({
+      scope: "endpoint",
+      orgId: ORG,
+      endpointId: ENDPOINT,
+    });
+  });
+
+  it("a scope-less envelope with NO endpoint is null — absence never grants org, and endpoint needs `e`", async () => {
+    // The safety corollary: dropping BOTH `s` and `e` must NOT degrade to an org grant (or any grant) — a
+    // truncated envelope resolves to endpoint scope, which then fails for want of an endpoint.
+    const key = await keyA();
+    const token = await handSign(key, { v: LISTEN_TICKET_VERSION, o: ORG, exp: NOW + 60 });
     expect(await verifyListenTicket(key, token, NOW)).toBeNull();
+  });
+
+  it("an explicit s:'endpoint' still round-trips (forward-compat with a scope-tagged endpoint mint)", async () => {
+    const key = await keyA();
+    const token = await handSign(key, {
+      v: LISTEN_TICKET_VERSION,
+      o: ORG,
+      s: "endpoint",
+      e: ENDPOINT,
+      exp: NOW + 60,
+    });
+    expect(await verifyListenTicket(key, token, NOW)).toEqual({
+      scope: "endpoint",
+      orgId: ORG,
+      endpointId: ENDPOINT,
+    });
   });
 });
 
