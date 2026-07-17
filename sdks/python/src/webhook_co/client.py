@@ -266,7 +266,9 @@ class _EventsResource:
             "receivedBefore": received_before,
             "search": search,
             "method": list(method) if method is not None else None,
-            "dedupStrategy": list(dedup_strategy) if dedup_strategy is not None else None,
+            "dedupStrategy": (
+                list(dedup_strategy) if dedup_strategy is not None else None
+            ),
             "eventType": event_type,
         }
 
