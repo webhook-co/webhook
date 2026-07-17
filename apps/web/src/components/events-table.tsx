@@ -92,7 +92,18 @@ export function EventsTable({ items, isFiltered, endpointNames, emptyMessage }: 
                   {formatDateTime(event.receivedAt)}
                 </Link>
               </TableCell>
-              {showEndpoint ? <EndpointCell label={endpointNames[event.endpointId]} /> : null}
+              {showEndpoint ? (
+                // Object.hasOwn, not a bare index: a key must never alias an Object.prototype member and
+                // read back a bogus label. (The map itself is a plain object because React cannot serialize
+                // a null-prototype one across the RSC boundary.)
+                <EndpointCell
+                  label={
+                    Object.hasOwn(endpointNames, event.endpointId)
+                      ? endpointNames[event.endpointId]
+                      : undefined
+                  }
+                />
+              ) : null}
               <TableCell className="text-fg-secondary">
                 <span className="flex items-center gap-2">
                   <ProviderLogo slug={event.provider} size={16} />

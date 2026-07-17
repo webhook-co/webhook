@@ -1247,9 +1247,34 @@ describe("listEndpointNames (labels for the org-wide events list)", () => {
     expect(names[epB]).toBeUndefined();
   });
 
-  it("is a null-prototype map (an id can never alias Object.prototype)", async () => {
+  // REGRESSION. This map crosses the RSC -> Client boundary, and React refuses to serialize a null-prototype
+  // object — it throws at RENDER and takes the page down. The first version returned Object.create(null) for
+  // prototype-key safety; every unit test passed (they hand the prop straight to the component and never
+  // cross the boundary) and a Playwright spec caught it in a real browser. Safety now lives at the LOOKUP
+  // (Object.hasOwn in EventsTable) instead.
+  it("is a PLAIN object, so React can serialize it to a Client Component", async () => {
     const names = await withTenant(app, orgA, (tx) => listEndpointNames(tx));
-    expect(Object.getPrototypeOf(names)).toBeNull();
-    expect(names["toString"]).toBeUndefined();
+    expect(Object.getPrototypeOf(names)).toBe(Object.prototype);
+    expect(JSON.parse(JSON.stringify(names))[epA]).toEqual({ name: "ep-a", deleted: false });
+  });
+});
+
+// REGRESSION (review of #640, found ON PROD). EventFilters gained an `endpointId` for the org-wide browse,
+// which made the per-endpoint reader's `{ endpointId, ...filters }` spread unsafe: `filters` is re-parsed
+// from CLIENT input in loadMoreEventsAction, so a caller could set filters.endpointId = B and have endpoint
+// B's events appended into endpoint A's list — rows that then 404, since loadEvent scopes the detail read to
+// A. RLS still bounds it to the caller's own org, so it is a correctness break, not a tenant one.
+//
+// The scoping endpointId must be spread LAST so it wins. This asserts the property at the query, where it is
+// true or false — not at the call site, where you can only see that an argument was passed.
+describe("listEvents: an explicit endpointId beats one in the filters", () => {
+  it("returns the EXPLICIT endpoint's events, not the filter's", async () => {
+    const page = await withTenant(app, orgA, (tx) =>
+      // the shape boundReaders uses: `{ ...filters, endpointId }`
+      listEvents(tx, { ...{ endpointId: epTail }, endpointId: epA }),
+    );
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.items.every((e) => e.endpointId === epA)).toBe(true);
+    expect(page.items.some((e) => e.endpointId === epTail)).toBe(false);
   });
 });
