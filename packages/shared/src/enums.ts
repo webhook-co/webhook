@@ -20,6 +20,17 @@ export const DEDUP_STRATEGIES = [
 export const DedupStrategySchema = z.enum(DEDUP_STRATEGIES);
 export type DedupStrategy = z.infer<typeof DedupStrategySchema>;
 
+/**
+ * The HTTP methods offered as an events FILTER vocabulary (the seven standard verbs).
+ *
+ * Ingestion accepts ALL verbs and stores the raw captured method, so `events.method` can in principle hold
+ * a non-standard verb; this closed set is the filter/facet vocabulary, not a constraint on what was stored.
+ * A NULL method (legacy pre-0028 rows) matches no value — an `IN (...)` filter never selects NULL.
+ */
+export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+export const HttpMethodSchema = z.enum(HTTP_METHODS);
+export type HttpMethod = z.infer<typeof HttpMethodSchema>;
+
 // PROVIDERS / ProviderSchema / Provider are defined in @webhook-co/webhooks-spec (the leaf
 // package that owns the provider vocabulary + verification adapters) and re-exported by this
 // package's index, so there is still one cross-surface import site (`@webhook-co/shared`).

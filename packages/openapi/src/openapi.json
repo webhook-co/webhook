@@ -907,7 +907,7 @@
             "name": "receivedAfter",
             "in": "query",
             "required": false,
-            "description": "Inclusive lower bound (RFC 3339 instant).",
+            "description": "Inclusive lower bound: an RFC 3339 instant OR the relative --since grammar (now | beginning | a duration like 7d / 30m).",
             "schema": {
               "type": "string"
             }
@@ -929,6 +929,61 @@
             "schema": {
               "type": "string",
               "minLength": 3,
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "dedupStrategy",
+            "in": "query",
+            "required": false,
+            "description": "Filter by dedup strategy: sw_webhook_id | provider_event_id | content_hash | fields | unique (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "sw_webhook_id",
+                  "provider_event_id",
+                  "content_hash",
+                  "fields",
+                  "unique"
+                ]
+              }
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "description": "Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "GET",
+                  "POST",
+                  "PUT",
+                  "PATCH",
+                  "DELETE",
+                  "HEAD",
+                  "OPTIONS"
+                ]
+              }
+            }
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "required": false,
+            "description": "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Empty for providers whose type is not parsed.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
               "maxLength": 256
             }
           }

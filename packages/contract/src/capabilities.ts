@@ -8,7 +8,9 @@ import {
   DeliveryStatusSchema,
   EndpointSchema,
   EventSchema,
+  DedupStrategySchema,
   EventSummarySchema,
+  HttpMethodSchema,
   LagSchema,
   MAX_INLINE_BODY_BYTES,
   ProviderSchema,
@@ -239,6 +241,9 @@ export const eventsList = defineCapability({
         // `provider=[stripe,github]` → `provider in (...)`. multiEnum accepts a scalar or a non-empty
         // array (normalized to an array) — JSON-Schema-clean for the MCP inputSchema. Omit = no filter.
         provider: multiEnum(ProviderSchema).optional(),
+        // receivedAfter accepts the --since grammar (now | beginning | <duration> like 7d/30m | RFC3339),
+        // resolved server-side to a lower-bound instant — the same "last N" vocabulary as events.tail's
+        // `since` and the web presets. receivedBefore stays a strict RFC3339 upper bound.
         receivedAfter: z.string().optional(),
         receivedBefore: z.string().optional(),
         // The verification state, multi-select. FOUR states, not three: `authenticated` is a real, weaker
@@ -256,6 +261,15 @@ export const eventsList = defineCapability({
         // min(3), not min(1): pg_trgm extracts ZERO trigrams below 3 characters, so a 1-2 char term can never
         // use an index — it degrades to scanning and rechecking every row in the org.
         search: z.string().trim().min(SEARCH_MIN_LENGTH).max(SEARCH_MAX_LENGTH).optional(),
+        // dedupStrategy: multi-select over the five closed strategies (always NOT NULL, so every event
+        // is filterable). method: multi-select over the seven standard HTTP verbs — ingestion accepts all
+        // verbs and stores the raw one, so this is the FACET vocabulary, and a legacy NULL-method row (pre
+        // migration 0028) never matches. eventType: an EXACT match on the normalized, provider-derived type
+        // (Stripe body `.type`, GitHub header, …) — unbounded and user-facing, so a free string not an enum;
+        // NULL for providers whose type we don't parse, which never matches.
+        dedupStrategy: multiEnum(DedupStrategySchema).optional(),
+        method: multiEnum(HttpMethodSchema).optional(),
+        eventType: z.string().trim().min(1).max(256).optional(),
       })
       .optional(),
   }),

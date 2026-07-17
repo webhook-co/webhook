@@ -99,6 +99,36 @@ function toInstantBound(value: string | undefined): Date | undefined {
   return d;
 }
 
+/**
+ * Resolve the `receivedAfter` lower bound, which — unlike `receivedBefore` — accepts the `--since` grammar
+ * (`now` | `beginning` | `<duration>` like `7d`/`30m` | RFC3339) as well as a plain instant, so the same
+ * "last N" vocabulary the CLI's `--after 7d` and the web presets use works on api/mcp too. One grammar, two
+ * capabilities (this and events.tail's `since`).
+ *
+ * Resolved against the SERVER clock (Date.now here runs in the Worker), which is the same fuzzy-bound
+ * expectation as `--after 7d` everywhere; it is a browse filter, not the tail's gapless watermark, so no
+ * clock-skew guarantee is owed. `beginning` = no lower bound (undefined).
+ */
+export function resolveReceivedAfter(value: string | undefined): Date | undefined {
+  if (value === undefined || value === "") return undefined;
+  const since = parseSince(value);
+  switch (since.kind) {
+    case "beginning":
+      return undefined;
+    case "now":
+      return new Date();
+    case "relative":
+      return new Date(Date.now() - since.ms);
+    case "timestamp":
+      return since.date;
+    case "invalid":
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        "invalid receivedAfter (expected an instant or a duration like 7d)",
+      );
+  }
+}
+
 export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
   function parse<C extends AnyCapability>(cap: C, input: unknown): unknown {
     const result = cap.input.safeParse(input);
@@ -157,6 +187,9 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         receivedBefore?: string;
         verificationState?: VerificationState | VerificationState[];
         search?: string;
+        dedupStrategy?: string | string[];
+        method?: string | string[];
+        eventType?: string;
       };
     };
     const provider = asArray(filter?.provider);
@@ -164,7 +197,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     // The range bounds arrive as RFC3339 strings (the contract input is a plain string so the MCP tool
     // inputSchema stays JSON-Schema-clean); validate + coerce them to Dates HERE — a malformed bound is
     // a VALIDATION_ERROR, never a raw string handed to SQL.
-    const receivedAfter = toInstantBound(filter?.receivedAfter);
+    const receivedAfter = resolveReceivedAfter(filter?.receivedAfter);
     const receivedBefore = toInstantBound(filter?.receivedBefore);
     const decoded = await decode(cursor);
     const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
@@ -182,6 +215,9 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         receivedBefore,
         verificationState,
         search: filter?.search,
+        dedupStrategy: asArray(filter?.dedupStrategy) as never,
+        method: asArray(filter?.method),
+        eventType: filter?.eventType,
       });
       // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
       // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).
