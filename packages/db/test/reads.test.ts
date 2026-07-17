@@ -1346,3 +1346,62 @@ describe("browseEvents bounds itself with a statement_timeout", () => {
     });
   });
 });
+
+// `now` MUST NEVER MEAN `beginning`. The founder's rule for the Live tail is "only show events from that
+// point forward — history is NOT live", and this is the one place that can quietly contradict it.
+//
+// resolveSince mapped `now` to `latestTailCursor(...) ?? undefined`, and undefined is the DO's sentinel for
+// OLDEST-INCLUSIVE. latestTailCursor is watermark-bounded and returns null when NOTHING is at/below the
+// watermark — i.e. an endpoint whose entire history is younger than δ. So for exactly that endpoint, `now`
+// and `beginning` were the same request, and "go live" replayed the burst it was meant to skip.
+//
+// Bounded (≤ δ) but wrong in principle, and the principle is what the sentinel gets wrong: two opposite
+// intents must never collapse onto one value.
+describe("resolveSince — `now` never degenerates into `beginning`", () => {
+  it("returns a cursor even when NO event is at/below the watermark", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-young" }, hasher)).id;
+    // A brand-new event is ABOVE the watermark, so latestTailCursor finds nothing — the null case.
+    await seedEvent(orgA, ep, { provider: "stripe" });
+
+    const cursor = await withTenant(app, orgA, (tx) =>
+      resolveSince(tx, { endpointId: ep, since: { kind: "now" } }),
+    );
+    // The old code returned undefined here = "start from the oldest" = the exact opposite of `now`.
+    expect(cursor).toBeDefined();
+  });
+
+  it("that cursor skips the young backlog once it matures past the watermark", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-young-skip" }, hasher)).id;
+    const young = await seedEvent(orgA, ep, { provider: "stripe" });
+
+    const cursor = await withTenant(app, orgA, (tx) =>
+      resolveSince(tx, { endpointId: ep, since: { kind: "now" } }),
+    );
+    // Age the event past the watermark, exactly as time would. A tail seeded at `now` BEFORE it matured must
+    // still not replay it: the reader pressed Live after it arrived, so it is history to them.
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = now() - interval '1 hour' where id = ${young}`,
+    );
+    const page = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, { endpointId: ep, sinceCursor: cursor, limit: 50 }),
+    );
+    expect(page.items.map((e) => e.id)).toEqual([]);
+  });
+
+  it("still returns the head cursor when the endpoint HAS events below the watermark", async () => {
+    // The unchanged, well-trodden path — pinned so the null-case fix cannot alter it.
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-old" }, hasher)).id;
+    const old = await seedEvent(orgA, ep, { provider: "stripe" });
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = now() - interval '1 hour' where id = ${old}`,
+    );
+    const cursor = await withTenant(app, orgA, (tx) =>
+      resolveSince(tx, { endpointId: ep, since: { kind: "now" } }),
+    );
+    expect(cursor?.id).toBe(old);
+  });
+});
