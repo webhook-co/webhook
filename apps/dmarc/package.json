@@ -1,0 +1,17 @@
+{
+  "name": "@webhook-co/dmarc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260715.1"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.10.1"
+  }
+}
