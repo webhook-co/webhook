@@ -15,6 +15,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 
 import { DateRangeFilter } from "@/components/date-range-filter";
+import { effectiveDateRange } from "@/lib/date-range";
+import { SEARCH_MIN_LENGTH, searchTooShort } from "@/lib/event-filters";
 import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verification-state";
 
 // The events-list filter bar, driven entirely by the URL query so the filtered view is shareable,
@@ -26,7 +28,8 @@ import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verificati
 
 // `endpointId` is listed unconditionally: Clear deleting a param the per-endpoint page never sets is a no-op.
 const FILTER_KEYS = ["provider", "status", "from", "to", "search", "range", "endpointId"] as const;
-const SEARCH_DEBOUNCE_MS = 300;
+/** Exported so tests wait on the REAL window rather than a duplicated guess that could drift from it. */
+export const SEARCH_DEBOUNCE_MS = 300;
 
 export interface EventsFilterBarProps {
   /** The provider vocabulary (passed from the server so `@webhook-co/webhooks-spec` stays off the client). */
@@ -44,9 +47,19 @@ export interface EventsFilterBarProps {
     readonly name: string;
     readonly deleted: boolean;
   }[];
+  /**
+   * The window the PAGE applies when the URL names none (the org browse defaults to 7d; the per-endpoint one
+   * omits this and defaults to all time).
+   *
+   * The bar must be told, because it reads the URL and the default lives server-side — so without this the
+   * chip read "Date range" while the reader was looking at 7 days of data. A default the UI does not name is
+   * a silent filter. Resolution goes through effectiveDateRange, the same function the page uses, so the two
+   * cannot drift apart again.
+   */
+  readonly defaultRange?: string;
 }
 
-export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) {
+export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -70,10 +83,13 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
-  const range = searchParams.get("range") ?? "";
+  // RAW (what the URL says) vs EFFECTIVE (what the page applied). They differ exactly when the URL names no
+  // date choice and the page falls back — the case the chip used to mislabel.
+  const rawRange = searchParams.get("range") ?? "";
   // Read GUARDED: without the `endpoints &&`, a hand-added ?endpointId= on the per-endpoint page (which has
   // no such control) would enable Clear with nothing visibly set.
   const endpointSel = endpoints ? (searchParams.get("endpointId") ?? "") : "";
+  const range = effectiveDateRange({ range: rawRange, from, to }, defaultRange ?? "");
   const active =
     endpointSel !== "" ||
     providerSel.length > 0 ||
@@ -81,7 +97,9 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
     from !== "" ||
     to !== "" ||
     search !== "" ||
-    range !== "";
+    // rawRange, NOT the effective one: the page's default is not a filter the reader SET, so it must not
+    // light up Clear — and clearing it would only round-trip back to the same default anyway.
+    rawRange !== "";
 
   // A single-select Combobox, NOT a MultiSelect like the facets beside it — deliberately. Two reasons:
   //   * SQL: `endpoint_id = $1` rides events_tunnel_idx (endpoint_id, received_at, id) with an equality seek
@@ -161,6 +179,9 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
   // NOT pending, any external ?search change is adopted — even one that round-trips back to a prior value
   // (the bug a "last-pushed value" ref had: it skipped the re-sync and left a filtered-but-blank box).
   const [searchInput, setSearchInput] = React.useState(search);
+  // Off the LIVE input, not the URL: the hint answers the reader as they type, before the debounce decides
+  // (correctly) not to push a term that cannot run.
+  const tooShort = searchTooShort({ search: searchInput });
   const searchPendingRef = React.useRef(false);
   React.useEffect(() => {
     if (!searchPendingRef.current) setSearchInput(search);
@@ -169,11 +190,22 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
     const handle = setTimeout(() => {
       searchPendingRef.current = false;
       const trimmed = searchInput.trim();
-      if (trimmed === search) return;
+      // Compare what would actually be APPLIED, not what was typed. A 1-2 char term applies as "no search"
+      // (parseEventFilters drops it — pg_trgm extracts no trigrams below 3 chars), so typing "ab" with no
+      // search active is a no-op and must not navigate at all. Comparing the raw input instead pushed an
+      // IDENTICAL url: a wasted RSC round trip on every keystroke below the floor.
+      const effective = trimmed.length >= SEARCH_MIN_LENGTH ? trimmed : "";
+      if (effective === search) return;
       // Inlined (not the `apply` closure) so the deps stay stable — listing `apply` would reset the
       // debounce timer every render. Merge against the last-pushed value to keep concurrent control changes.
       const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
-      if (trimmed) next.set("search", trimmed);
+      // Only a term that can actually RUN reaches the URL. A 1-2 char term is dropped by parseEventFilters
+      // (pg_trgm extracts no trigrams below 3 chars, so no index can serve it), so pushing it would put a
+      // filter in the URL that is not applied: Clear lights up, the address bar is shareable, a round trip is
+      // spent — and the list still shows every event in the org. The "keep typing" hint carries the state
+      // instead. Deleting (not skipping) is deliberate: backspacing "abc" -> "ab" must REMOVE the applied
+      // search, not strand it.
+      if (effective) next.set("search", effective);
       else next.delete("search");
       const qs = next.toString();
       lastPushedRef.current = qs;
@@ -211,11 +243,29 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
             // doesn't re-sync over the typing; the debounce clears it after pushing.
             searchPendingRef.current = e.target.value.trim() !== search;
           }}
-          placeholder="Search by event id, external id, provider event id, or header"
+          placeholder="Search by event id, provider event id, or dedup key"
           aria-label="Search events"
+          aria-describedby={tooShort ? "events-search-hint" : undefined}
           className="pl-9"
         />
       </div>
+      {/* A term below pg_trgm's 3-char floor cannot be run (no index can serve `%ab%`), and it used to be
+          dropped in SILENCE — so the reader got the full unfiltered list back and had to guess that their
+          search never happened. Say so instead. Reads off searchInput, not the URL: the point is to answer
+          the reader WHILE they type, before the debounce would (not) push anything.
+
+          The live region is ALWAYS MOUNTED and toggles its TEXT, rather than being mounted on demand. A
+          role="status" node inserted into the DOM at announce time is unreliable across screen readers —
+          several only announce changes to regions they were already observing, so a conditionally-rendered
+          one can stay silent. The wrapper is always present and empty; only the sentence appears. */}
+      <p
+        id="events-search-hint"
+        role="status"
+        aria-live="polite"
+        className={tooShort ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
+      >
+        {tooShort ? `Keep typing — search needs at least ${SEARCH_MIN_LENGTH} characters.` : ""}
+      </p>
 
       {/* Tier 2 — narrow: the faceting controls, with Clear right-aligned (disabled when nothing's set). */}
       <div className="flex flex-wrap items-center gap-2">
@@ -251,7 +301,14 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
           />
         ) : null}
 
-        <DateRangeFilter value={{ range, from, to }} onApply={applyPatch} />
+        <DateRangeFilter
+          value={{ range, from, to }}
+          onApply={applyPatch}
+          // Only where a default exists to escape FROM — and only the org browse bounds the resulting
+          // unbounded query (browseEvents' statement_timeout). The per-endpoint bar passes no defaultRange
+          // and is already all-time, so the option would be a no-op there.
+          allowAllTime={defaultRange !== undefined}
+        />
 
         <Button variant="secondary" onClick={clear} disabled={!active} className="ml-auto">
           Clear filters

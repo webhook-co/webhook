@@ -37,6 +37,18 @@ function multiEnum<T extends z.ZodTypeAny>(schema: T) {
 // reuse the shared entity schemas (one definition). The cursor is the opaque string
 // from packages/shared (HMAC-signed); pagination wraps items + nextCursor.
 
+/**
+ * The events-search bounds — THE canonical figures, exported because three surfaces enforce them and a
+ * duplicated literal drifts silently.
+ *
+ * The floor is not a preference: `pg_trgm` extracts ZERO trigrams from a 1-2 character pattern, so `%ab%`
+ * cannot be served by any index — it scans every row in the org and rechecks them. The web mirrors these to
+ * drop a short term before SQL, and the CLI to reject one client-side with a readable message rather than
+ * forwarding it into a raw 400. All three now read the same numbers.
+ */
+export const SEARCH_MIN_LENGTH = 3;
+export const SEARCH_MAX_LENGTH = 256;
+
 const uuid = z.uuid();
 const cursor = z.string();
 
@@ -231,11 +243,17 @@ export const eventsList = defineCapability({
         receivedBefore: z.string().optional(),
         // The truthful verification tri-state (verified | failed | unattempted), multi-select.
         verificationState: multiEnum(VerificationStateSchema).optional(),
-        // Case-insensitive substring search across the event's ID fields (provider_event_id, external_id,
-        // dedup_key) + the request HEADER names/values, plus an exact match on the event id when the term
-        // is a uuid. A plain string (no coerce) → JSON-Schema-clean. The ID fields are backed by trigram
-        // GIN indexes (migration 0023); the headers jsonb is a residual scan.
-        search: z.string().trim().min(1).max(256).optional(),
+        // Case-insensitive substring search across `provider_event_id` and `dedup_key`, plus an exact match
+        // on the event id when the term is a uuid. A plain string (no coerce) → JSON-Schema-clean. Both
+        // substring columns are backed by trigram GIN indexes (migration 0023).
+        //
+        // Deliberately NOT searched: request headers (a trigram GIN on them measured ~88x ingest p99 — see
+        // packages/db/test/ingest-gin-writeamp.pg.test.ts) and `external_id` (never written; migration 0090).
+        // Both were removed together: an unindexable branch makes the WHOLE disjunction unindexable.
+        //
+        // min(3), not min(1): pg_trgm extracts ZERO trigrams below 3 characters, so a 1-2 char term can never
+        // use an index — it degrades to scanning and rechecking every row in the org.
+        search: z.string().trim().min(SEARCH_MIN_LENGTH).max(SEARCH_MAX_LENGTH).optional(),
       })
       .optional(),
   }),

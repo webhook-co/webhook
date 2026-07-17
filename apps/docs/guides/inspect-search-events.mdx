@@ -16,7 +16,7 @@ Reading events needs an API key with `events:read`.
 - **provider** — repeatable; matches any of the given providers.
 - **verification state** — `verified`, `authenticated`, `failed`, or `unattempted`; repeatable.
 - **after / before** — an RFC 3339 received-at range (after is inclusive, before is exclusive).
-- **search** — a case-insensitive substring across the event's id fields (provider event id, external id, dedup key) and its request header names and values; an exact match when the term is an event id.
+- **search** — a case-insensitive substring (minimum 3 characters) across the event's provider event id and dedup key; an exact match when the term is an event id. Request headers and payload bodies are not searched.
 
 `limit` caps a page at 200. On the CLI, `--all` follows the cursor to the end for you.
 

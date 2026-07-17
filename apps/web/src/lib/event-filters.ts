@@ -40,7 +40,7 @@ export interface EventFilterParams {
   readonly to?: string | null;
   /** Verification tri-state (`?status=`), multi-select: verified | failed | unattempted. */
   readonly status?: string | string[] | null;
-  /** Free-text substring search over the event ID fields + headers (`?search=`). */
+  /** Free-text substring over provider_event_id + dedup_key (`?search=`); min 3 chars (pg_trgm's floor). */
   readonly search?: string | null;
   /** A relative date preset (`?range=`): 1h | 24h | 7d | 30d — resolves to a receivedAfter bound. */
   readonly range?: string | null;
@@ -134,10 +134,21 @@ export function parseEventFilters(
     ),
   ] as VerificationState[];
   if (statuses.length > 0) filters.verificationState = statuses;
-  // Cap at 256 to match the contract's `.max(256)` so the web surface doesn't accept a longer term than
-  // API/CLI/MCP (cross-surface parity); a hand-edited over-long `?search=` is dropped rather than run.
+  // Match the contract's `.min(3).max(256)` exactly — the web bypasses contract validation, so this IS the
+  // web's copy of that rule and the surfaces disagree the moment it drifts.
+  //
+  // The floor is not arbitrary: `pg_trgm` extracts ZERO trigrams from a 1-2 char pattern, so `%ab%` returns
+  // every row from the GIN and rechecks all of them — no index can ever serve it. A 1-char substring search
+  // is also useless on its own terms. Dropped (not run) rather than passed to SQL — but the drop is
+  // REPORTABLE via searchTooShort, because a silently dropped term shows the reader an unfiltered list and
+  // leaves them to infer their search never ran.
   const search = cleanString(params.search);
-  if (search !== undefined && search.length <= 256) filters.search = search;
+  if (
+    search !== undefined &&
+    search.length >= SEARCH_MIN_LENGTH &&
+    search.length <= SEARCH_MAX_LENGTH
+  )
+    filters.search = search;
   // SHAPE-validated only, deliberately NOT membership-validated — a departure from the provider filter
   // above, which checks its value against a static vocabulary.
   //
@@ -169,4 +180,35 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
     filters.search !== undefined ||
     filters.endpointId !== undefined
   );
+}
+
+/**
+ * The search bounds, mirroring the contract's `.trim().min().max()`.
+ *
+ * DECLARED here rather than imported, deliberately. This module is imported by the CLIENT filter bar, and the
+ * contract's constants live in `capabilities.ts` alongside every zod schema — importing them would drag the
+ * whole schema module into the browser bundle for two integers. The barrel is worse still: `@webhook-co/
+ * contract`'s `export *` re-exports resolve to `undefined` under Turbopack (its own header says so), which is
+ * a runtime 500, not a build error.
+ *
+ * Drift is prevented by a TEST that imports both and asserts they are equal (event-filters.test.ts), which is
+ * this repo's usual answer for a value that must agree across a bundling boundary. The contract remains the
+ * source of truth; this is a mirror the build can afford, with a guard that fails if it stops matching.
+ */
+export const SEARCH_MIN_LENGTH = 3;
+export const SEARCH_MAX_LENGTH = 256;
+
+/**
+ * True when a search term was typed but is too short to run (1-2 chars after trimming).
+ *
+ * The floor itself is unavoidable — pg_trgm extracts no trigrams below 3 characters, so no index can serve
+ * `%ab%` and it degrades to scanning + rechecking every row in the org. What IS avoidable is dropping the
+ * term in silence: that renders the FULL, unfiltered list in response to a search, which reads as "no filter
+ * exists" rather than "your term is too short", and it flips hasAppliedFilters to false so the page can show
+ * onboarding copy at someone who was searching. API/CLI/MCP 400 on the same term; web should not pretend it
+ * ran. Whitespace-only is "no search", not "too short" — never nag someone who typed a space.
+ */
+export function searchTooShort(params: { search?: string | null }): boolean {
+  const search = cleanString(params.search);
+  return search !== undefined && search.length > 0 && search.length < SEARCH_MIN_LENGTH;
 }
