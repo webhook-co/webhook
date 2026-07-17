@@ -7,10 +7,11 @@ import { notFound } from "next/navigation";
 import { EventsFilterBar } from "@/components/events-filter-bar";
 import { EventsList } from "@/components/events-list";
 import {
+  type EventFilterParams,
+  filterListKey,
   firstParam,
   hasAppliedFilters,
   parseEventFilters,
-  type EventFilterParams,
 } from "@/lib/event-filters";
 import { queryString } from "@/lib/org-url";
 import { getListenWsUrl } from "@/server/env";
@@ -119,9 +120,20 @@ export default async function EventsPage({
           <EventsList
             // Re-key on the endpoint + the (frozen) active filters so a filter change replaces the list's
             // once-seeded state with the freshly-filtered first page. `from` carries the resolved preset
-            // bound, so changing the preset re-keys without a separate `range` term; a multi-select array
-            // stringifies to a comma-join (distinct per selection).
-            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}:${filterParams.search ?? ""}:${filterParams.method ?? ""}:${filterParams.dedupStrategy ?? ""}:${filterParams.eventType ?? ""}`}
+            // bound, so changing the preset re-keys without a separate `range` term. filterListKey
+            // percent-encodes each part so a free-text search/eventType containing the delimiter can't make two
+            // distinct filter states collide onto one key (which would strand a stale first page).
+            key={filterListKey([
+              id,
+              filterParams.provider,
+              filterParams.status,
+              filterParams.from,
+              filterParams.to,
+              filterParams.search,
+              filterParams.method,
+              filterParams.dedupStrategy,
+              filterParams.eventType,
+            ])}
             endpointId={id}
             initialItems={result.items}
             initialCursor={result.nextCursor}

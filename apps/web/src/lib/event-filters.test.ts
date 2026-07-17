@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EVENT_TYPE_MAX_LENGTH,
   effectiveEventType,
+  filterListKey,
   firstParam,
   hasAppliedFilters,
   parseEventFilters,
@@ -341,6 +342,34 @@ describe("effectiveEventType", () => {
       const applied = parseEventFilters({ eventType: raw }).eventType ?? "";
       expect(effectiveEventType(raw)).toBe(applied);
     }
+  });
+});
+
+describe("filterListKey", () => {
+  it("distinguishes two states that a naive join would collide", () => {
+    // The classic delimiter-forge: `eventType="a|b"` with no next field vs `eventType="a"` + a next field "b".
+    // A `[...].join("|")` maps both to "...|a|b|..."; percent-encoding keeps them distinct.
+    const a = filterListKey(["a|b", ""]);
+    const b = filterListKey(["a", "b"]);
+    expect(a).not.toBe(b);
+  });
+
+  it("distinguishes a comma inside a free-text value from a two-member array", () => {
+    // A value containing a comma must not read as two array members after encoding.
+    const scalarWithComma = filterListKey([undefined, "x,y"]);
+    const twoMemberArray = filterListKey([undefined, ["x", "y"]]);
+    expect(scalarWithComma).not.toBe(twoMemberArray);
+  });
+
+  it("is stable + equal for equal inputs (so an unchanged filter set does not force a re-seed)", () => {
+    expect(filterListKey(["stripe", ["GET", "POST"], "charge.succeeded"])).toBe(
+      filterListKey(["stripe", ["GET", "POST"], "charge.succeeded"]),
+    );
+  });
+
+  it("treats null/undefined/empty as the same empty part", () => {
+    expect(filterListKey([null, "x"])).toBe(filterListKey([undefined, "x"]));
+    expect(filterListKey(["", "x"])).toBe(filterListKey([undefined, "x"]));
   });
 });
 

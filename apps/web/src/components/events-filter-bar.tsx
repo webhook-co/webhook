@@ -259,23 +259,25 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   const tooShort = searchTooShort({ search: searchInput });
 
   // eventType is an EXACT match, so it commits on Enter/blur — NOT debounced-as-you-type like search, which
-  // would query partial types (`charge` never equals `charge.succeeded`). Local state mirrors the URL and is
-  // re-synced when the URL changes (back button, Clear).
+  // would query partial types (`charge` never equals `charge.succeeded`). This box therefore uses a DIFFERENT
+  // URL-sync strategy from the search box, by design (not a copy that drifted): search self-heals via its
+  // always-running debounce timer, which this box has no equivalent of. Instead we compare the incoming URL
+  // value against what WE last pushed (committedEventTypeRef) to tell our own commit's lagging echo apart from
+  // a genuine external navigation — see the effect below.
   const [eventTypeInput, setEventTypeInput] = React.useState(eventType);
-  // What we last PUSHED. Comparing against this, not the URL `eventType`, makes commit idempotent: the URL
-  // value lags a commit by one RSC round trip, so an Enter immediately followed by blur would otherwise
-  // re-push the same value (a wasted navigation). Kept in sync with the URL when it commits.
+  // What we last PUSHED (kept current as the URL commits). It does two jobs: (1) makes commit idempotent — the
+  // URL lags a commit by one RSC round trip, so Enter-then-blur would otherwise re-push the same value; and
+  // (2) discriminates, in the effect, our own commit's echo from an external change.
   const committedEventTypeRef = React.useRef(eventType);
-  // True while the box is "ahead" of the committed value (the reader has typed since the last commit). It
-  // suppresses the URL→box re-sync below, so a commit's own lagging RSC navigation — or any mid-flight URL
-  // change — can't clobber characters typed during the round trip. The search input carries the same latch
-  // (searchPendingRef); the event-type box had none, so keystrokes entered right after Enter vanished.
-  const eventTypePendingRef = React.useRef(false);
   React.useEffect(() => {
+    // Adopt the URL value into the box ONLY when it differs from what we last pushed — i.e. an EXTERNAL change
+    // (back/forward, Clear, a shared link): the reader navigated, so the box must reflect where they landed.
+    // When it EQUALS the committed value it's merely our own commit's navigation catching up, and the box may
+    // hold characters typed during that round trip — adopting here would clobber them. This one comparison
+    // replaces a "pending" latch that (unlike search's timer-reset one) never self-healed: a stuck latch left
+    // the box stale over freshly-navigated data and re-pushed the stale value on the next blur.
+    if (eventType !== committedEventTypeRef.current) setEventTypeInput(eventType);
     committedEventTypeRef.current = eventType;
-    // Adopt an EXTERNAL ?eventType change (back button, Clear) — but only when the box isn't ahead of the
-    // committed value, else we'd overwrite in-flight typing with the value the commit is still navigating to.
-    if (!eventTypePendingRef.current) setEventTypeInput(eventType);
   }, [eventType]);
   function commitEventType() {
     // Only a value the parser would actually APPLY reaches the URL — mirrors the search path. A whitespace-only
@@ -284,9 +286,8 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     // collapses those to "" (no filter), so the box, the URL, and the server always agree.
     const effective = effectiveEventType(eventTypeInput);
     // Normalize the displayed value even on a no-op commit, so trailing whitespace / an over-long paste doesn't
-    // linger in the box after blur. The box now shows exactly the committed value, so it's no longer ahead.
+    // linger in the box after blur.
     setEventTypeInput(effective);
-    eventTypePendingRef.current = false;
     if (effective === committedEventTypeRef.current) return;
     committedEventTypeRef.current = effective;
     applyPatch({ eventType: effective });
@@ -415,12 +416,7 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
             "we don't extract this provider's type", not "no such events". */}
         <Input
           value={eventTypeInput}
-          onChange={(e) => {
-            setEventTypeInput(e.target.value);
-            // Mark the box "ahead" of the URL whenever it diverges from the committed value, so the URL→box
-            // re-sync (a commit's lagging navigation, or an external change) doesn't overwrite live typing.
-            eventTypePendingRef.current = e.target.value !== committedEventTypeRef.current;
-          }}
+          onChange={(e) => setEventTypeInput(e.target.value)}
           onBlur={commitEventType}
           onKeyDown={(e) => {
             if (e.key === "Enter") commitEventType();

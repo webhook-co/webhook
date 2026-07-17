@@ -250,9 +250,10 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     },
   );
 
-  // FINDING 2: characters typed AFTER a commit, while the commit's RSC navigation is still in flight (the URL
-  // lags), must not be clobbered when that navigation lands. Simulated by committing a value, typing more, then
-  // re-rendering with the URL now caught up to the committed value — the extra characters must survive.
+  // OUR OWN COMMIT'S ECHO must not clobber in-flight typing. Characters typed AFTER a commit, while the
+  // commit's RSC navigation is still in flight (the URL lags), survive when that navigation lands — because the
+  // arriving URL value EQUALS what we last pushed (committedEventTypeRef), so the effect treats it as an echo,
+  // not an external change, and doesn't overwrite the box.
   it("does not clobber characters typed during a commit's URL round-trip", async () => {
     const user = userEvent.setup();
     const { rerender } = render(<EventsFilterBar providers={["stripe"]} />);
@@ -266,5 +267,31 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     rerender(<EventsFilterBar providers={["stripe"]} />);
     // The in-flight ".v2" must NOT have been overwritten by the URL→box re-sync.
     expect(input.value).toBe("charge.succeeded.v2");
+  });
+
+  // AN EXTERNAL NAVIGATION (back/forward/shared link) — a URL change we did NOT push — must be adopted into the
+  // box, even over an uncommitted edit, so the box can't sit stale over freshly-navigated data. This is the
+  // failure the removed self-never-healing "pending" latch caused: it suppressed the sync indefinitely.
+  it("adopts an external ?eventType change into the box, discarding an uncommitted edit", () => {
+    // Start with a committed event-type filter.
+    mockSearch = "eventType=invoice.paid";
+    const { rerender } = render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Filter by event type");
+    expect(input.value).toBe("invoice.paid");
+    // The reader types into the box WITHOUT committing (no Enter/blur)…
+    fireEvent.change(input, { target: { value: "cha" } });
+    expect(input.value).toBe("cha");
+    // …then navigates (Back/forward/link) to a DIFFERENT event-type state. The bar re-renders with the new URL.
+    mockSearch = "eventType=charge.succeeded";
+    rerender(<EventsFilterBar providers={["stripe"]} />);
+    // The box reflects where they navigated — not the abandoned "cha", and not the old "invoice.paid".
+    expect(input.value).toBe("charge.succeeded");
+    // And a subsequent blur commits the ADOPTED value: it does not re-push the discarded "cha".
+    const before = replace.mock.calls.length;
+    fireEvent.blur(input);
+    for (const call of replace.mock.calls.slice(before)) {
+      expect(String(call[0])).not.toContain("cha&");
+      expect(String(call[0])).not.toMatch(/eventType=cha(&|$)/);
+    }
   });
 });

@@ -217,6 +217,25 @@ export function effectiveEventType(raw: string | null | undefined): string {
   return cleaned !== undefined && cleaned.length <= EVENT_TYPE_MAX_LENGTH ? cleaned : "";
 }
 
+/**
+ * A collision-free React re-seed key from a filter's values. Both events pages re-key their client list on the
+ * active filter set so a filter change replaces the once-seeded first page rather than appending onto a stale
+ * one — but a naive `parts.join("|")` collides when a FREE-TEXT value (search, eventType) itself contains the
+ * delimiter: `eventType="a|b"` with no next field keys the same as `eventType="a"` + `next="b"`, so two distinct
+ * filter states share a key and the list fails to re-seed (stale page until a hard reload). Percent-encoding
+ * every part first removes `|` and `,` from the values (→ `%7C` / `%2C`), so no value can forge a delimiter.
+ * One helper for both pages so the two can't drift.
+ */
+export function filterListKey(
+  parts: readonly (string | readonly string[] | null | undefined)[],
+): string {
+  const encodePart = (v: string | readonly string[] | null | undefined): string => {
+    const members = Array.isArray(v) ? v : v == null ? [] : [v as string];
+    return members.map(encodeURIComponent).join(",");
+  };
+  return parts.map(encodePart).join("|");
+}
+
 /** A canonical v4/v7 uuid — the only shape `endpoint_id = $1` can take without raising 22P02. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (v: string): boolean => UUID_RE.test(v);
