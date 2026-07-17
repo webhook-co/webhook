@@ -39,6 +39,17 @@ describe("resolveReceivedAfter", () => {
     );
   });
 
+  // BACKWARD COMPAT — a strict SUPERSET of the old lenient instant parse. parseSince's RFC3339 is stricter
+  // than new Date (needs a full timestamp + zone), so a value it rejects must fall back to new Date rather
+  // than 400 — otherwise a receivedAfter that worked before this PR breaks, and disagrees with the symmetric
+  // receivedBefore (which still uses new Date).
+  it("a date-only / no-timezone value still resolves (never 400s a value receivedBefore accepts)", () => {
+    // date-only
+    expect(resolveReceivedAfter("2026-07-01")).toEqual(new Date("2026-07-01"));
+    // no timezone designator
+    expect(resolveReceivedAfter("2026-07-01T12:00:00")).toEqual(new Date("2026-07-01T12:00:00"));
+  });
+
   it("garbage → a VALIDATION_ERROR, never silently ignored", () => {
     expect(() => resolveReceivedAfter("last tuesday")).toThrow();
   });

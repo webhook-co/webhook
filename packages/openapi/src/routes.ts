@@ -269,7 +269,7 @@ export const ROUTES: readonly RouteDef[] = [
       {
         name: "receivedAfter",
         description:
-          "Inclusive lower bound: an RFC 3339 instant OR the relative --since grammar (now | beginning | a duration like 7d / 30m).",
+          "Inclusive lower bound: an RFC 3339 instant, a relative duration (7d / 30m — the last N), or `beginning`.",
         schemaFrom: "filter.receivedAfter",
       },
       {
@@ -300,7 +300,7 @@ export const ROUTES: readonly RouteDef[] = [
       {
         name: "eventType",
         description:
-          "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Empty for providers whose type is not parsed.",
+          "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value.",
         schemaFrom: "filter.eventType",
       },
     ],

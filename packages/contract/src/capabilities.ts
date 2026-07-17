@@ -241,9 +241,11 @@ export const eventsList = defineCapability({
         // `provider=[stripe,github]` → `provider in (...)`. multiEnum accepts a scalar or a non-empty
         // array (normalized to an array) — JSON-Schema-clean for the MCP inputSchema. Omit = no filter.
         provider: multiEnum(ProviderSchema).optional(),
-        // receivedAfter accepts the --since grammar (now | beginning | <duration> like 7d/30m | RFC3339),
-        // resolved server-side to a lower-bound instant — the same "last N" vocabulary as events.tail's
-        // `since` and the web presets. receivedBefore stays a strict RFC3339 upper bound.
+        // receivedAfter accepts a relative duration (7d/30m — the last N) or `beginning` on top of a plain
+        // instant, resolved server-side — the same "last N" vocabulary as the web presets. It is a strict
+        // superset of receivedBefore's instant parsing (a stricter regex would 400 a date-only value that
+        // still works on receivedBefore). `now` is accepted for grammar parity but is a no-op here (a lower
+        // bound of "now" on a newest-first browse is empty). receivedBefore stays a plain instant upper bound.
         receivedAfter: z.string().optional(),
         receivedBefore: z.string().optional(),
         // The verification state, multi-select. FOUR states, not three: `authenticated` is a real, weaker

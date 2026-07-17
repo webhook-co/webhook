@@ -101,14 +101,21 @@ function toInstantBound(value: string | undefined): Date | undefined {
 }
 
 /**
- * Resolve the `receivedAfter` lower bound, which — unlike `receivedBefore` — accepts the `--since` grammar
- * (`now` | `beginning` | `<duration>` like `7d`/`30m` | RFC3339) as well as a plain instant, so the same
- * "last N" vocabulary the CLI's `--after 7d` and the web presets use works on api/mcp too. One grammar, two
- * capabilities (this and events.tail's `since`).
+ * Resolve the `receivedAfter` lower bound. It ADDS the `--since` relative grammar (`beginning` |
+ * `<duration>` like `7d`/`30m`) on TOP of the plain-instant parsing `receivedBefore` already does — so the
+ * "last N" vocabulary the CLI's `--after 7d` and the web presets use works on api/mcp too, one grammar shared
+ * with events.tail's `since`.
  *
- * Resolved against the SERVER clock (Date.now here runs in the Worker), which is the same fuzzy-bound
- * expectation as `--after 7d` everywhere; it is a browse filter, not the tail's gapless watermark, so no
- * clock-skew guarantee is owed. `beginning` = no lower bound (undefined).
+ * A strict SUPERSET of the old toInstantBound, deliberately: parseSince's RFC3339 is stricter than
+ * `new Date` (it requires a full timestamp + zone), so a value parseSince rejects — a date-only `2026-07-01`,
+ * a no-timezone `...T00:00:00` — falls back to the SAME lenient `new Date` receivedBefore uses. Without that
+ * fallback this would 400 instants that worked before AND that the symmetric receivedBefore still accepts —
+ * a breaking, asymmetric regression. Only a value neither parseSince NOR new Date can read is a 400.
+ *
+ * `now` is accepted (grammar parity with events.tail) but deliberately NOT advertised for receivedAfter: on a
+ * newest-first browse `received_at >= now()` is a no-op (empty page). Relative durations resolve against the
+ * SERVER clock — a fuzzy browse bound, not the tail's gapless watermark, so no clock-skew guarantee is owed.
+ * `beginning` = no lower bound (undefined).
  */
 export function resolveReceivedAfter(value: string | undefined): Date | undefined {
   if (value === undefined || value === "") return undefined;
@@ -122,11 +129,18 @@ export function resolveReceivedAfter(value: string | undefined): Date | undefine
       return new Date(Date.now() - since.ms);
     case "timestamp":
       return since.date;
-    case "invalid":
-      throw new CapabilityFault(
-        "VALIDATION_ERROR",
-        "invalid receivedAfter (expected an instant or a duration like 7d)",
-      );
+    case "invalid": {
+      // Not a hard error: parseSince is stricter than new Date. Fall back to the lenient instant parse so a
+      // previously-accepted date-only / no-tz value still works (and matches receivedBefore's behaviour).
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) {
+        throw new CapabilityFault(
+          "VALIDATION_ERROR",
+          "invalid receivedAfter (expected an instant or a duration like 7d)",
+        );
+      }
+      return d;
+    }
   }
 }
 
