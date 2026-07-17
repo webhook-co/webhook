@@ -191,6 +191,9 @@ importers:
         specifier: ^2.7.5
         version: 2.7.5
     devDependencies:
+      '@cloudflare/vitest-pool-workers':
+        specifier: ^0.18.5
+        version: 0.18.5(@cloudflare/workers-types@5.20260715.1)(@vitest/runner@4.1.10)(@vitest/snapshot@4.1.10)(vitest@4.1.10)
       '@cloudflare/workers-types':
         specifier: ^5.20260715.1
         version: 5.20260715.1
