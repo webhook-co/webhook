@@ -271,6 +271,12 @@ test("the method + event-type facets filter the org list (and NULL-method rows d
   await page.getByRole("button", { name: /Filter by HTTP method/ }).click();
   await page.getByRole("option", { name: "GET", exact: true }).click(); // clear method
   await page.keyboard.press("Escape");
+  // WAIT for the method-clear navigation to fully settle before committing the next filter — otherwise the
+  // two navigations race and the eventType filter can land on top of a not-yet-cleared method=GET, filtering
+  // the POST row back out. The POST row returning is the signal the unfiltered list has re-seeded. (The
+  // earlier method step waits the same way; this step must too.)
+  await expect(page).not.toHaveURL(/[?&]method=GET\b/);
+  await expect(page.getByRole("cell", { name: postId })).toBeVisible();
   const eventTypeInput = page.getByLabel("Filter by event type");
   await eventTypeInput.fill("invoice.paid");
   await eventTypeInput.press("Enter");
