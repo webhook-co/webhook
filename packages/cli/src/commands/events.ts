@@ -177,7 +177,15 @@ export const eventsListCommand = buildCommand<ListFlags, [string | undefined], A
       },
       eventType: {
         kind: "parsed",
-        parse: (value: string) => value,
+        // Reject an explicitly-empty value (e.g. `--event-type "$T"` with $T unset) rather than forwarding
+        // `?eventType=`, which the server drops to NO filter — the operator would read the unfiltered list as
+        // if it were scoped. Mirrors the endpointId positional + the --search floor.
+        parse: (value: string) => {
+          if (value.trim() === "") {
+            throw new Error("--event-type is empty — omit it, or pass a real event type.");
+          }
+          return value;
+        },
         brief:
           "exact match on the normalized event type (e.g. charge.succeeded); only parsed for some providers",
         optional: true,

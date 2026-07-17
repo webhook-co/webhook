@@ -163,8 +163,11 @@ describe("matchRoute — routing + input construction (ported behavior)", () => 
       endpointId: EP,
       filter: { provider: ["github"] },
     });
-    // An empty ?endpointId= reads as org-wide, not an invalid "" id.
-    expect(match("GET", "/v1/events?endpointId=")?.input).toEqual({});
+    // A PRESENT-but-empty ?endpointId= is passed through (NOT silently dropped to org-wide) so the contract
+    // 400s it — otherwise a caller who meant to scope to one endpoint silently gets the whole org.
+    expect(match("GET", "/v1/events?endpointId=")?.input).toEqual({ endpointId: "" });
+    // Only an ABSENT endpointId means org-wide.
+    expect(match("GET", "/v1/events")?.input).toEqual({});
   });
 
   it("GET /v1/endpoints/:id/events → the DEPRECATED alias route (endpointId from the path)", () => {

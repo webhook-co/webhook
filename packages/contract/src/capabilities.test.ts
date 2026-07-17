@@ -198,8 +198,12 @@ describe("events.list endpointId (optional — org-wide by default)", () => {
     expect(parsed.endpointId).toBe("11111111-1111-4111-8111-111111111111");
   });
 
-  it("still rejects a non-uuid endpointId (shape-validated when present)", () => {
+  it("still rejects a non-uuid or empty endpointId (shape-validated when present)", () => {
     expect(eventsList.input.safeParse({ endpointId: "not-a-uuid" }).success).toBe(false);
+    // A present-but-EMPTY endpointId is a 400, NOT a silent org-wide widen (the canonical route passes
+    // `?endpointId=` through to here rather than dropping it).
+    expect(eventsList.input.safeParse({ endpointId: "" }).success).toBe(false);
+    expect(eventsList.input.safeParse({ endpointId: "   " }).success).toBe(false);
   });
 });
 

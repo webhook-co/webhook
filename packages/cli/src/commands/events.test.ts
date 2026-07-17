@@ -163,22 +163,22 @@ describe("wbhk events list", () => {
     eventType: { flag: "--event-type", value: "charge.succeeded" },
   };
 
-  it("exposes a CLI flag for every contract events.list filter facet (completeness + each flag works)", async () => {
+  it("exposes a WIRED CLI flag for every contract events.list filter facet (completeness + forwarded)", async () => {
     const filterShape = (eventsList.input as z.ZodObject).shape
       .filter as z.ZodOptional<z.ZodObject>;
     const facets = Object.keys(filterShape.unwrap().shape);
-    // Completeness: the sample table covers EXACTLY the contract facets.
+    // Completeness: the sample table covers EXACTLY the contract facets (a new facet with no entry fails).
     expect(new Set(Object.keys(CLI_FACET_FLAG_SAMPLES))).toEqual(new Set(facets));
-    // Executable: each flag is actually accepted by the command (not an unknown-flag usage error).
-    for (const { flag, value } of Object.values(CLI_FACET_FLAG_SAMPLES)) {
-      const t = makeTestContext({
-        store: loggedInStore(),
-        fetch: okFetch({ items: [], nextCursor: null }),
-      });
+    // WIRED, not merely parsed: the flag's value must actually reach the request as `?<facet>=` (the facet
+    // name IS the query-param name). A flag that's registered but never threaded into client.eventsList()
+    // would parse fine yet emit no query param — that's the silent-ignore this asserts against.
+    for (const [facet, { flag, value }] of Object.entries(CLI_FACET_FLAG_SAMPLES)) {
+      const cap = capturingFetch({ items: [], nextCursor: null });
+      const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
       await run(app, ["events", "list", flag, value], t.ctx);
-      expect(normalizeStricliExitCode(t.ctx.process.exitCode), `${flag} was rejected`).not.toBe(
-        EXIT.USAGE,
-      );
+      expect(cap.urls.length, `${flag} issued no request (rejected?)`).toBeGreaterThan(0);
+      const u = new URL(cap.urls[0]);
+      expect(u.searchParams.has(facet), `${flag} was not forwarded as ?${facet}=`).toBe(true);
     }
   });
 

@@ -331,6 +331,15 @@ describe("events", () => {
     expect(() => listPage.call(client.events, "ep_123")).toThrow(/no longer takes an endpoint id/);
   });
 
+  it("list()/listPage() reject an EMPTY endpointId rather than silently listing the whole org", () => {
+    const { client } = make([]);
+    // `{ endpointId: "" }` (unset env var / blank config) must fail fast, not silently widen to org-wide.
+    expect(() => client.events.list({ endpointId: "" })).toThrow(/endpointId is an empty string/);
+    expect(() => client.events.listPage({ endpointId: "  " })).toThrow(
+      /endpointId is an empty string/,
+    );
+  });
+
   it("getPayload() decodes the base64 envelope to bytes", async () => {
     const { client } = make([
       json(200, { contentType: "application/json", bytes: 5, bodyBase64: "aGVsbG8=" }),

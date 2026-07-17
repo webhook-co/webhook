@@ -282,16 +282,26 @@ class EndpointsResource {
 }
 
 /**
- * Turn the one silent-footgun of the org-wide migration into a loud error: `list`/`listPage` used to take
- * `(endpointId, filters)`, they now take `(filters)`. A TypeScript caller gets a compile error, but an
- * UNTYPED JS caller still passing a string id would otherwise have it bound to `filters` — undefined
- * endpointId → a silent whole-org list. Reject a string arg with the migration instead.
+ * Guard the two silent footguns of the org-wide migration, so a caller who believes they scoped to one
+ * endpoint never silently gets the WHOLE org back:
+ *   1. `list`/`listPage` used to take `(endpointId, filters)`; they now take `(filters)`. A TypeScript caller
+ *      gets a compile error, but an UNTYPED JS caller still passing a string id would have it bound to
+ *      `filters` — undefined endpointId → a silent whole-org list. Reject a string arg with the migration.
+ *   2. `{ endpointId: "" }` (an empty/blank id from an unset env var, empty config field, blank input) would
+ *      ride through as `?endpointId=` and be dropped server-side to a whole-org list. Reject it fail-fast.
  */
-function rejectLegacyEndpointIdArg(arg: unknown, method: string): void {
+function validateEventsListArg(arg: unknown, method: string): void {
   if (typeof arg === "string") {
     throw new TypeError(
       `events.${method}() no longer takes an endpoint id as its first argument — pass an options ` +
         `object instead: events.${method}({ endpointId: "${arg}" }), or events.${method}() for the whole org.`,
+    );
+  }
+  const endpointId = (arg as EventsListFilters | undefined)?.endpointId;
+  if (typeof endpointId === "string" && endpointId.trim() === "") {
+    throw new TypeError(
+      `events.${method}(): endpointId is an empty string — omit it to list the whole org, or pass a ` +
+        `real endpoint id.`,
     );
   }
 }
@@ -328,13 +338,13 @@ class EventsResource {
 
   /** Auto-paginating iterator over captured events — org-wide, or `{ endpointId }` for one endpoint. */
   list(filters: EventsListFilters = {}): Paginator<EventSummary> {
-    rejectLegacyEndpointIdArg(filters, "list");
+    validateEventsListArg(filters, "list");
     return this.req.paginate<EventSummary>((cursor) => this.canonicalPath(filters, cursor));
   }
 
   /** A single page of captured events — org-wide, or `{ endpointId }` for one endpoint. */
   listPage(params: EventsListFilters & { cursor?: string } = {}): Promise<Page<EventSummary>> {
-    rejectLegacyEndpointIdArg(params, "listPage");
+    validateEventsListArg(params, "listPage");
     return this.req.get<Page<EventSummary>>(this.canonicalPath(params, params.cursor));
   }
 

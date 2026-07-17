@@ -370,10 +370,13 @@ export const ROUTES: readonly RouteDef[] = [
       ...EVENT_FILTER_QUERY,
     ],
     buildInput: (_params, q) => {
-      // endpointId is an OPTIONAL query param here (vs a path param on the alias); an empty one is dropped so
-      // it reads as the org-wide browse rather than an invalid "" endpoint id.
+      // endpointId is an OPTIONAL query param here (vs a path param on the alias). ABSENT (`?endpointId=`
+      // not present at all → null) = the org-wide browse. PRESENT-but-empty (`?endpointId=`) is passed
+      // THROUGH so the contract's `uuid.optional()` rejects it with a 400 — NOT silently dropped to org-wide,
+      // which would widen a caller who believes they scoped to one endpoint (the SDK's `{ endpointId: "" }`
+      // lands here as `?endpointId=` too). A whitespace-only value likewise fails the uuid check.
       const endpointId = q.get("endpointId");
-      return eventListInput(q, endpointId && endpointId !== "" ? { endpointId } : {});
+      return eventListInput(q, endpointId !== null ? { endpointId } : {});
     },
   },
   {
