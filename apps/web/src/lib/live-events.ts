@@ -207,7 +207,18 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
       return;
     }
 
-    const params = new URLSearchParams({ endpointId });
+    // `since=now` is load-bearing: WITHOUT it the DO's seed cursor stays unset, and unset means
+    // OLDEST-INCLUSIVE (its own comment says so). Live then replayed the endpoint's entire retained history,
+    // oldest first — so the newest event, the only reason anyone turns Live on, arrived last. The engine has
+    // always accepted the grammar (now|beginning|<duration>|<RFC3339>) and resolves it server-side; the
+    // dashboard just never asked.
+    //
+    // Sent unconditionally, including on a resume. A reconnect carries the sticky sessionId to a DO that
+    // already holds a binding, and listen-session's `existing` branch leaves the durable cursor untouched
+    // without ever reading this header — so the resume stays seamless and nothing in the gap is skipped. If
+    // the DO is gone, the reconnect re-enters first-bind and this skips the gap instead of replaying
+    // everything, which is the right failure for a live tail.
+    const params = new URLSearchParams({ endpointId, since: "now" });
     if (sessionId) params.set("sessionId", sessionId);
     const url = `${wsUrl}?${params.toString()}`;
     const protocols = [LISTEN_SUBPROTOCOL, LISTEN_TICKET_SUBPROTOCOL_PREFIX + minted.ticket];

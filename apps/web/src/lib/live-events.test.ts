@@ -137,7 +137,7 @@ describe("createLiveEventsSession", () => {
     expect(h.mint).toHaveBeenCalledWith(ENDPOINT_ID);
     const ws = FakeWebSocket.instances[0];
     expect(ws).toBeDefined();
-    expect(ws.url).toBe(`wss://wbhk.my/listen?endpointId=${ENDPOINT_ID}`);
+    expect(ws.url).toBe(`wss://wbhk.my/listen?endpointId=${ENDPOINT_ID}&since=now`);
     // offers the base subprotocol + the ticket-bearing token (never hardcoded here).
     expect(ws.protocols).toEqual(["wbhk.listen.v1", "ticket.tok-abc"]);
 
@@ -317,5 +317,47 @@ describe("backoffMs", () => {
     expect(backoffMs(3, () => 1, 500, 30_000)).toBe(2000);
     expect(backoffMs(3, () => 0.5, 500, 30_000)).toBe(1500);
     expect(backoffMs(3, () => 0, 500, 30_000)).toBe(1000);
+  });
+});
+
+// THE TAIL STARTS AT THE HEAD, NOT AT THE DAWN OF THE ENDPOINT.
+//
+// A SHIPPED BUG. The dashboard sent only endpointId (+ sessionId), so the DO's `since` branches never ran and
+// the seed cursor stayed unset — and its own comment says unset means "oldest-inclusive". So switching Live on
+// replayed the endpoint's entire retained history, oldest first, and the newest event — the ONLY reason anyone
+// clicks Live — arrived last, after the backlog. Latent so far only because endpoints are young; the org-wide
+// tail multiplies it by up to 100 endpoints.
+//
+// The engine already accepts the grammar (now|beginning|<duration>|<RFC3339>) and resolves it server-side; the
+// dashboard simply never asked. The previous version of the URL assertion above PINNED the bug — it asserted
+// the exact url, with no `since`, and passed happily.
+describe("createLiveEventsSession — seeds at the head", () => {
+  it("asks for since=now, so Live means live and not a history replay", async () => {
+    const h = makeHarness(OK_TICKET);
+    const session = h.start();
+    await flush();
+    expect(FakeWebSocket.instances[0].url).toContain("since=now");
+    session.stop();
+  });
+
+  // Safe, and deliberately unconditional. A reconnect carries the sticky sessionId and lands on a DO that
+  // ALREADY has a binding — listen-session takes the `existing` branch, leaves the durable cursor untouched
+  // and never reads the since header, so the resume stays seamless and no event in the gap is skipped.
+  // If the DO is gone entirely, the reconnect re-enters first-bind and `since=now` skips the gap rather than
+  // replaying all history — the better failure for a live tail either way.
+  it("still asks for since=now on a resume (the DO ignores it when the binding exists)", async () => {
+    const h = makeHarness(OK_TICKET);
+    const session = h.start();
+    await flush();
+    const first = FakeWebSocket.instances[0];
+    first.ready("sess-77");
+    first.fireClose();
+    h.timers[0]();
+    await flush();
+
+    const second = FakeWebSocket.instances[1];
+    expect(second.url).toContain("sessionId=sess-77");
+    expect(second.url).toContain("since=now");
+    session.stop();
   });
 });
