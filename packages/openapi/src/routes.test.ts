@@ -158,7 +158,7 @@ describe("matchRoute — routing + input construction (ported behavior)", () => 
     expect(m?.input).toEqual({ filter: { provider: ["stripe"], method: ["GET"] } });
   });
 
-  it("GET /v1/events?endpointId= → canonical events.list drilled to one endpoint; empty is dropped", () => {
+  it("GET /v1/events?endpointId= → canonical events.list; a valid id drills in, a present-but-empty one is passed through (→ 400)", () => {
     expect(match("GET", `/v1/events?endpointId=${EP}&provider=github`)?.input).toEqual({
       endpointId: EP,
       filter: { provider: ["github"] },

@@ -306,6 +306,31 @@ function validateEventsListArg(arg: unknown, method: string): void {
   }
 }
 
+/**
+ * The deprecated by-endpoint methods take the endpoint id as a POSITIONAL argument and build the path from
+ * it. Since `endpointId` now also exists on the shared EventsListFilters, a caller could put it in BOTH the
+ * positional and the filter object; the filter one would be silently ignored (filterQuery never reads it).
+ * Reject that ambiguity, and an empty positional id, rather than scoping to the wrong (or a malformed)
+ * endpoint.
+ */
+function assertByEndpointArgs(
+  endpointId: string,
+  filters: EventsListFilters,
+  method: string,
+): void {
+  if (endpointId.trim() === "") {
+    throw new TypeError(
+      `events.${method}(): endpointId (the first argument) must be a non-empty endpoint id.`,
+    );
+  }
+  if (filters.endpointId !== undefined) {
+    throw new TypeError(
+      `events.${method}() takes the endpoint id as its FIRST argument — don't also set it in filters ` +
+        `(it would be ignored). Use list({ endpointId }) for the canonical route instead.`,
+    );
+  }
+}
+
 class EventsResource {
   constructor(private readonly req: Requester) {}
 
@@ -353,6 +378,7 @@ class EventsResource {
    * `GET /v1/endpoints/{endpointId}/events`; the canonical `list({ endpointId })` is preferred.
    */
   listByEndpoint(endpointId: string, filters: EventsListFilters = {}): Paginator<EventSummary> {
+    assertByEndpointArgs(endpointId, filters, "listByEndpoint");
     return this.req.paginate<EventSummary>((cursor) =>
       withQuery(`/v1/endpoints/${enc(endpointId)}/events`, this.filterQuery(filters, cursor)),
     );
@@ -366,6 +392,7 @@ class EventsResource {
     endpointId: string,
     params: EventsListFilters & { cursor?: string } = {},
   ): Promise<Page<EventSummary>> {
+    assertByEndpointArgs(endpointId, params, "listPageByEndpoint");
     return this.req.get<Page<EventSummary>>(
       withQuery(`/v1/endpoints/${enc(endpointId)}/events`, this.filterQuery(params, params.cursor)),
     );

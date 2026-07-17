@@ -340,6 +340,19 @@ describe("events", () => {
     );
   });
 
+  it("listByEndpoint() rejects an endpointId ALSO placed in filters (it would be silently ignored)", () => {
+    const { client } = make([]);
+    // The positional is authoritative; a filters.endpointId would be dropped, scoping the wrong endpoint.
+    expect(() => client.events.listByEndpoint("ep_1", { endpointId: "ep_2" })).toThrow(
+      /don't also set it in filters/,
+    );
+    expect(() => client.events.listPageByEndpoint("ep_1", { endpointId: "ep_2" })).toThrow(
+      /don't also set it in filters/,
+    );
+    // And an empty positional id fails fast rather than building /v1/endpoints//events.
+    expect(() => client.events.listByEndpoint("")).toThrow(/must be a non-empty endpoint id/);
+  });
+
   it("getPayload() decodes the base64 envelope to bytes", async () => {
     const { client } = make([
       json(200, { contentType: "application/json", bytes: 5, bodyBase64: "aGVsbG8=" }),
