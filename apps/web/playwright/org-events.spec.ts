@@ -96,6 +96,11 @@ test("lists events from EVERY endpoint in the org, and links each row to ITS OWN
     "href",
     `/org/${orgs.alpha.slug}/endpoints/${seeded.alphaTwo}/events/${seeded.alphaEventOnTwo}`,
   );
+
+  // The org-wide live-tail toggle must actually render — a unit test can't see whether the RSC page WIRED the
+  // live props (liveWsUrl + the org mint action) into OrgEventsList; if it forgot, `liveAvailable` is false
+  // and the button never appears. We only assert it's present + toggles (no live socket in the e2e env).
+  await expect(page.getByRole("button", { name: /go live/i })).toBeVisible();
 });
 
 test("a row's link actually resolves to the event detail page (it is not a 404)", async ({

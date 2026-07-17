@@ -23,14 +23,24 @@ export interface UseLiveEventsOptions {
   readonly enabled: boolean;
   /** The `wss://…/listen` URL (derived server-side; passed through as a prop). */
   readonly wsUrl: string;
-  readonly endpointId: string;
-  /** The session-authed mint action (a stable server-action reference). */
-  readonly mintTicket: (endpointId: string) => Promise<MintTicketResult>;
+  /** The endpoint to tail, or OMITTED for an org-wide tail (the consolidated events page). */
+  readonly endpointId?: string;
+  /** The session-authed mint action, scope-agnostic + pre-bound (a stable RSC-passed server-action ref). */
+  readonly mintTicket: () => Promise<MintTicketResult>;
   /** The list-state setter the live tail prepends into (dedup happens here). */
   readonly setItems: React.Dispatch<React.SetStateAction<readonly EventSummaryItem[]>>;
   /** Injected for tests (a FakeWebSocket); defaults to the browser `WebSocket`. */
   readonly WebSocketCtor?: WebSocketCtor;
 }
+
+/**
+ * Hard cap on the live-prepended list length. The org-wide tail spans up to ~100 endpoints, so a burst can
+ * arrive far faster than one endpoint's — an unbounded prepend would grow the array without limit AND make the
+ * per-event `.some()` dedup O(n²) over that burst. Capping the array bounds both: memory, and the dedup scan
+ * (now ≤ this many comparisons per event). A live feed only ever shows the most recent rows, so dropping the
+ * oldest off the tail is invisible to the reader; the full history is one click away in the paginated list.
+ */
+export const MAX_LIVE_ROWS = 1000;
 
 export interface LiveEventsState {
   /** Coarse connection state for the indicator. `disconnected` covers paused/off and reconnecting. */
@@ -96,10 +106,15 @@ export function useLiveEvents({
   }, []);
 
   // Prepend + dedup by id: a live event already present in the list (e.g. it also arrived via a page load)
-  // is not re-added; a genuinely new one goes to the top.
+  // is not re-added; a genuinely new one goes to the top, and the list is capped at MAX_LIVE_ROWS so an
+  // org-wide burst can't grow it (or the dedup scan) without bound.
   const handleEvent = React.useCallback(
     (item: EventSummaryItem) => {
-      setItems((prev) => (prev.some((e) => e.id === item.id) ? prev : [item, ...prev]));
+      setItems((prev) => {
+        if (prev.some((e) => e.id === item.id)) return prev;
+        const next = [item, ...prev];
+        return next.length > MAX_LIVE_ROWS ? next.slice(0, MAX_LIVE_ROWS) : next;
+      });
     },
     [setItems],
   );

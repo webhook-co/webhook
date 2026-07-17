@@ -141,7 +141,7 @@ export default async function EventsPage({
             isFiltered={hasAppliedFilters(filters)}
             loadMore={loadMoreEventsAction.bind(null, session.slug)}
             liveWsUrl={getListenWsUrl()}
-            mintTicket={mintListenTicketAction.bind(null, session.slug)}
+            mintTicket={mintListenTicketAction.bind(null, session.slug, id)}
           />
         </div>
       )}

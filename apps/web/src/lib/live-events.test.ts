@@ -137,7 +137,9 @@ describe("createLiveEventsSession", () => {
     const session = h.start();
     await flush();
 
-    expect(h.mint).toHaveBeenCalledWith(ENDPOINT_ID);
+    // mintTicket is now scope-agnostic + pre-bound (zero-arg); the endpointId lives in the session option and
+    // shapes the query, not the mint call.
+    expect(h.mint).toHaveBeenCalledWith();
     const ws = FakeWebSocket.instances[0];
     expect(ws).toBeDefined();
     expect(ws.url).toBe(`wss://wbhk.my/listen?endpointId=${ENDPOINT_ID}&since=now`);
@@ -146,6 +148,20 @@ describe("createLiveEventsSession", () => {
 
     ws.ready("sess-1");
     expect(h.connections).toContain("connected");
+    session.stop();
+  });
+
+  it("an ORG tail (no endpointId) omits endpointId from the query — scope comes from the ticket", async () => {
+    const h = makeHarness(OK_TICKET);
+    const session = h.start({ endpointId: undefined });
+    await flush();
+
+    const ws = FakeWebSocket.instances[0];
+    expect(ws).toBeDefined();
+    // No endpointId param at all; the org-scoped ticket (minted by the caller) is what widens the tail.
+    expect(ws.url).toBe("wss://wbhk.my/listen?since=now");
+    expect(ws.url).not.toContain("endpointId");
+    expect(h.mint).toHaveBeenCalledWith();
     session.stop();
   });
 
