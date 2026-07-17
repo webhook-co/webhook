@@ -18,7 +18,20 @@
 -- branch that cannot match is not a capability, and keeping it forced the disjunction to stay unindexable.
 --
 -- Plain DROP INDEX (not CONCURRENTLY), matching the 0022/0023/0036/0089 convention: prod is at baseline
--- volume, so the brief ACCESS EXCLUSIVE lock is a non-event.
+-- volume, so HOLDING the ACCESS EXCLUSIVE lock is a non-event — the drop itself is near-instant.
+--
+-- ACQUIRING it is the part worth bounding, and it is not the same question. DROP INDEX must wait for every
+-- in-flight reader of `events` to finish, and while it WAITS it queues ahead of everything behind it — so a
+-- single slow browse would park the drop, and the drop would then park ingest INSERTs behind itself. At
+-- webhook_ingest's 5s statement_timeout (0006), a parked INSERT is a DROPPED WEBHOOK. That is a strange way
+-- to lose a customer's event: deleting an index nobody uses.
+--
+-- lock_timeout bounds only the WAIT. If the lock isn't free within 2s this migration fails loudly and is
+-- re-run, which is the cheap outcome; without it, the failure mode is silent and lands on ingest. `set local`
+-- scopes it to this migration's transaction (dbmate wraps each file in one), so it reverts at commit and
+-- cannot leak onto the connection.
+set local lock_timeout = '2s';
+
 drop index events_external_id_trgm;
 
 -- migrate:down
