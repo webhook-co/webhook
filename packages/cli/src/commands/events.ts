@@ -79,7 +79,17 @@ export const eventsListCommand = buildCommand<ListFlags, [string | undefined], A
       kind: "tuple",
       parameters: [
         {
-          parse: (value: string) => value,
+          // Reject an explicitly-EMPTY endpointId (a usage error → a footgun, e.g. `events list "$EP"` with
+          // an unset shell var, which would otherwise silently list the WHOLE org). Omitting the argument
+          // entirely is the intended org-wide path and never reaches this parser.
+          parse: (value: string) => {
+            if (value.trim() === "") {
+              throw new Error(
+                "endpointId is empty — omit it entirely to list the whole org, or pass a real endpoint id.",
+              );
+            }
+            return value;
+          },
           brief: "the endpoint id (omit for the whole org)",
           placeholder: "endpointId",
           optional: true,

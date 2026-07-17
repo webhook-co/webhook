@@ -256,7 +256,10 @@ export interface ApiClient {
     endpointId: string;
     secretId: string;
   }): Promise<RevokedProviderSecret>;
-  /** A page of an endpoint's captured events (`GET /v1/endpoints/:id/events`). */
+  /**
+   * A page of captured events via the canonical `GET /v1/events` — org-wide when `endpointId` is undefined,
+   * or drilled to one endpoint via `?endpointId=` when given.
+   */
   eventsList(
     endpointId: string | undefined,
     params?: EventsListParams,

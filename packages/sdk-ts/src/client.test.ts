@@ -322,6 +322,15 @@ describe("events", () => {
     expect(new URL(calls[0]!.url).pathname).toBe("/v1/endpoints/e1/events");
   });
 
+  it("list()/listPage() reject a legacy string endpointId arg with a migration error (JS-caller footgun)", () => {
+    const { client } = make([]);
+    // An UNTYPED JS caller still passing `list('ep_123')` must get a loud error, not a silent whole-org list.
+    const list = client.events.list as unknown as (a: unknown) => unknown;
+    const listPage = client.events.listPage as unknown as (a: unknown) => unknown;
+    expect(() => list.call(client.events, "ep_123")).toThrow(/no longer takes an endpoint id/);
+    expect(() => listPage.call(client.events, "ep_123")).toThrow(/no longer takes an endpoint id/);
+  });
+
   it("getPayload() decodes the base64 envelope to bytes", async () => {
     const { client } = make([
       json(200, { contentType: "application/json", bytes: 5, bodyBase64: "aGVsbG8=" }),

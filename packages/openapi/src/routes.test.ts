@@ -54,11 +54,12 @@ describe("ROUTES manifest — the single source of HTTP truth", () => {
     expect(canonicalCapabilities).toEqual(apiCapabilities);
   });
 
-  it("every events.list filter facet is exposed as an API query param (no facet ships web-only)", () => {
-    // The four-surface parity guard for FILTERS. MCP gets the whole input shape verbatim, and the CLI has a
-    // flag per facet (its own tests) — the surface that can silently miss a facet is the HTTP route's query
-    // list. Assert every field in the contract's `filter` object appears as a `filter.<field>` query param on
-    // BOTH events routes, so a facet added to the contract can't ship on web/mcp while 404ing on the REST API.
+  it("every events.list filter facet is exposed as an API query param (HTTP-route half of the parity guard)", () => {
+    // Four-surface parity for FILTERS, the HTTP-ROUTE half. This asserts every field in the contract's
+    // `filter` object appears as a `filter.<field>` query param on BOTH events routes. The OTHER surfaces are
+    // guarded elsewhere: MCP takes the input shape verbatim (structural — can't miss a facet); the CLI has
+    // its own completeness+executable guard (packages/cli events.test.ts, "exposes a CLI flag for every
+    // contract events.list filter facet"). Together these stop a facet shipping on some surfaces only.
     const filterSchema = (eventsList.input as z.ZodObject).shape
       .filter as z.ZodOptional<z.ZodObject>;
     const filterFacets = Object.keys(filterSchema.unwrap().shape);

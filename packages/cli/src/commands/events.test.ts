@@ -1,6 +1,8 @@
 import { run } from "@stricli/core";
+import { eventsList } from "@webhook-co/contract";
 import { bytesToB64 } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { app } from "../app.js";
 import { CorruptConfigError } from "../config/errors.js";
@@ -126,6 +128,58 @@ describe("wbhk events list", () => {
     });
     await run(app, ["events", "list", "--method", "TRACE"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
+  it("rejects an explicitly-empty endpointId (the unset-shell-var footgun), but lists org-wide when omitted", async () => {
+    // `events list "$EP"` with an unset $EP would otherwise silently list the WHOLE org.
+    const bad = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", ""], bad.ctx);
+    expect(normalizeStricliExitCode(bad.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    // Omitting it entirely is the intended org-wide path — succeeds.
+    const ok = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list"], ok.ctx);
+    expect(normalizeStricliExitCode(ok.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+  });
+
+  // FOUR-SURFACE PARITY (CLI half). The openapi matrix test guards contract↔HTTP-route; MCP is structural
+  // (verbatim input shape); this guards the CLI. Every contract events.list FILTER facet must be reachable
+  // via a CLI flag. The sample table is asserted COMPLETE against the contract (a new facet with no entry
+  // fails), and each flag is EXERCISED (an unwired/unknown flag is a usage error) — so a facet can't ship on
+  // the contract/web/api/mcp while silently missing from the CLI.
+  const CLI_FACET_FLAG_SAMPLES: Record<string, { flag: string; value: string }> = {
+    provider: { flag: "--provider", value: "stripe" },
+    verificationState: { flag: "--status", value: "verified" },
+    receivedAfter: { flag: "--after", value: "2026-06-01T00:00:00Z" },
+    receivedBefore: { flag: "--before", value: "2026-06-01T00:00:00Z" },
+    search: { flag: "--search", value: "abc" },
+    method: { flag: "--method", value: "GET" },
+    dedupStrategy: { flag: "--dedup-strategy", value: "unique" },
+    eventType: { flag: "--event-type", value: "charge.succeeded" },
+  };
+
+  it("exposes a CLI flag for every contract events.list filter facet (completeness + each flag works)", async () => {
+    const filterShape = (eventsList.input as z.ZodObject).shape
+      .filter as z.ZodOptional<z.ZodObject>;
+    const facets = Object.keys(filterShape.unwrap().shape);
+    // Completeness: the sample table covers EXACTLY the contract facets.
+    expect(new Set(Object.keys(CLI_FACET_FLAG_SAMPLES))).toEqual(new Set(facets));
+    // Executable: each flag is actually accepted by the command (not an unknown-flag usage error).
+    for (const { flag, value } of Object.values(CLI_FACET_FLAG_SAMPLES)) {
+      const t = makeTestContext({
+        store: loggedInStore(),
+        fetch: okFetch({ items: [], nextCursor: null }),
+      });
+      await run(app, ["events", "list", flag, value], t.ctx);
+      expect(normalizeStricliExitCode(t.ctx.process.exitCode), `${flag} was rejected`).not.toBe(
+        EXIT.USAGE,
+      );
+    }
   });
 
   it("rejects an unknown --provider as a usage error", async () => {

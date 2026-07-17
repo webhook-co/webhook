@@ -464,8 +464,11 @@ async function browseEvents(tx: TenantTx, opts: ListOrgEventsOptions): Promise<P
   // BOUND THE BROWSE. This is the one read a user can point at their whole org, over all time, with a
   // residual filter — and measured on real data that is exactly when the planner abandons the ordered index
   // and falls back to a BLOCKING Sort that consumes the entire input before emitting row 1: 578ms at 1.8M
-  // rows, ~32s extrapolated at 100M. The 7d default makes that rare; it does not make it impossible, and the
-  // page deliberately offers a one-click "Any time". An unbounded escape hatch is a self-inflicted DoS.
+  // rows, ~32s extrapolated at 100M. This 5s timeout is the ONLY universal backstop: it protects every
+  // surface that reaches here — api / cli / mcp via events.list AND the dashboard — none of which forces a
+  // date bound (the web PAGE additionally defaults to 7d for UX, but that is component-level, not enforced
+  // here, so a programmatic org-wide call with a rare residual filter and no range genuinely runs unbounded
+  // and this timeout is what stops it). An unbounded read with no timeout would be a self-inflicted DoS.
   //
   // `set local`, NOT `ALTER ROLE webhook_app SET statement_timeout` — that was the original plan and the
   // audit refused it. A role-level cap applies at SESSION start, so with Hyperdrive's long-lived pools it
