@@ -113,37 +113,39 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   const searchParams = useSearchParams();
   const committedQuery = searchParams.toString();
 
-  // The query string WE last pushed, while its navigation is still in flight (reset once it commits — see the
-  // effect below). EVERY filter read goes through `viewParams` — the last-pushed query when set, else the
-  // committed URL — so a click updates ALL controls (facets, endpoint, date, and the Clear button's `active`
-  // flag) on the SAME render, uniformly. Reading raw searchParams instead made some controls update instantly
-  // (local state / pendingSel) while others lagged the RSC round trip, leaving a half-cleared bar on Clear.
+  // ONE optimistic snapshot of the query. `lastPushedRef` is the query string we last pushed; it is the merge
+  // base for the next write AND the source every control reads for display (viewParams), so a single click
+  // updates the whole bar on the SAME render, uniformly — no control jumps ahead while another lags the RSC
+  // round trip. Rapid multi-toggling merges against this live snapshot, so no earlier pick is dropped.
   const lastPushedRef = React.useRef<string | null>(null);
+  // The committed query AT THE MOMENT of that push. The instant the committed URL moves off it — whether our
+  // push landed OR the reader hit Back/forward — the snapshot is spent, so we drop it HERE, during render
+  // (React's sanctioned "adjust during render"), not in an effect. Consequences: viewParams never renders from
+  // a stale snapshot (no post-commit flash); a NO-OP push — which never changes committedQuery, so never fires
+  // an effect — can't strand it; and it's UNCONDITIONAL, so an external nav is adopted at once. The lone cost
+  // is a 1-frame flicker when a SECOND push is in flight as the first commits (e.g. a facet clicked within
+  // Clear's round trip) — cosmetic, self-healing, and cheaper than tracking per-push causality would be.
+  const committedAtPushRef = React.useRef(committedQuery);
+  if (committedQuery !== committedAtPushRef.current) {
+    committedAtPushRef.current = committedQuery;
+    lastPushedRef.current = null;
+  }
+  // A push mutates lastPushedRef (a ref → no re-render on its own); bump so the optimistic value shows at once.
+  const [, bumpView] = React.useReducer((n: number) => n + 1, 0);
   const viewParams = new URLSearchParams(lastPushedRef.current ?? committedQuery);
 
-  // provider + status are MULTI-select (repeated params). An optimistic override reflects a just-pushed
-  // selection BEFORE the RSC navigation commits, so rapid multi-toggling (faster than the round-trip)
-  // computes each toggle against the live selection instead of a stale committed URL (which would drop
-  // earlier picks). Cleared once the URL commits. The displayed selection is also filtered to the known
-  // vocabulary, so a hand-edited invalid `?provider=`/`?status=` member isn't counted as active.
-  const [pendingSel, setPendingSel] = React.useState<{
-    provider?: string[];
-    status?: string[];
-    method?: string[];
-    dedupStrategy?: string[];
-  }>({});
-  const providerSel = (pendingSel.provider ?? viewParams.getAll("provider")).filter((p) =>
-    providers.includes(p),
-  );
-  const statusSel = (pendingSel.status ?? viewParams.getAll("status")).filter((s) =>
-    (VERIFICATION_STATES as readonly string[]).includes(s),
-  );
-  const methodSel = (pendingSel.method ?? viewParams.getAll("method")).filter((m) =>
-    (HTTP_METHODS as readonly string[]).includes(m),
-  );
-  const dedupSel = (pendingSel.dedupStrategy ?? viewParams.getAll("dedupStrategy")).filter((d) =>
-    (DEDUP_STRATEGIES as readonly string[]).includes(d),
-  );
+  // provider/status/method/dedupStrategy are MULTI-select (repeated params). Each displayed selection is
+  // filtered to the KNOWN vocabulary, so a hand-edited invalid member is neither shown nor counted as active.
+  const providerSel = viewParams.getAll("provider").filter((p) => providers.includes(p));
+  const statusSel = viewParams
+    .getAll("status")
+    .filter((s) => (VERIFICATION_STATES as readonly string[]).includes(s));
+  const methodSel = viewParams
+    .getAll("method")
+    .filter((m) => (HTTP_METHODS as readonly string[]).includes(m));
+  const dedupSel = viewParams
+    .getAll("dedupStrategy")
+    .filter((d) => (DEDUP_STRATEGIES as readonly string[]).includes(d));
   // The EFFECTIVE event type — what the server will actually filter on — not the raw `?eventType=`. Keying the
   // box, `active`/Clear, and the coverage hint off this (the same predicate the parser uses) means a shared
   // link with a whitespace-only or over-long value can't light the filter UI over an unfiltered list.
@@ -216,22 +218,14 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     [],
   );
 
-  // Drop the optimistic overrides on ANY committed URL change — UNCONDITIONALLY. It's tempting to reset only
-  // when the commit matches what we last pushed (to avoid a one-render flicker when two pushes are briefly in
-  // flight, e.g. Clear then a facet pick). But a MATCH guard strands the ref: a no-op push — re-clicking the
-  // already-active date preset pushes an identical query, so router.replace never changes committedQuery and
-  // this effect never fires — pins lastPushedRef; a later Back/forward then finds it neither null nor equal to
-  // the new URL, so it's never cleared, and viewParams drives every control from the abandoned query (a stale
-  // chip-vs-data bar that also merges the next change onto the stale ref). Unconditional reset self-heals on
-  // the very next commit; the rare intermediate-commit flicker is the acceptable cost.
-  React.useEffect(() => {
-    lastPushedRef.current = null;
-    setPendingSel({});
-  }, [committedQuery]);
-
+  // Record the URL we're pushing FROM (so adjust-during-render can tell when it has moved on), pin the pushed
+  // query as the optimistic snapshot, and bump so it renders immediately. There is no reset effect: the
+  // snapshot is cleared during render, above, the moment committedQuery changes.
   function apply(next: URLSearchParams) {
     const qs = next.toString();
+    committedAtPushRef.current = committedQuery;
     lastPushedRef.current = qs;
+    bumpView();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
@@ -253,7 +247,6 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     key: "provider" | "status" | "method" | "dedupStrategy",
     values: readonly string[],
   ) {
-    setPendingSel((prev) => ({ ...prev, [key]: [...values] }));
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     next.delete(key);
     for (const value of values) next.append(key, value);
@@ -330,7 +323,12 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
       if (effective) next.set("search", effective);
       else next.delete("search");
       const qs = next.toString();
+      // Same push discipline as apply(): record where we pushed from + pin the snapshot + bump. Inlined
+      // (rather than calling apply) so the effect's deps stay stable — listing apply would reset the debounce
+      // timer every render. bumpView/setSearchInput/router identities are stable, so none belong in the deps.
+      committedAtPushRef.current = committedQuery;
       lastPushedRef.current = qs;
+      bumpView();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(handle);
@@ -347,10 +345,8 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     committedEventTypeRef.current = "";
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
-    // apply() sets lastPushedRef to this (empty) query, so viewParams reads empty on the next render — every
-    // control (facets, endpoint, date, Clear's `active`) clears together, at once. Dropping the pendingSel
-    // override lets the facets fall through to that empty viewParams rather than a stale selection.
-    setPendingSel({});
+    // apply() pins this (empty) query as the snapshot and bumps, so viewParams reads empty on the next render:
+    // every control — facets, endpoint, date, and Clear's own `active` flag — clears together, at once.
     apply(next);
   }
 

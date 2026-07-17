@@ -84,6 +84,23 @@ describe("EventsFilterBar — the endpoint facet (org-wide browse only)", () => 
     await userEvent.click(screen.getByRole("button", { name: /Filter by endpoint/ }));
     expect(screen.getByRole("option", { name: "All endpoints" })).toBeInTheDocument();
   });
+
+  // The endpoint (and date) controls push via applyPatch, which — unlike the multi-selects — carried no
+  // optimistic state of its own, so a pick used to lag the RSC round trip while the facet chips jumped ahead.
+  // The single-snapshot model updates every control on the same render; this pins that for the endpoint.
+  it("shows a just-picked endpoint immediately, before the navigation commits", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} endpoints={endpoints} />);
+    const trigger = screen.getByRole("button", { name: /Filter by endpoint/ });
+    expect(trigger).toHaveTextContent("All endpoints"); // nothing selected yet
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "stripe-prod" }));
+    // The committed URL (mockSearch) never changed — this asserts the OPTIMISTIC snapshot renders the pick at
+    // once, not a render or two later when the navigation lands.
+    expect(screen.getByRole("button", { name: /Filter by endpoint/ })).toHaveTextContent(
+      "stripe-prod",
+    );
+  });
 });
 
 // The 3-char floor, as the READER experiences it. pg_trgm extracts zero trigrams below 3 characters, so a
