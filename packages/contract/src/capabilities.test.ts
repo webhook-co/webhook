@@ -230,6 +230,30 @@ describe("events.list filter (provider + received-at range)", () => {
     ]);
   });
 
+  it("accepts the new facets — dedupStrategy, method (multi), eventType (exact string)", () => {
+    const parsed = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: {
+        dedupStrategy: ["unique", "content_hash"],
+        method: ["GET", "POST"],
+        eventType: "charge.succeeded",
+      },
+    });
+    expect(parsed.filter?.dedupStrategy).toEqual(["unique", "content_hash"]);
+    expect(parsed.filter?.method).toEqual(["GET", "POST"]);
+    expect(parsed.filter?.eventType).toBe("charge.succeeded");
+  });
+
+  it("rejects an unknown dedupStrategy / method value (closed enums)", () => {
+    const base = { endpointId: "11111111-1111-4111-8111-111111111111" };
+    expect(
+      eventsList.input.safeParse({ ...base, filter: { dedupStrategy: ["nope"] } }).success,
+    ).toBe(false);
+    expect(eventsList.input.safeParse({ ...base, filter: { method: ["TRACE"] } }).success).toBe(
+      false,
+    );
+  });
+
   it("the canonical vocabulary is exactly those four, in order", () => {
     expect([...VERIFICATION_STATES]).toEqual([
       "verified",

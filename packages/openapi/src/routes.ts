@@ -268,7 +268,8 @@ export const ROUTES: readonly RouteDef[] = [
       },
       {
         name: "receivedAfter",
-        description: "Inclusive lower bound (RFC 3339 instant).",
+        description:
+          "Inclusive lower bound: an RFC 3339 instant, a relative duration (7d / 30m — the last N), or `beginning`.",
         schemaFrom: "filter.receivedAfter",
       },
       {
@@ -281,6 +282,26 @@ export const ROUTES: readonly RouteDef[] = [
         description:
           "Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id.",
         schemaFrom: "filter.search",
+      },
+      {
+        name: "dedupStrategy",
+        multi: true,
+        description:
+          "Filter by dedup strategy: sw_webhook_id | provider_event_id | content_hash | fields | unique (repeatable).",
+        schemaFrom: "filter.dedupStrategy",
+      },
+      {
+        name: "method",
+        multi: true,
+        description:
+          "Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable).",
+        schemaFrom: "filter.method",
+      },
+      {
+        name: "eventType",
+        description:
+          "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value.",
+        schemaFrom: "filter.eventType",
       },
     ],
     buildInput: (params, q) => {
@@ -298,6 +319,12 @@ export const ROUTES: readonly RouteDef[] = [
       // A whitespace-only / empty search means "no search" (the contract trims + min(1)s it).
       const search = q.get("search");
       if (search && search.trim() !== "") filter.search = search;
+      const dedupStrategies = q.getAll("dedupStrategy").filter((d) => d !== "");
+      if (dedupStrategies.length > 0) filter.dedupStrategy = dedupStrategies;
+      const methods = q.getAll("method").filter((m) => m !== "");
+      if (methods.length > 0) filter.method = methods;
+      const eventType = q.get("eventType");
+      if (eventType && eventType.trim() !== "") filter.eventType = eventType;
       if (Object.keys(filter).length > 0) input.filter = filter;
       return input;
     },

@@ -77,6 +77,9 @@ async function seedEvent(
     providerEventId?: string | null;
     externalId?: string | null;
     dedupKey?: string;
+    dedupStrategy?: string;
+    method?: string | null;
+    eventType?: string | null;
     headers?: [string, string][];
   } = {},
 ): Promise<string> {
@@ -95,7 +98,8 @@ async function seedEvent(
     await tx`
       insert into events
         (id, org_id, endpoint_id, payload_r2_key, payload_bytes, content_type, headers,
-         dedup_key, dedup_strategy, provider, provider_event_id, external_id, verified, verification)
+         dedup_key, dedup_strategy, method, event_type, provider, provider_event_id, external_id,
+         verified, verification)
       values
         (${id}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${id}`}, ${1234},
          ${"application/json"}, ${tx.json(
@@ -104,7 +108,8 @@ async function seedEvent(
              ["x-test", "1"],
            ],
          )},
-         ${dedupKey}, ${"content_hash"}, ${opts.provider ?? null}, ${providerEventId}, ${externalId},
+         ${dedupKey}, ${opts.dedupStrategy ?? "content_hash"}, ${opts.method ?? null},
+         ${opts.eventType ?? null}, ${opts.provider ?? null}, ${providerEventId}, ${externalId},
          ${verified}, ${verification === null ? null : tx.json(verification)})`;
   });
   return id;
@@ -464,6 +469,70 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(
       (await list({ provider: ["github", "stripe"], verificationState: ["failed"] })).items,
     ).toEqual([]); // stripe+github are verified, not failed
+  });
+
+  it("listEvents filters by dedupStrategy (multi-select, OR)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-dedup" }, hasher)).id;
+    const uniq = await seedEvent(orgA, ep, { dedupStrategy: "unique" });
+    const hash = await seedEvent(orgA, ep, { dedupStrategy: "content_hash" });
+    await seedEvent(orgA, ep, { dedupStrategy: "sw_webhook_id" });
+    const got = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, dedupStrategy: ["unique", "content_hash"] }),
+    );
+    expect(new Set(got.items.map((e) => e.id))).toEqual(new Set([uniq, hash]));
+  });
+
+  it("listEvents filters by method (multi-select, OR) — a NULL-method legacy row never matches", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-method" }, hasher)).id;
+    const get = await seedEvent(orgA, ep, { method: "GET" });
+    const post = await seedEvent(orgA, ep, { method: "POST" });
+    await seedEvent(orgA, ep, { method: "DELETE" });
+    await seedEvent(orgA, ep, { method: null }); // pre-0028 legacy: no verb recorded
+    const got = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, method: ["GET", "POST"] }),
+    );
+    // `method in ('GET','POST')` — SQL IN never matches NULL, so the legacy row is correctly excluded.
+    expect(new Set(got.items.map((e) => e.id))).toEqual(new Set([get, post]));
+  });
+
+  it("listEvents filters by eventType (exact) — NULL (unparsed provider) never matches", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-etype" }, hasher)).id;
+    const charge = await seedEvent(orgA, ep, { eventType: "charge.succeeded" });
+    await seedEvent(orgA, ep, { eventType: "charge.failed" });
+    await seedEvent(orgA, ep, { eventType: null }); // provider we don't parse an event type for
+    const got = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, eventType: "charge.succeeded" }),
+    );
+    expect(got.items.map((e) => e.id)).toEqual([charge]);
+  });
+
+  it("listEvents composes the new facets with each other (AND across fields)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-facet-and" }, hasher)).id;
+    const hit = await seedEvent(orgA, ep, {
+      method: "POST",
+      eventType: "invoice.paid",
+      dedupStrategy: "sw_webhook_id",
+    });
+    await seedEvent(orgA, ep, {
+      method: "GET",
+      eventType: "invoice.paid",
+      dedupStrategy: "sw_webhook_id",
+    });
+    await seedEvent(orgA, ep, {
+      method: "POST",
+      eventType: "invoice.void",
+      dedupStrategy: "sw_webhook_id",
+    });
+    const got = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, {
+        endpointId: ep,
+        limit: 50,
+        method: ["POST"],
+        eventType: "invoice.paid",
+        dedupStrategy: ["sw_webhook_id"],
+      }),
+    );
+    expect(got.items.map((e) => e.id)).toEqual([hit]);
   });
 
   it("listEndpoints filters by a case-insensitive name substring", async () => {

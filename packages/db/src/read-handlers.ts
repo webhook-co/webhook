@@ -26,6 +26,7 @@ import {
   parseSince,
   verifyAuditChain,
   type Cursor,
+  type DedupStrategy,
   type Since,
   type VerificationState,
   type PayloadReaderRpc,
@@ -89,14 +90,63 @@ export function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
   }
 }
 
-/** Coerce an optional RFC3339 received-at bound (string) to a Date; a malformed value → VALIDATION_ERROR. */
-function toInstantBound(value: string | undefined): Date | undefined {
-  if (value === undefined) return undefined;
+/**
+ * Coerce an optional received-at bound string to a Date via the lenient `new Date` parse — the ONE place
+ * both bounds resolve a plain instant, so receivedAfter and receivedBefore stay in lock-step by construction.
+ *
+ * "Lenient" is JS `Date`'s leniency, unchanged and shared: a date-only `2026-07-01`, a no-timezone
+ * `...T00:00:00`, and even a calendar overflow like `2026-06-31` (→ Jul 1) all resolve — exactly as
+ * receivedBefore has always done and receivedAfter did before durations were added. It is deliberately MORE
+ * lenient than events.tail's strict `since` grammar; these are fuzzy browse bounds, not a gapless cursor.
+ * Absent OR empty → no bound (undefined): empty means "no filter", and only MCP can send it (the HTTP route
+ * drops empties) — treating it symmetrically avoids a 400 on one bound but not the other.
+ */
+export function toInstantBound(
+  value: string | undefined,
+  label = "received-at bound",
+): Date | undefined {
+  if (value === undefined || value === "") return undefined;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) {
-    throw new CapabilityFault("VALIDATION_ERROR", "invalid received-at bound");
+    throw new CapabilityFault("VALIDATION_ERROR", `invalid ${label}`);
   }
   return d;
+}
+
+/**
+ * Resolve the `receivedAfter` lower bound. This capability ADDS the `--since` relative grammar (`beginning` |
+ * `<duration>` like `7d`/`30m`) on TOP of everything the plain instant bound (`toInstantBound`) accepts — the
+ * same "last N" vocabulary the web presets use, now on api/mcp/cli too. New here, not pre-existing prior art:
+ * before this change the server resolved receivedAfter via the strict instant parse, so `--after 7d` 400'd.
+ *
+ * A strict SUPERSET of `toInstantBound`, by construction: parseSince recognises the relative grammar; anything
+ * it doesn't (a plain instant, incl. the lenient forms parseSince rejects but `new Date` accepts — date-only,
+ * no-tz, even a calendar overflow) falls straight through to `toInstantBound`. So receivedAfter accepts every
+ * instant receivedBefore does, plus durations — never fewer, never asymmetric. Only a value neither can read
+ * is a 400.
+ *
+ * `now` is accepted (grammar parity with events.tail) but deliberately NOT advertised for receivedAfter: on a
+ * newest-first browse `received_at >= now()` is a no-op (empty page). Relative durations resolve against the
+ * SERVER clock — a fuzzy browse bound, not the tail's gapless watermark, so no clock-skew guarantee is owed.
+ * `beginning` = no lower bound (undefined).
+ */
+export function resolveReceivedAfter(value: string | undefined): Date | undefined {
+  const since =
+    value === undefined || value === "" ? { kind: "beginning" as const } : parseSince(value);
+  switch (since.kind) {
+    case "beginning":
+      return undefined;
+    case "now":
+      return new Date();
+    case "relative":
+      return new Date(Date.now() - since.ms);
+    case "timestamp":
+      return since.date;
+    case "invalid":
+      // Not the relative grammar — resolve it as a plain instant, exactly as (and via the same helper as)
+      // receivedBefore, so the two bounds can never diverge on a shared string. Same throw for true garbage.
+      return toInstantBound(value, "receivedAfter (expected an instant or a duration like 7d)");
+  }
 }
 
 export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
@@ -157,6 +207,9 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         receivedBefore?: string;
         verificationState?: VerificationState | VerificationState[];
         search?: string;
+        dedupStrategy?: string | string[];
+        method?: string | string[];
+        eventType?: string;
       };
     };
     const provider = asArray(filter?.provider);
@@ -164,8 +217,8 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     // The range bounds arrive as RFC3339 strings (the contract input is a plain string so the MCP tool
     // inputSchema stays JSON-Schema-clean); validate + coerce them to Dates HERE — a malformed bound is
     // a VALIDATION_ERROR, never a raw string handed to SQL.
-    const receivedAfter = toInstantBound(filter?.receivedAfter);
-    const receivedBefore = toInstantBound(filter?.receivedBefore);
+    const receivedAfter = resolveReceivedAfter(filter?.receivedAfter);
+    const receivedBefore = toInstantBound(filter?.receivedBefore, "receivedBefore");
     const decoded = await decode(cursor);
     const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Distinguish "no such endpoint for this org" (NOT_FOUND) from "endpoint with no events".
@@ -182,6 +235,12 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         receivedBefore,
         verificationState,
         search: filter?.search,
+        // A typed cast, NOT `as never`: the value is contract-validated to the DedupStrategy enum, and this
+        // keeps that contract legible instead of silencing the checker (which would also mask a real
+        // regression if the contract validation were ever dropped). The security review flagged the smell.
+        dedupStrategy: asArray(filter?.dedupStrategy) as DedupStrategy[] | undefined,
+        method: asArray(filter?.method),
+        eventType: filter?.eventType,
       });
       // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
       // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).

@@ -158,7 +158,7 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     // The router maps raw query strings into filter; the events.list Zod schema coerces them downstream.
     await handleRequest(
       get(
-        `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z&search=evt_abc`,
+        `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=7d&receivedBefore=2026-06-02T00:00:00Z&search=evt_abc&dedupStrategy=unique&dedupStrategy=content_hash&method=GET&method=POST&eventType=charge.succeeded`,
       ),
       deps,
     );
@@ -167,9 +167,14 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
       filter: {
         provider: ["github"],
         verificationState: ["failed"],
-        receivedAfter: "2026-06-01T00:00:00Z",
+        // receivedAfter now accepts the relative --since grammar; the router passes the raw token and the
+        // read-handler resolves it (7d → now-7d) server-side.
+        receivedAfter: "7d",
         receivedBefore: "2026-06-02T00:00:00Z",
         search: "evt_abc",
+        dedupStrategy: ["unique", "content_hash"],
+        method: ["GET", "POST"],
+        eventType: "charge.succeeded",
       },
     });
   });

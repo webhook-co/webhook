@@ -7,6 +7,7 @@
 import {
   DedupConfigSchema,
   deriveVerificationState,
+  type DedupStrategy,
   DeliverySchema,
   EndpointSchema,
   EventSchema,
@@ -391,6 +392,12 @@ export interface EventBrowseFilters extends ListOptions {
   readonly verificationState?: readonly VerificationState[];
   /** Case-insensitive substring across provider_event_id + dedup_key (+ exact id match when a uuid). */
   readonly search?: string;
+  /** Multi-select dedup-strategy filter — OR'd. Always NOT NULL, so every row is filterable. */
+  readonly dedupStrategy?: readonly DedupStrategy[];
+  /** Multi-select HTTP-method filter — OR'd. NULL on legacy pre-0028 rows, which never match a value. */
+  readonly method?: readonly string[];
+  /** Exact event-type match. NULL for providers whose type we don't parse, which never match a value. */
+  readonly eventType?: string;
 }
 
 /** The endpoint-scoped browse. `endpointId` is REQUIRED — unchanged for every existing caller. */
@@ -474,8 +481,18 @@ async function browseEvents(tx: TenantTx, opts: ListOrgEventsOptions): Promise<P
   // not planned), and this is the same tx-scoped mechanism withTenant already uses for the RLS GUC.
   await tx`select set_config('statement_timeout', ${BROWSE_STATEMENT_TIMEOUT}, true)`;
   const limit = clampLimit(opts.limit);
-  const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState, search } =
-    opts;
+  const {
+    cursor,
+    endpointId,
+    provider,
+    receivedAfter,
+    receivedBefore,
+    verificationState,
+    search,
+    dedupStrategy,
+    method,
+    eventType,
+  } = opts;
   const rows = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
            ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
@@ -487,6 +504,9 @@ async function browseEvents(tx: TenantTx, opts: ListOrgEventsOptions): Promise<P
     ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
     ${verificationStateFilter(tx, verificationState)}
     ${eventSearchFilter(tx, search)}
+    ${dedupStrategy && dedupStrategy.length > 0 ? tx`and dedup_strategy in ${tx([...dedupStrategy])}` : tx``}
+    ${method && method.length > 0 ? tx`and method in ${tx([...method])}` : tx``}
+    ${eventType ? tx`and event_type = ${eventType}` : tx``}
     ${cursor ? keysetBefore(tx, cursor) : tx``}
     order by received_at desc, id desc
     limit ${limit + 1}`;
