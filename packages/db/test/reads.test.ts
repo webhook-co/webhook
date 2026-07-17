@@ -28,6 +28,7 @@ import {
   likeContains,
   listEndpoints,
   listEvents,
+  listOrgEvents,
   resolveSince,
   tailEvents,
   tailMeta,
@@ -1138,5 +1139,88 @@ describe("isIngestPaused", () => {
     // And an `other` that is explicitly NOT paused still reads its own false, not the other org's true.
     await setPaused(other, false);
     expect(await withTenant(app, other, (tx) => isIngestPaused(tx))).toBe(false);
+  });
+});
+
+// The org-wide events browse — the read behind the consolidated /org/{slug}/events page. Events were
+// previously reachable ONLY through an endpoint (`listEvents` hard-requires endpointId), so this is a new
+// read, not a widened one. RLS is the org boundary: like every other read here it carries NO org_id
+// predicate, so these tests are also what prove `withTenant` is doing that job.
+describe("listOrgEvents (org-wide browse)", () => {
+  // Asserts PROPERTIES, not exact counts: this file shares one seeded org across many tests (and some seed
+  // more events), so a count assertion would pass alone and fail in the suite — which is precisely what the
+  // first draft of these tests did.
+  it("returns events from EVERY endpoint in the org, newest-first", async () => {
+    const page = await withTenant(app, orgA, (tx) => listOrgEvents(tx, { limit: 200 }));
+    const endpoints = new Set(page.items.map((e) => e.endpointId));
+    // The whole point: an endpoint-scoped read can only ever see ONE of these sets.
+    expect(endpoints.has(epA)).toBe(true);
+    expect(endpoints.has(epTail)).toBe(true);
+    const times = page.items.map((e) => e.receivedAt.getTime());
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+
+  it("is RLS-scoped: another org's events are never returned", async () => {
+    const page = await withTenant(app, orgA, (tx) => listOrgEvents(tx, {}));
+    expect(page.items.some((e) => e.endpointId === epB)).toBe(false);
+    // The property is cross-org ISOLATION, not exact membership: other tests in this file seed into both
+    // orgs, so "orgB sees only epB" is not stable — "orgB never sees orgA's endpoints" is.
+    const bPage = await withTenant(app, orgB, (tx) => listOrgEvents(tx, { limit: 200 }));
+    expect(bPage.items.length).toBeGreaterThan(0);
+    expect(bPage.items.some((e) => e.endpointId === epB)).toBe(true);
+    expect(bPage.items.some((e) => e.endpointId === epA || e.endpointId === epTail)).toBe(false);
+  });
+
+  // Pins the two doors to ONE body: passing endpointId must be exactly the endpoint-scoped read, so the
+  // consolidated page and the per-endpoint page can never disagree about what an endpoint's events are.
+  it("with an endpointId returns exactly what listEvents returns", async () => {
+    const [org, scoped] = await Promise.all([
+      withTenant(app, orgA, (tx) => listOrgEvents(tx, { endpointId: epTail })),
+      withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: epTail })),
+    ]);
+    expect(org.items.map((e) => e.id)).toEqual(scoped.items.map((e) => e.id));
+    expect(org.nextCursor).toEqual(scoped.nextCursor);
+  });
+
+  it("hides soft-deleted events (0058: every surfacing reader filters deleted_at)", async () => {
+    const doomed = await seedEvent(orgA, epA, { provider: "stripe" });
+    const before = await withTenant(app, orgA, (tx) => listOrgEvents(tx, {}));
+    expect(before.items.some((e) => e.id === doomed)).toBe(true);
+    // MUST run inside withTenant: `events_update` is `using (org_id = current_org_id())` and
+    // current_org_id() is NULL outside a tenant tx, so a bare update silently matches ZERO rows (deny by
+    // default). The first draft of this test did exactly that and "failed" against correct code.
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set deleted_at = now() where id = ${doomed}`,
+    );
+    const after = await withTenant(app, orgA, (tx) => listOrgEvents(tx, {}));
+    expect(after.items.some((e) => e.id === doomed)).toBe(false);
+  });
+
+  it("applies the provider filter across endpoints", async () => {
+    const page = await withTenant(app, orgA, (tx) =>
+      listOrgEvents(tx, { provider: ["github"], limit: 200 }),
+    );
+    expect(page.items.every((e) => e.provider === "github")).toBe(true);
+    // github events exist on BOTH endpoints — the filter must not collapse to one of them.
+    const endpoints = new Set(page.items.map((e) => e.endpointId));
+    expect(endpoints.has(epA)).toBe(true);
+    expect(endpoints.has(epTail)).toBe(true);
+  });
+
+  // The µs-exact keyset must hold ACROSS endpoints, not just within one: an org-wide page boundary can fall
+  // between two events on different endpoints that share a microsecond.
+  it("keysets across endpoints without a dup or a skip", async () => {
+    const first = await withTenant(app, orgA, (tx) => listOrgEvents(tx, { limit: 4 }));
+    expect(first.items.length).toBe(4); // orgA always has >4 events by this point
+    expect(first.nextCursor).not.toBeNull();
+    const second = await withTenant(app, orgA, (tx) =>
+      listOrgEvents(tx, { limit: 4, cursor: first.nextCursor! }),
+    );
+    const ids = [...first.items, ...second.items].map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length); // no dup
+    const all = await withTenant(app, orgA, (tx) => listOrgEvents(tx, { limit: 200 }));
+    expect(ids).toEqual(all.items.map((e) => e.id).slice(0, ids.length)); // no skip
   });
 });
