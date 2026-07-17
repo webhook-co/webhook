@@ -44,10 +44,36 @@ the engine via the WebSocket **subprotocol**:
    and a browser aborts if the server accepts none — so the handler threads the accepted token to the DO
    on `x-listen-accept-subprotocol` and the DO sets `Sec-WebSocket-Protocol: wbhk.listen.v1` on its 101.
 
+## amendment (2026-07-17) — org-scope discriminator (v2), for the consolidated events page
+
+The consolidated `/org/{slug}/events` page (org-wide events lane) needs a live tail across EVERY endpoint,
+not one. The ticket envelope gains a **required scope discriminator** and bumps to **v2**:
+
+- **Codec**: `{v: 2, o: orgId, s: "org" | "endpoint", e?: endpointId, u?: userId, exp}`. `s` is REQUIRED and
+  verify enforces scope↔endpoint agreement: `s:"endpoint"` MUST carry a non-empty `e`; `s:"org"` MUST omit
+  `e` (a contradictory envelope is rejected). An absent or unknown `s` returns `null` — **absence never
+  grants**, and it can never silently degrade to the broader org scope. This is deliberately NOT the
+  additive-optional-`e` shape (which would turn a malformed envelope into an org grant); it is a clean v2
+  break so the verifier reads as "unknown scope → null, full stop". The v1→v2 break costs a brief window of
+  401→re-mint reconnects during a rolling deploy — fail-closed and self-healing.
+- **Web mint**: a new `mintOrgListenTicketAction(slug)` mints `{scope:"org", orgId}` after the session gate
+  ONLY — there is **no per-endpoint ownership check** because the ticket names no endpoint. That is sound:
+  RLS already scopes every tail read to `orgId`, so an org ticket grants nothing the caller's session did
+  not already have.
+- **Engine + DO**: org scope skips the endpoint uuid/existence guards, forwards `x-listen-scope` (+ no
+  `x-listen-endpoint-id`), and the DO binding is a discriminated union (`endpointId` present iff endpoint
+  scope). The reconnect-pinning compares scope + (endpoint only when endpoint-scoped) — an org binding
+  stores no endpoint on either side, so it matches itself (avoids a guaranteed 30-min reconnect wedge). The
+  tail reads swap to `tailOrgEventsWithCursors` / `orgTailMeta` (no endpoint predicate; RLS the only scope).
+
 ## consequences / security posture
 
-- **Least privilege**: the ticket grants read-only tailing (`events.tail`) of the ONE endpoint it names,
-  for at most 60s; a leaked ticket exposes only the owner's own events, briefly.
+- **Least privilege**: an ENDPOINT-scoped ticket grants read-only tailing (`events.tail`) of the ONE
+  endpoint it names, for at most 60s. An ORG-scoped ticket (v2) grants read-only tailing of the caller's
+  WHOLE org for at most 60s — a wider leaked-ticket blast radius (one endpoint → ≤100), but **zero new
+  authorization**: RLS is org-scoped, roles carry no per-endpoint ACL anywhere, and the periodic membership
+  re-check is still `(user, org)`. The widening is purely blast radius, bounded by the same 60s TTL +
+  30-min lifetime cap. This re-entered the `/security-review` hard gate.
 - **No new query-string or header secret**; the session cookie never reaches `wbhk.my`.
 - **Reads never bill** (the tail inserts no `events` row) — unchanged metering guardrail.
 - The `LISTEN_TICKET_KEY` must be provisioned (32 bytes, byte-identical) in the Secrets Store for BOTH

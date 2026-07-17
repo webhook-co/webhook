@@ -3,6 +3,8 @@ import { UnauthenticatedError, type AuthContext } from "@webhook-co/contract";
 import type { Cursor, EventSummary } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
+import type { ListenTicketGrant } from "@webhook-co/shared";
+
 import { handleFetch, handleListenUpgrade, type Env, type MakeListenAuth } from "../src/index";
 import type { ListenSession } from "../src/listen-session";
 
@@ -19,8 +21,7 @@ type PollFn = (
   r: Cursor | undefined,
 ) => Promise<{ events: EventSummary[]; caughtUp: boolean }>;
 type MetaFn = (
-  o: string,
-  e: string,
+  b: unknown,
   r: Cursor | undefined,
 ) => Promise<{ headCursor: Cursor | null; backlogCount: number }>;
 
@@ -76,9 +77,18 @@ const DASHBOARD_ORIGIN = "https://app.webhook.co";
 const TICKET_ORG = "33333333-3333-3333-3333-333333333333";
 const TICKET_ENDPOINT = "44444444-4444-4444-4444-444444444444";
 
-/** A fake ticket verifier: returns a fixed grant, or null to simulate an invalid/expired ticket. */
-function fakeVerifyTicket(grant: { orgId: string; endpointId: string; userId?: string } | null) {
-  return async () => grant;
+/** A fake ticket verifier: returns a fixed grant, or null to simulate an invalid/expired ticket. A grant
+ *  with an endpointId (and no explicit scope) defaults to endpoint scope; pass `scope: "org"` for an
+ *  org-wide tail grant (no endpoint). */
+function fakeVerifyTicket(
+  grant: { orgId: string; endpointId?: string; userId?: string; scope?: "org" | "endpoint" } | null,
+) {
+  return async (): Promise<ListenTicketGrant | null> => {
+    if (!grant) return null;
+    const userId = grant.userId ? { userId: grant.userId } : {};
+    if (grant.scope === "org") return { scope: "org", orgId: grant.orgId, ...userId };
+    return { scope: "endpoint", orgId: grant.orgId, endpointId: grant.endpointId!, ...userId };
+  };
 }
 
 describe("listen upgrade — auth", () => {
@@ -372,6 +382,48 @@ describe("listen upgrade — dashboard ticket", () => {
     expect(binding?.endpointId).toBe(TICKET_ENDPOINT);
   });
 
+  it("upgrades an ORG-scoped ticket: binds scope=org, no endpoint, and SKIPS the existence check", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true;
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        sessionId,
+        upgrade: true,
+        origin: DASHBOARD_ORIGIN,
+        // An org tail names no endpoint; a stray query endpointId must be ignored, not bound.
+        endpointId: "99999999-9999-9999-9999-999999999999",
+        subprotocol: `wbhk.listen.v1, ticket.goodtoken`,
+      }),
+      bindings,
+      // exists:false proves the endpoint existence guard is SKIPPED for org scope — a 404 here would mean the
+      // handler wrongly ran it. (An endpoint-scoped ticket with exists:false 404s; the org one must not.)
+      fakeAuth({ ctx: READ_CTX, exists: false }),
+      fakeVerifyTicket({ scope: "org", orgId: TICKET_ORG }),
+    );
+    expect(res.status).toBe(101);
+    expect(res.webSocket).not.toBeNull();
+
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ orgId: string; scope: string; endpointId?: string }>("binding"),
+    );
+    expect(binding?.orgId).toBe(TICKET_ORG);
+    expect(binding?.scope).toBe("org");
+    expect(binding?.endpointId).toBeUndefined(); // no phantom endpoint on an org binding
+  });
+
   // S.8 trusted-header boundary: the periodic membership re-check hinges on `x-listen-user-id` being set
   // from the VERIFIED credential and a client-supplied one being stripped. These tests exercise the upgrade
   // handler's own wiring (index.ts), which the DO-level tests can't — they inject the header directly.
@@ -519,11 +571,11 @@ describe("listen upgrade — since (bearer)", () => {
       const di = inst as ListenSession & {
         pollEvents: PollFn;
         backlogMeta: MetaFn;
-        resolveSinceCursor: (o: string, e: string, s: { kind: string }) => Promise<undefined>;
+        resolveSinceCursor: (o: string, s: { kind: string }) => Promise<undefined>;
       };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
-      di.resolveSinceCursor = async (_o, _e, s) => {
+      di.resolveSinceCursor = async (_o, s) => {
         seen.push(s);
         return undefined;
       };

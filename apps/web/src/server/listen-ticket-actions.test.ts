@@ -26,7 +26,7 @@ vi.mock("./env", async (orig) => ({
   getListenTicketKey: vi.fn(async () => KEY_B64),
 }));
 
-import { mintListenTicketAction } from "./listen-ticket-actions";
+import { mintListenTicketAction, mintOrgListenTicketAction } from "./listen-ticket-actions";
 
 const ENDPOINT = "11111111-1111-1111-1111-111111111111";
 
@@ -43,7 +43,12 @@ describe("mintListenTicketAction", () => {
       expect(res.subprotocol).toBe("wbhk.listen.v1");
       const key = await importListenTicketKey(b64ToBytes(KEY_B64));
       const grant = await verifyListenTicket(key, res.ticket, Math.floor(Date.now() / 1000));
-      expect(grant).toEqual({ orgId: "org-1", endpointId: ENDPOINT, userId: "u1" });
+      expect(grant).toEqual({
+        scope: "endpoint",
+        orgId: "org-1",
+        endpointId: ENDPOINT,
+        userId: "u1",
+      });
     }
   });
 
@@ -71,6 +76,34 @@ describe("mintListenTicketAction", () => {
     // loadEndpoint catches its own db faults and returns {status:"error"} WITHOUT throwing.
     loadEndpoint.mockResolvedValue({ status: "error" });
     const res = await mintListenTicketAction("acme", ENDPOINT);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/couldn't start/i);
+  });
+});
+
+describe("mintOrgListenTicketAction", () => {
+  it("mints an ORG-scoped ticket bound to the session org, with NO endpoint and NO ownership check", async () => {
+    const res = await mintOrgListenTicketAction("acme");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.subprotocol).toBe("wbhk.listen.v1");
+      const key = await importListenTicketKey(b64ToBytes(KEY_B64));
+      const grant = await verifyListenTicket(key, res.ticket, Math.floor(Date.now() / 1000));
+      expect(grant).toEqual({ scope: "org", orgId: "org-1", userId: "u1" });
+    }
+    // RLS is the org boundary — an org tail names no endpoint, so there is nothing to own-check.
+    expect(loadEndpoint).not.toHaveBeenCalled();
+  });
+
+  it("requires org access — a caller with no session never reaches the mint", async () => {
+    requireOrgAccess.mockRejectedValueOnce(new Error("no session"));
+    await expect(mintOrgListenTicketAction("acme")).rejects.toThrow();
+  });
+
+  it("returns a generic retry error (no ticket) if the key can't be loaded", async () => {
+    const { getListenTicketKey } = await import("./env");
+    vi.mocked(getListenTicketKey).mockRejectedValueOnce(new Error("kms down"));
+    const res = await mintOrgListenTicketAction("acme");
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/couldn't start/i);
   });
