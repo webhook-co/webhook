@@ -1,0 +1,20 @@
+{
+  "name": "@webhook-co/dmarc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run && vitest run --config vitest.workers.config.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.5",
+    "@cloudflare/workers-types": "^5.20260715.1"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.10.1",
+    "postal-mime": "^2.7.5"
+  },
+  "main": "src/index.ts"
+}

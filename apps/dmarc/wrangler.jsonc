@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-dmarc",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-15",
+  // The DMARC aggregate-report ingestion Worker (ADR-0021). An EMAIL Worker, not a fetch Worker: it is
+  // bound to reports@wbhk.my via an Email Routing rule and has no HTTP surface at all.
+  //
+  // Deliberately a Worker rather than an Email Routing FORWARDING rule: a forwarding rule makes Cloudflare
+  // send as wbhk.my, which would force `v=spf1 include:_spf.mx.cloudflare.net ~all` onto the zone and
+  // undo the Phase 3 anti-spoof posture. A Worker never sends, so wbhk.my keeps `v=spf1 -all`.
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DMARC_DB",
+      "database_name": "webhook-dmarc",
+      "database_id": "7a404c6b-562c-4c2f-bf56-b1feba4e4af4",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "workers_dev": false,
+}
