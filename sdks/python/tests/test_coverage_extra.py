@@ -111,7 +111,7 @@ class TestClientEdges:
 
     def test_events_list_page(self):
         client = wc([jr(200, {"items": [], "nextCursor": "n"})])
-        page = client.events.list_page("e1", limit=5, search="x")
+        page = client.events.list_page(endpoint_id="e1", limit=5, search="x")
         assert page.next_cursor == "n"
 
     def test_deliveries_list_page(self):

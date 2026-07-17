@@ -304,17 +304,40 @@ class TestEvents:
     def test_list_multi_select_query(self):
         wc, calls = make([jr(200, {"items": [], "nextCursor": None})])
         wc.events.list(
-            "e1",
+            endpoint_id="e1",
             provider=["stripe", "github"],
             verification_state=["verified"],
             search="checkout",
+            method=["GET", "POST"],
             limit=25,
         ).collect()
         url = str(calls[0].url)
+        assert "/v1/events?" in url  # canonical route
+        assert "endpointId=e1" in url
         assert "provider=stripe&provider=github" in url
         assert "verificationState=verified" in url
         assert "search=checkout" in url
+        assert "method=GET&method=POST" in url
         assert "limit=25" in url
+
+    def test_list_org_wide_omits_endpoint_id(self):
+        wc, calls = make([jr(200, {"items": [], "nextCursor": None})])
+        wc.events.list(provider=["stripe"]).collect()
+        url = str(calls[0].url)
+        assert "/v1/events?" in url
+        assert "endpointId" not in url
+
+    def test_list_by_endpoint_uses_deprecated_nested_route(self):
+        wc, calls = make([jr(200, {"items": [], "nextCursor": None})])
+        wc.events.list_page_by_endpoint("e1", limit=1)
+        assert "/v1/endpoints/e1/events" in str(calls[0].url)
+
+    def test_list_by_endpoint_iterator_uses_deprecated_nested_route(self):
+        wc, calls = make([jr(200, {"items": [], "nextCursor": None})])
+        wc.events.list_by_endpoint("e1", provider=["stripe"]).collect()
+        url = str(calls[0].url)
+        assert "/v1/endpoints/e1/events" in url
+        assert "provider=stripe" in url
 
     def test_get(self):
         wc, calls = make([jr(200, _event())])

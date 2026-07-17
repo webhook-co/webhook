@@ -29,8 +29,8 @@ print(endpoint.ingest_url)
 revealed = client.endpoints.reveal_ingest_url(endpoint.id)
 print(revealed.ingest_url)
 
-# List events for that endpoint (auto-paginates).
-for event in client.events.list(endpoint.id):
+# List events for that endpoint (auto-paginates). Omit endpoint_id to list the whole org.
+for event in client.events.list(endpoint_id=endpoint.id):
     print(event.id, event.provider, event.verification_state)
 ```
 

@@ -114,7 +114,11 @@ CALLS: dict[str, tuple[Any, Callable[[w.WebhookClient], Any]]] = {
         {"id": ID, "revokedAt": "2026-07-01T00:00:00Z"},
         lambda c: c.endpoints.provider_secrets.revoke(endpoint_id=ID, secret_id=ID),
     ),
-    "GET /v1/endpoints/{endpointId}/events": (_PAGE, lambda c: c.events.list_page(ID)),
+    "GET /v1/events": (_PAGE, lambda c: c.events.list_page()),
+    "GET /v1/endpoints/{endpointId}/events": (
+        _PAGE,
+        lambda c: c.events.list_page_by_endpoint(ID),
+    ),
     "GET /v1/endpoints/{endpointId}/events/tail": (
         {
             "items": [],

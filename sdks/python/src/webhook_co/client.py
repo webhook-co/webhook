@@ -240,9 +240,8 @@ class _EventsResource:
     def __init__(self, req: _Requester) -> None:
         self._req = req
 
-    def _path(
-        self,
-        endpoint_id: str,
+    @staticmethod
+    def _query(
         *,
         cursor: str | None,
         limit: int | None,
@@ -251,23 +250,106 @@ class _EventsResource:
         received_after: str | None,
         received_before: str | None,
         search: str | None,
-    ) -> str:
-        return with_query(
-            f"/v1/endpoints/{_enc(endpoint_id)}/events",
-            {
-                "cursor": cursor,
-                "limit": limit,
-                "provider": list(provider) if provider is not None else None,
-                "verificationState": (
-                    list(verification_state) if verification_state is not None else None
-                ),
-                "receivedAfter": received_after,
-                "receivedBefore": received_before,
-                "search": search,
-            },
-        )
+        method: Sequence[str] | None,
+        dedup_strategy: Sequence[str] | None,
+        event_type: str | None,
+    ) -> dict[str, Any]:
+        # The shared filter query — everything except endpointId, whose placement differs by route.
+        return {
+            "cursor": cursor,
+            "limit": limit,
+            "provider": list(provider) if provider is not None else None,
+            "verificationState": (
+                list(verification_state) if verification_state is not None else None
+            ),
+            "receivedAfter": received_after,
+            "receivedBefore": received_before,
+            "search": search,
+            "method": list(method) if method is not None else None,
+            "dedupStrategy": list(dedup_strategy) if dedup_strategy is not None else None,
+            "eventType": event_type,
+        }
 
     def list(
+        self,
+        *,
+        endpoint_id: str | None = None,
+        limit: int | None = None,
+        provider: Sequence[str] | None = None,
+        verification_state: Sequence[str] | None = None,
+        received_after: str | None = None,
+        received_before: str | None = None,
+        search: str | None = None,
+        method: Sequence[str] | None = None,
+        dedup_strategy: Sequence[str] | None = None,
+        event_type: str | None = None,
+    ) -> Paginator[m.EventSummary]:
+        """Auto-paginating iterator over captured events.
+
+        Org-wide by default; pass ``endpoint_id`` to drill into one endpoint. Uses the canonical
+        ``GET /v1/events`` route.
+        """
+        return self._req.paginate(
+            lambda cursor: with_query(
+                "/v1/events",
+                {
+                    "endpointId": endpoint_id,
+                    **self._query(
+                        cursor=cursor,
+                        limit=limit,
+                        provider=provider,
+                        verification_state=verification_state,
+                        received_after=received_after,
+                        received_before=received_before,
+                        search=search,
+                        method=method,
+                        dedup_strategy=dedup_strategy,
+                        event_type=event_type,
+                    ),
+                },
+            ),
+            m.EventsListResponse,
+        )
+
+    def list_page(
+        self,
+        *,
+        endpoint_id: str | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+        provider: Sequence[str] | None = None,
+        verification_state: Sequence[str] | None = None,
+        received_after: str | None = None,
+        received_before: str | None = None,
+        search: str | None = None,
+        method: Sequence[str] | None = None,
+        dedup_strategy: Sequence[str] | None = None,
+        event_type: str | None = None,
+    ) -> Page[m.EventSummary]:
+        """A single page of captured events (org-wide, or ``endpoint_id`` for one). Canonical ``GET /v1/events``."""
+        return self._req.page(
+            with_query(
+                "/v1/events",
+                {
+                    "endpointId": endpoint_id,
+                    **self._query(
+                        cursor=cursor,
+                        limit=limit,
+                        provider=provider,
+                        verification_state=verification_state,
+                        received_after=received_after,
+                        received_before=received_before,
+                        search=search,
+                        method=method,
+                        dedup_strategy=dedup_strategy,
+                        event_type=event_type,
+                    ),
+                },
+            ),
+            m.EventsListResponse,
+        )
+
+    def list_by_endpoint(
         self,
         endpoint_id: str,
         *,
@@ -277,23 +359,34 @@ class _EventsResource:
         received_after: str | None = None,
         received_before: str | None = None,
         search: str | None = None,
+        method: Sequence[str] | None = None,
+        dedup_strategy: Sequence[str] | None = None,
+        event_type: str | None = None,
     ) -> Paginator[m.EventSummary]:
-        """Auto-paginating iterator over an endpoint's captured events."""
+        """DEPRECATED: use :meth:`list` with ``endpoint_id=``.
+
+        Hits the deprecated nested route ``GET /v1/endpoints/{endpointId}/events``.
+        """
         return self._req.paginate(
-            lambda cursor: self._path(
-                endpoint_id,
-                cursor=cursor,
-                limit=limit,
-                provider=provider,
-                verification_state=verification_state,
-                received_after=received_after,
-                received_before=received_before,
-                search=search,
+            lambda cursor: with_query(
+                f"/v1/endpoints/{_enc(endpoint_id)}/events",
+                self._query(
+                    cursor=cursor,
+                    limit=limit,
+                    provider=provider,
+                    verification_state=verification_state,
+                    received_after=received_after,
+                    received_before=received_before,
+                    search=search,
+                    method=method,
+                    dedup_strategy=dedup_strategy,
+                    event_type=event_type,
+                ),
             ),
             m.EventsListResponse,
         )
 
-    def list_page(
+    def list_page_by_endpoint(
         self,
         endpoint_id: str,
         *,
@@ -304,18 +397,29 @@ class _EventsResource:
         received_after: str | None = None,
         received_before: str | None = None,
         search: str | None = None,
+        method: Sequence[str] | None = None,
+        dedup_strategy: Sequence[str] | None = None,
+        event_type: str | None = None,
     ) -> Page[m.EventSummary]:
-        """A single page of an endpoint's events."""
+        """DEPRECATED: use :meth:`list_page` with ``endpoint_id=``.
+
+        Hits the deprecated nested route ``GET /v1/endpoints/{endpointId}/events``.
+        """
         return self._req.page(
-            self._path(
-                endpoint_id,
-                cursor=cursor,
-                limit=limit,
-                provider=provider,
-                verification_state=verification_state,
-                received_after=received_after,
-                received_before=received_before,
-                search=search,
+            with_query(
+                f"/v1/endpoints/{_enc(endpoint_id)}/events",
+                self._query(
+                    cursor=cursor,
+                    limit=limit,
+                    provider=provider,
+                    verification_state=verification_state,
+                    received_after=received_after,
+                    received_before=received_before,
+                    search=search,
+                    method=method,
+                    dedup_strategy=dedup_strategy,
+                    event_type=event_type,
+                ),
             ),
             m.EventsListResponse,
         )
