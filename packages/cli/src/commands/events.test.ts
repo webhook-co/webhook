@@ -76,13 +76,56 @@ describe("wbhk events list", () => {
     expect(t.stdout()).toContain("unverified");
   });
 
-  it("passes the --provider filter through to the request", async () => {
+  it("drills into one endpoint via the canonical /v1/events?endpointId=", async () => {
     const cap = capturingFetch({ items: [], nextCursor: null });
     const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
     await run(app, ["events", "list", EP, "--provider", "stripe"], t.ctx);
     const u = new URL(cap.urls[0]);
-    expect(u.pathname).toBe(`/v1/endpoints/${EP}/events`);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.get("endpointId")).toBe(EP);
     expect(u.searchParams.get("provider")).toBe("stripe");
+  });
+
+  it("lists the whole org when no endpointId is given (no endpointId param)", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["events", "list", "--provider", "stripe"], t.ctx);
+    const u = new URL(cap.urls[0]);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.has("endpointId")).toBe(false);
+    expect(u.searchParams.get("provider")).toBe("stripe");
+  });
+
+  it("passes the --method / --dedup-strategy / --event-type facets through", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      [
+        "events",
+        "list",
+        "--method",
+        "GET,POST",
+        "--dedup-strategy",
+        "unique",
+        "--event-type",
+        "charge.succeeded",
+      ],
+      t.ctx,
+    );
+    const u = new URL(cap.urls[0]);
+    expect(u.searchParams.getAll("method")).toEqual(["GET", "POST"]);
+    expect(u.searchParams.get("dedupStrategy")).toBe("unique");
+    expect(u.searchParams.get("eventType")).toBe("charge.succeeded");
+  });
+
+  it("rejects an unknown --method as a usage error", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", "--method", "TRACE"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
 
   it("rejects an unknown --provider as a usage error", async () => {

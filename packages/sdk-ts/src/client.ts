@@ -93,11 +93,19 @@ export interface EndpointsListFilters {
 /** Filters for `events.list`. */
 export interface EventsListFilters {
   readonly limit?: number;
+  /** Drill into ONE endpoint. Omit for the whole org (the canonical route's default). */
+  readonly endpointId?: string;
   readonly provider?: readonly Provider[];
   readonly verificationState?: readonly VerificationState[];
   readonly receivedAfter?: string;
   readonly receivedBefore?: string;
   readonly search?: string;
+  /** Multi-select captured HTTP method (GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS). */
+  readonly method?: readonly string[];
+  /** Multi-select dedup strategy. */
+  readonly dedupStrategy?: readonly string[];
+  /** Exact match on the normalized, provider-derived event type. */
+  readonly eventType?: string;
 }
 
 /** Filters for `deliveries.list`. */
@@ -276,8 +284,12 @@ class EndpointsResource {
 class EventsResource {
   constructor(private readonly req: Requester) {}
 
-  private path(endpointId: string, filters: EventsListFilters, cursor: string | undefined): string {
-    return withQuery(`/v1/endpoints/${enc(endpointId)}/events`, {
+  /** The shared filter → query mapping (everything except the route + endpointId placement). */
+  private filterQuery(
+    filters: EventsListFilters,
+    cursor: string | undefined,
+  ): Record<string, QueryValue> {
+    return {
       cursor,
       limit: filters.limit,
       provider: filters.provider as readonly string[] | undefined,
@@ -285,20 +297,51 @@ class EventsResource {
       receivedAfter: filters.receivedAfter,
       receivedBefore: filters.receivedBefore,
       search: filters.search,
-    } satisfies Record<string, QueryValue>);
+      method: filters.method,
+      dedupStrategy: filters.dedupStrategy,
+      eventType: filters.eventType,
+    } satisfies Record<string, QueryValue>;
   }
 
-  /** Auto-paginating iterator over an endpoint's captured events. */
-  list(endpointId: string, filters: EventsListFilters = {}): Paginator<EventSummary> {
-    return this.req.paginate<EventSummary>((cursor) => this.path(endpointId, filters, cursor));
+  /** The CANONICAL route: org-wide by default, or one endpoint via `filters.endpointId`. */
+  private canonicalPath(filters: EventsListFilters, cursor: string | undefined): string {
+    return withQuery(`/v1/events`, {
+      endpointId: filters.endpointId,
+      ...this.filterQuery(filters, cursor),
+    });
   }
 
-  /** A single page of an endpoint's events. */
-  listPage(
+  /** Auto-paginating iterator over captured events — org-wide, or `{ endpointId }` for one endpoint. */
+  list(filters: EventsListFilters = {}): Paginator<EventSummary> {
+    return this.req.paginate<EventSummary>((cursor) => this.canonicalPath(filters, cursor));
+  }
+
+  /** A single page of captured events — org-wide, or `{ endpointId }` for one endpoint. */
+  listPage(params: EventsListFilters & { cursor?: string } = {}): Promise<Page<EventSummary>> {
+    return this.req.get<Page<EventSummary>>(this.canonicalPath(params, params.cursor));
+  }
+
+  /**
+   * @deprecated Use {@link list} with `{ endpointId }`. Hits the deprecated nested route
+   * `GET /v1/endpoints/{endpointId}/events`; the canonical `list({ endpointId })` is preferred.
+   */
+  listByEndpoint(endpointId: string, filters: EventsListFilters = {}): Paginator<EventSummary> {
+    return this.req.paginate<EventSummary>((cursor) =>
+      withQuery(`/v1/endpoints/${enc(endpointId)}/events`, this.filterQuery(filters, cursor)),
+    );
+  }
+
+  /**
+   * @deprecated Use {@link listPage} with `{ endpointId }`. Hits the deprecated nested route
+   * `GET /v1/endpoints/{endpointId}/events`; the canonical `listPage({ endpointId })` is preferred.
+   */
+  listPageByEndpoint(
     endpointId: string,
     params: EventsListFilters & { cursor?: string } = {},
   ): Promise<Page<EventSummary>> {
-    return this.req.get<Page<EventSummary>>(this.path(endpointId, params, params.cursor));
+    return this.req.get<Page<EventSummary>>(
+      withQuery(`/v1/endpoints/${enc(endpointId)}/events`, this.filterQuery(params, params.cursor)),
+    );
   }
 
   /** A single event in full fidelity. */

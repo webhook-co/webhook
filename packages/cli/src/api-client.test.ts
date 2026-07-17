@@ -329,20 +329,38 @@ describe("createApiClient read methods", () => {
     expect((err as ApiError).exitCode).toBe(CAPABILITY_EXIT.NOT_FOUND);
   });
 
-  it("eventsList encodes cursor + limit + provider and targets the nested path", async () => {
+  it("eventsList targets the canonical /v1/events, drilled to an endpoint via ?endpointId=", async () => {
     const { fetch, calls } = fakeFetch(json({ items: [eventSummary], nextCursor: "ev_next" }));
     const page = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).eventsList(EP_ID, {
       cursor: "c2",
       limit: 5,
-      provider: "stripe",
+      provider: ["stripe"],
+      method: ["GET", "POST"],
+      dedupStrategy: ["unique"],
+      eventType: "charge.succeeded",
     });
     const u = new URL(calls[0].url);
-    expect(u.pathname).toBe(`/v1/endpoints/${EP_ID}/events`);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.get("endpointId")).toBe(EP_ID);
     expect(u.searchParams.get("cursor")).toBe("c2");
     expect(u.searchParams.get("limit")).toBe("5");
     expect(u.searchParams.get("provider")).toBe("stripe");
+    expect(u.searchParams.getAll("method")).toEqual(["GET", "POST"]);
+    expect(u.searchParams.get("dedupStrategy")).toBe("unique");
+    expect(u.searchParams.get("eventType")).toBe("charge.succeeded");
     expect(page.nextCursor).toBe("ev_next");
     expect(page.items[0].verified).toBe(true);
+  });
+
+  it("eventsList org-wide (no endpointId) hits /v1/events with no endpointId param", async () => {
+    const { fetch, calls } = fakeFetch(json({ items: [], nextCursor: null }));
+    await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).eventsList(undefined, {
+      provider: ["stripe"],
+    });
+    const u = new URL(calls[0].url);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.has("endpointId")).toBe(false);
+    expect(u.searchParams.get("provider")).toBe("stripe");
   });
 
   it("eventsList encodes a received-at range as query params", async () => {

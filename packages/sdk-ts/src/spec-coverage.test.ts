@@ -82,9 +82,13 @@ const CALLS: Record<string, { body: unknown; call: (c: WebhookClient) => Promise
     body: {},
     call: (c) => c.endpoints.providerSecrets.revoke({ endpointId: ID, secretId: ID }),
   },
+  "GET /v1/events": {
+    body: { items: [], nextCursor: null },
+    call: (c) => c.events.listPage(),
+  },
   "GET /v1/endpoints/{endpointId}/events": {
     body: { items: [], nextCursor: null },
-    call: (c) => c.events.listPage(ID),
+    call: (c) => c.events.listPageByEndpoint(ID),
   },
   "GET /v1/endpoints/{endpointId}/events/tail": {
     body: { events: [], nextCursor: null, headCursor: null, caughtUp: true },

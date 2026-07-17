@@ -652,10 +652,10 @@
         ]
       }
     },
-    "/v1/endpoints/{endpointId}/events": {
+    "/v1/events": {
       "get": {
         "operationId": "eventsList",
-        "summary": "List captured events for an endpoint",
+        "summary": "List captured events across the org (optionally one endpoint)",
         "tags": [
           "Events"
         ],
@@ -694,6 +694,346 @@
             "$ref": "#/components/responses/InternalError"
           }
         },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque keyset cursor from a prior page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Max items to return (1–200, default 50).",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "endpointId",
+            "in": "query",
+            "required": false,
+            "description": "Drill down to one endpoint (a uuid). Omit for the whole org.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Filter by provider (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "stripe",
+                  "github",
+                  "shopify",
+                  "slack",
+                  "standard_webhooks",
+                  "clerk",
+                  "resend",
+                  "stytch",
+                  "supabase",
+                  "render",
+                  "brex",
+                  "openai",
+                  "replicate",
+                  "polar",
+                  "gemini",
+                  "incident_io",
+                  "etsy",
+                  "vanta",
+                  "pusher",
+                  "quickbooks",
+                  "chargify",
+                  "launchdarkly",
+                  "modern_treasury",
+                  "autodesk_aps",
+                  "mongodb_atlas",
+                  "xero",
+                  "segment",
+                  "aftership",
+                  "onfleet",
+                  "webflow",
+                  "klaviyo",
+                  "mux",
+                  "shippo",
+                  "buildkite",
+                  "ms_teams",
+                  "ably",
+                  "squarespace",
+                  "nylas",
+                  "linkedin",
+                  "tiktok",
+                  "airship",
+                  "lob",
+                  "persona",
+                  "bolt",
+                  "primer",
+                  "airwallex",
+                  "affirm",
+                  "keygen",
+                  "constant_contact",
+                  "telegram",
+                  "mixpanel",
+                  "new_relic",
+                  "fillout",
+                  "zapier",
+                  "tally",
+                  "loops",
+                  "customer_io",
+                  "framer",
+                  "box",
+                  "configcat",
+                  "ashby",
+                  "merge_dev",
+                  "cronofy",
+                  "increase",
+                  "finch",
+                  "knock",
+                  "deel",
+                  "razorpay",
+                  "sentry",
+                  "linear",
+                  "dropbox",
+                  "checkout_com",
+                  "lemon_squeezy",
+                  "coinbase_commerce",
+                  "dwolla",
+                  "gocardless",
+                  "notion",
+                  "meta",
+                  "woocommerce",
+                  "bitbucket",
+                  "atlassian_jira",
+                  "x",
+                  "clickup",
+                  "npm",
+                  "heroku",
+                  "dub",
+                  "cal_com",
+                  "asana",
+                  "circleci",
+                  "pagerduty",
+                  "airtable",
+                  "calendly",
+                  "zoom",
+                  "customerio",
+                  "sinch",
+                  "workos",
+                  "front",
+                  "zendesk",
+                  "twitch",
+                  "paddle",
+                  "recurly",
+                  "docusign",
+                  "vercel",
+                  "intercom",
+                  "paystack",
+                  "authorize_net",
+                  "sanity",
+                  "square",
+                  "trello",
+                  "twilio",
+                  "mandrill",
+                  "hubspot",
+                  "adyen",
+                  "mailgun",
+                  "mercado_pago",
+                  "braintree",
+                  "contentful",
+                  "plivo",
+                  "typeform",
+                  "messagebird",
+                  "netlify",
+                  "vonage",
+                  "monday",
+                  "jira_connect",
+                  "discord",
+                  "telnyx",
+                  "sendgrid",
+                  "wise",
+                  "kinde",
+                  "paypal",
+                  "aws_sns",
+                  "plaid",
+                  "ebay",
+                  "gitlab",
+                  "microsoft_graph",
+                  "chargebee",
+                  "postmark",
+                  "sparkpost",
+                  "okta",
+                  "bigcommerce",
+                  "datadog",
+                  "brevo"
+                ]
+              }
+            }
+          },
+          {
+            "name": "verificationState",
+            "in": "query",
+            "required": false,
+            "description": "Filter by verification state: verified | authenticated | failed | unattempted (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "verified",
+                  "authenticated",
+                  "failed",
+                  "unattempted"
+                ]
+              }
+            }
+          },
+          {
+            "name": "receivedAfter",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive lower bound: an RFC 3339 instant, a relative duration (7d / 30m — the last N), or `beginning`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "receivedBefore",
+            "in": "query",
+            "required": false,
+            "description": "Exclusive upper bound (RFC 3339 instant).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id.",
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "dedupStrategy",
+            "in": "query",
+            "required": false,
+            "description": "Filter by dedup strategy: sw_webhook_id | provider_event_id | content_hash | fields | unique (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "sw_webhook_id",
+                  "provider_event_id",
+                  "content_hash",
+                  "fields",
+                  "unique"
+                ]
+              }
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "description": "Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "GET",
+                  "POST",
+                  "PUT",
+                  "PATCH",
+                  "DELETE",
+                  "HEAD",
+                  "OPTIONS"
+                ]
+              }
+            }
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "required": false,
+            "description": "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ]
+      }
+    },
+    "/v1/endpoints/{endpointId}/events": {
+      "get": {
+        "operationId": "eventsListByEndpoint",
+        "summary": "List captured events for an endpoint (deprecated — use GET /v1/events?endpointId=)",
+        "tags": [
+          "Events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "deprecated": true,
         "parameters": [
           {
             "name": "endpointId",

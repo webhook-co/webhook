@@ -186,6 +186,23 @@ describe("capability registry", () => {
   });
 });
 
+describe("events.list endpointId (optional — org-wide by default)", () => {
+  it("accepts input with NO endpointId (the org-wide browse)", () => {
+    const parsed = eventsList.input.parse({ filter: { provider: ["stripe"] } });
+    expect(parsed.endpointId).toBeUndefined();
+    expect(parsed.filter?.provider).toEqual(["stripe"]);
+  });
+
+  it("accepts an endpointId when present (the endpoint drill-down)", () => {
+    const parsed = eventsList.input.parse({ endpointId: "11111111-1111-4111-8111-111111111111" });
+    expect(parsed.endpointId).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("still rejects a non-uuid endpointId (shape-validated when present)", () => {
+    expect(eventsList.input.safeParse({ endpointId: "not-a-uuid" }).success).toBe(false);
+  });
+});
+
 describe("events.list filter (provider + received-at range)", () => {
   it("accepts all filter fields optionally; the range bounds are RFC3339 strings (handler coerces)", () => {
     const parsed = eventsList.input.parse({

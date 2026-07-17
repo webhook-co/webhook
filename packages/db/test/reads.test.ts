@@ -648,6 +648,47 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     await expectFault(handlers.get("events.list")!(ctxA, { endpointId: epB }), "NOT_FOUND");
   });
 
+  it("events.list with NO endpointId lists the whole org (no NOT_FOUND, RLS-scoped, cross-endpoint)", async () => {
+    // Org-wide browse: no existence gate (there's no endpoint to gate on), every endpoint in the org. Assert
+    // by ENDPOINT SET, not an exact count — other describe blocks in this file seed more events into orgA.
+    const aView = (await handlers.get("events.list")!(ctxA, { limit: 200 })) as {
+      items: { id: string; endpointId: string }[];
+    };
+    const aEndpoints = new Set(aView.items.map((e) => e.endpointId));
+    // Spans MULTIPLE endpoints (epA + epTail among them) — the point of org-wide vs endpoint-scoped.
+    expect(aEndpoints.has(epA)).toBe(true);
+    expect(aEndpoints.has(epTail)).toBe(true);
+    // RLS keeps orgB's endpoint out.
+    expect(aEndpoints.has(epB)).toBe(false);
+    // ctxB's org-wide view is the mirror image: epB present, orgA's endpoints absent.
+    const bView = (await handlers.get("events.list")!(ctxB, { limit: 200 })) as {
+      items: { endpointId: string }[];
+    };
+    const bEndpoints = new Set(bView.items.map((e) => e.endpointId));
+    expect(bEndpoints.has(epB)).toBe(true);
+    expect(bEndpoints.has(epA)).toBe(false);
+    expect(bEndpoints.has(epTail)).toBe(false);
+  });
+
+  it("events.list org-wide still honors filters (provider across all endpoints)", async () => {
+    // github events include 1 on epA + eTail2 on epTail (both orgA). Assert the filter is EXACT (every row
+    // matches) + a floor count, not an exact total (other blocks may seed more github rows).
+    const page = (await handlers.get("events.list")!(ctxA, {
+      limit: 200,
+      filter: { provider: "github" },
+    })) as { items: { provider: string | null }[] };
+    expect(page.items.length).toBeGreaterThanOrEqual(2);
+    expect(page.items.every((e) => e.provider === "github")).toBe(true);
+  });
+
+  it("events.list org-wide omits headCursor (the endpoint-scoped resume position doesn't apply)", async () => {
+    // headCursor is a resume position for the endpoint-scoped events.tail; an org-wide browse has none.
+    const page = (await handlers.get("events.list")!(ctxA, { limit: 50 })) as {
+      headCursor?: string | null;
+    };
+    expect(page.headCursor ?? null).toBeNull();
+  });
+
   it("events.list coerces a received-at range filter (RFC3339 strings) and applies it", async () => {
     const page = (await handlers.get("events.list")!(ctxA, {
       endpointId: epTail,

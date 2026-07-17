@@ -260,23 +260,27 @@ describe("endpoints", () => {
 });
 
 describe("events", () => {
-  it("list() builds the full filter query with repeated multi-selects", async () => {
+  it("list() builds the full filter query with repeated multi-selects (canonical route)", async () => {
     const { client, calls } = make([json(200, { items: [], nextCursor: null })]);
     await client.events
-      .list("e1", {
+      .list({
+        endpointId: "e1",
         provider: ["stripe", "github"],
         verificationState: ["verified"],
         receivedAfter: "2026-01-01T00:00:00Z",
         search: "checkout",
+        method: ["GET", "POST"],
         limit: 25,
       })
       .collect();
     const url = calls[0]!.url;
-    expect(url).toContain("/v1/endpoints/e1/events?");
+    expect(url).toContain("/v1/events?");
+    expect(url).toContain("endpointId=e1");
     expect(url).toContain("provider=stripe&provider=github");
     expect(url).toContain("verificationState=verified");
     expect(url).toContain("receivedAfter=2026-01-01T00%3A00%3A00Z");
     expect(url).toContain("search=checkout");
+    expect(url).toContain("method=GET&method=POST");
     expect(url).toContain("limit=25");
   });
 
@@ -286,11 +290,36 @@ describe("events", () => {
     expect(calls[0]!.url).toBe("https://api.webhook.co/v1/events/ev1");
   });
 
-  it("listPage() returns one page of events with its cursor", async () => {
+  it("listPage() hits the canonical /v1/events, org-wide by default", async () => {
     const { client, calls } = make([json(200, { items: [{ id: "ev1" }], nextCursor: "n" })]);
-    const page = await client.events.listPage("e1", { limit: 1, search: "x" });
+    const page = await client.events.listPage({ limit: 1, search: "xyz" });
     expect(page.nextCursor).toBe("n");
-    expect(calls[0]!.url).toContain("/v1/endpoints/e1/events?");
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.has("endpointId")).toBe(false);
+    expect(u.searchParams.get("search")).toBe("xyz");
+  });
+
+  it("listPage({ endpointId }) drills into one endpoint via ?endpointId= (still canonical)", async () => {
+    const { client, calls } = make([json(200, { items: [], nextCursor: null })]);
+    await client.events.listPage({
+      endpointId: "e1",
+      method: ["GET", "POST"],
+      dedupStrategy: ["unique"],
+      eventType: "charge.succeeded",
+    });
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/v1/events");
+    expect(u.searchParams.get("endpointId")).toBe("e1");
+    expect(u.searchParams.getAll("method")).toEqual(["GET", "POST"]);
+    expect(u.searchParams.get("dedupStrategy")).toBe("unique");
+    expect(u.searchParams.get("eventType")).toBe("charge.succeeded");
+  });
+
+  it("listPageByEndpoint() hits the DEPRECATED nested route", async () => {
+    const { client, calls } = make([json(200, { items: [], nextCursor: null })]);
+    await client.events.listPageByEndpoint("e1", { limit: 1 });
+    expect(new URL(calls[0]!.url).pathname).toBe("/v1/endpoints/e1/events");
   });
 
   it("getPayload() decodes the base64 envelope to bytes", async () => {

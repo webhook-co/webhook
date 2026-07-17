@@ -414,12 +414,16 @@ function buildOperation(route: RouteDef, responseRef: Map<string, string>): Json
   }
 
   const op: JsonObject = {
-    operationId: route.capability === null ? "whoami" : operationIdOf(route.capability),
+    // An explicit route.operationId wins (an alias needs its own, distinct from its canonical route's
+    // capability-derived one); else derive from the capability. whoami is the scope-free identity route.
+    operationId:
+      route.operationId ?? (route.capability === null ? "whoami" : operationIdOf(route.capability)),
     summary: route.summary,
     tags: [tagOf(route)],
     security: [{ bearerAuth: [] }],
     responses,
   };
+  if (route.deprecated) op.deprecated = true;
   if (parameters.length > 0) op.parameters = parameters;
   if (route.body && route.capability !== null) {
     op.requestBody = {
