@@ -179,3 +179,33 @@ describe("effectiveDateRange — the single source of truth for the applied wind
     expect(effectiveDateRange({ range: "bogus" }, D)).toBe(D);
   });
 });
+
+// PRECEDENCE MUST MIRROR THE PARSER — this is the chip-vs-data lie, one more time.
+//
+// parseEventFilters resolves in a fixed order: a valid PRESET owns the window; otherwise from/to apply. The
+// all-time token is NOT a preset, so from/to beat it. The label and the effective range must agree with that
+// exactly, or the chip describes a window the reader is not looking at. This lane has now shipped that bug
+// twice, and the first version of ALL_TIME_RANGE made it a third: `?range=all&from=X&to=Y` labelled
+// "Any time" while the list was bounded to X..Y.
+describe("range=all vs a custom from/to — from/to wins, and the chip must say so", () => {
+  const D = DEFAULT_ORG_EVENTS_RANGE;
+
+  it("a custom from/to beats the all-time token (mirroring parseEventFilters)", () => {
+    expect(
+      effectiveDateRange({ range: ALL_TIME_RANGE, from: "2026-01-01", to: "2026-01-09" }, D),
+    ).toBe("");
+    expect(activeDateLabel({ range: ALL_TIME_RANGE, from: "2026-01-01", to: "2026-01-09" })).toBe(
+      "Custom range",
+    );
+  });
+
+  it("a preset still beats a custom from/to (unchanged)", () => {
+    expect(effectiveDateRange({ range: "7d", from: "2026-01-01" }, D)).toBe("7d");
+    expect(activeDateLabel({ range: "7d", from: "2026-01-01" })).toBe("Last 7 days");
+  });
+
+  it("all-time alone still resolves and labels as all-time", () => {
+    expect(effectiveDateRange({ range: ALL_TIME_RANGE }, D)).toBe(ALL_TIME_RANGE);
+    expect(activeDateLabel({ range: ALL_TIME_RANGE })).toBe("Any time");
+  });
+});

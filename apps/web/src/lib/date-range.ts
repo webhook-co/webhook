@@ -122,10 +122,14 @@ export function activeDateLabel(value: {
   from?: string | null;
   to?: string | null;
 }): string {
-  if (value.range === ALL_TIME_RANGE) return "Any time";
+  // The order below IS parseEventFilters' order, and that is the whole point: preset > from/to > all-time.
+  // ALL_TIME_RANGE is not a preset, so a custom from/to beats it — checking "all" first (as the first draft
+  // did) labels `?range=all&from=X&to=Y` "Any time" over calendar-bounded rows, which is the chip-vs-data lie
+  // this module exists to prevent and which this lane has already shipped twice.
   const preset = presetLabel(value.range);
   if (preset !== undefined) return preset;
   if (hasText(value.from) || hasText(value.to)) return "Custom range";
+  if (value.range === ALL_TIME_RANGE) return "Any time";
   return "Date range";
 }
 
@@ -161,5 +165,15 @@ export function effectiveDateRange(
   value: { range?: string | null; from?: string | null; to?: string | null },
   fallback: string,
 ): string {
-  return hasDateRange(value) ? (value.range ?? "") : fallback;
+  // Mirrors parseEventFilters EXACTLY — preset > from/to > all-time > fallback. A bare
+  // `hasDateRange(value) ? value.range : fallback` (the first draft) returns "all" for
+  // `?range=all&from=X&to=Y`, while the parser ignores the non-preset token and applies from/to: the chip
+  // then says "Any time" over a 9-day list. Same failure as the `range: ""` default re-injection, inverted.
+  // `range` is read into a local first: isDatePreset is a type predicate, so testing it inline narrows
+  // value.range to null|undefined for the rest of the function and TS then rejects the ALL_TIME comparison.
+  const range = typeof value.range === "string" ? value.range : "";
+  if (isDatePreset(range)) return range;
+  if (hasText(value.from) || hasText(value.to)) return "";
+  if (range === ALL_TIME_RANGE) return ALL_TIME_RANGE;
+  return fallback;
 }

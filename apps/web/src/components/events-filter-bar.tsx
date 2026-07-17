@@ -281,7 +281,14 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           />
         ) : null}
 
-        <DateRangeFilter value={{ range, from, to }} onApply={applyPatch} />
+        <DateRangeFilter
+          value={{ range, from, to }}
+          onApply={applyPatch}
+          // Only where a default exists to escape FROM — and only the org browse bounds the resulting
+          // unbounded query (browseEvents' statement_timeout). The per-endpoint bar passes no defaultRange
+          // and is already all-time, so the option would be a no-op there.
+          allowAllTime={defaultRange !== undefined}
+        />
 
         <Button variant="secondary" onClick={clear} disabled={!active} className="ml-auto">
           Clear filters
