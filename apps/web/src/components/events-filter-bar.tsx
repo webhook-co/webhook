@@ -2,6 +2,8 @@
 
 import {
   Button,
+  Combobox,
+  type ComboboxOption,
   Input,
   MultiSelect,
   type MultiSelectOption,
@@ -22,15 +24,29 @@ import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verificati
 // (it's free typing). The server page re-reads the query, re-runs the filtered load, and re-keys the
 // list. No client-side filtering — the DB does it.
 
-const FILTER_KEYS = ["provider", "status", "from", "to", "search", "range"] as const;
+// `endpointId` is listed unconditionally: Clear deleting a param the per-endpoint page never sets is a no-op.
+const FILTER_KEYS = ["provider", "status", "from", "to", "search", "range", "endpointId"] as const;
 const SEARCH_DEBOUNCE_MS = 300;
 
 export interface EventsFilterBarProps {
   /** The provider vocabulary (passed from the server so `@webhook-co/webhooks-spec` stays off the client). */
   readonly providers: readonly string[];
+  /**
+   * The org's endpoints, for the endpoint facet. OMIT to hide it — the per-endpoint page passes nothing and
+   * renders exactly as it did before, since a control repeating the one endpoint it is already scoped to
+   * would be noise.
+   *
+   * Includes soft-deleted endpoints: ADR-0076 keeps their events listable, so they are legitimate things to
+   * filter BY — they are just labelled as deleted rather than presented as live.
+   */
+  readonly endpoints?: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly deleted: boolean;
+  }[];
 }
 
-export function EventsFilterBar({ providers }: EventsFilterBarProps) {
+export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -55,13 +71,38 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
   const range = searchParams.get("range") ?? "";
+  // Read GUARDED: without the `endpoints &&`, a hand-added ?endpointId= on the per-endpoint page (which has
+  // no such control) would enable Clear with nothing visibly set.
+  const endpointSel = endpoints ? (searchParams.get("endpointId") ?? "") : "";
   const active =
+    endpointSel !== "" ||
     providerSel.length > 0 ||
     statusSel.length > 0 ||
     from !== "" ||
     to !== "" ||
     search !== "" ||
     range !== "";
+
+  // A single-select Combobox, NOT a MultiSelect like the facets beside it — deliberately. Two reasons:
+  //   * SQL: `endpoint_id = $1` rides events_tunnel_idx (endpoint_id, received_at, id) with an equality seek
+  //     and no Sort, so the org page filtered to one endpoint gets EXACTLY the per-endpoint page's plan.
+  //     `endpoint_id = ANY($1)` is a ScalarArrayOpExpr on the leading column and does not preserve
+  //     (received_at, id) ordering — it costs a Sort.
+  //   * meaning: "which endpoint?" is a DRILL-DOWN, one answer. provider/status are closed vocabularies you
+  //     genuinely want to union; an endpoint list is long, per-org, and searchable — which is what Combobox
+  //     is for. It breaks the bar's multi-select idiom because the DATA is different in kind.
+  // `value: ""` is the clear affordance.
+  const endpointOptions = React.useMemo<ComboboxOption[]>(
+    () => [
+      { value: "", label: "All endpoints" },
+      ...(endpoints ?? []).map((e) => ({
+        value: e.id,
+        // Never the raw uuid (the house rule), and a deleted endpoint says so rather than passing as live.
+        label: e.deleted ? `${e.name} (deleted)` : e.name,
+      })),
+    ],
+    [endpoints],
+  );
 
   const providerOptions = React.useMemo<MultiSelectOption[]>(
     () =>
@@ -197,6 +238,18 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
           onChange={(values) => setMulti("status", values)}
           className="w-40"
         />
+
+        {endpoints ? (
+          <Combobox
+            label="Filter by endpoint"
+            placeholder="All endpoints"
+            options={endpointOptions}
+            value={endpointSel}
+            onChange={(value) => applyPatch({ endpointId: value })}
+            searchPlaceholder="Search endpoints…"
+            className="w-48"
+          />
+        ) : null}
 
         <DateRangeFilter value={{ range, from, to }} onApply={applyPatch} />
 

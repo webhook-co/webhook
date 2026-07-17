@@ -68,6 +68,15 @@ export default async function OrgEventsPage({
   const filters = parseEventFilters(rawParams, PROVIDERS);
   const result = await loadOrgEvents(session.orgId, filters);
 
+  // The endpoint facet's vocabulary, from the SAME map that labels the rows — one read, one snapshot, so the
+  // picker can never offer an endpoint the table cannot name. Sorted by name (the visible label), with
+  // deleted ones last: they are selectable (ADR-0076 keeps their events listable) but shouldn't crowd the
+  // live ones.
+  const endpointNames = result.status === "ok" ? result.endpointNames : {};
+  const endpointOptions = Object.entries(endpointNames)
+    .map(([id, e]) => ({ id, name: e.name, deleted: e.deleted }))
+    .sort((a, b) => Number(a.deleted) - Number(b.deleted) || a.name.localeCompare(b.name));
+
   // FROZEN BOUNDS — the same discipline the per-endpoint page uses. The list and the "Load older" action get
   // the fully-resolved absolute instants this render produced, never the raw ?range/?from/?to: a relative
   // preset must not re-resolve `now` on page 2 and drift off page 1's window. A preset OWNS the range (the
@@ -99,7 +108,7 @@ export default async function OrgEventsPage({
   return (
     <PageContainer>
       <PageHeader title="Events" description="Every event captured across all your endpoints." />
-      <EventsFilterBar providers={[...PROVIDERS]} />
+      <EventsFilterBar providers={[...PROVIDERS]} endpoints={endpointOptions} />
       {result.status === "error" ? (
         <OrgEventsList
           key={listKey}
@@ -107,7 +116,7 @@ export default async function OrgEventsPage({
           initialCursor={null}
           filterParams={filterParams}
           isFiltered={hasAppliedFilters(filters)}
-          endpointNames={{}}
+          endpointNames={endpointNames}
           loadMore={loadMoreOrgEventsAction.bind(null, session.slug)}
         />
       ) : (
