@@ -266,6 +266,32 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     expect(clearBtn).toBeDisabled();
   });
 
+  it("an external nav recovers even after a no-op push pinned the optimistic query", async () => {
+    // A no-op push — here choosing "All endpoints" when no endpoint is set — pushes an identical query, so
+    // router.replace never changes committedQuery and the reset effect can't fire on the push: lastPushedRef
+    // is left pinned. The reset MUST then fire unconditionally on the next real navigation, or viewParams
+    // would keep driving every control from the abandoned query (a stale bar) after Back/forward.
+    const EP = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
+    const endpoints = [{ id: EP, name: "ep", deleted: false }];
+    mockSearch = "provider=stripe";
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <EventsFilterBar providers={["stripe", "github"]} endpoints={endpoints} />,
+    );
+    // The provider trigger shows the active selection ("Stripe").
+    expect(screen.getByRole("button", { name: /Filter by provider/ })).toHaveTextContent("Stripe");
+    // No-op push: pick "All endpoints" while none is set → identical query → committedQuery unchanged.
+    await user.click(screen.getByRole("button", { name: /Filter by endpoint/ }));
+    await user.click(screen.getByRole("option", { name: "All endpoints" }));
+    // External navigation (Back) to a different filter.
+    mockSearch = "status=verified";
+    rerender(<EventsFilterBar providers={["stripe", "github"]} endpoints={endpoints} />);
+    // The bar reflects the NEW url — the stale provider override the no-op push pinned is gone.
+    expect(screen.getByRole("button", { name: /Filter by provider/ })).toHaveTextContent(
+      "All providers",
+    );
+  });
+
   // FINDING 1 (the chip-vs-data lie via URL, not just typed input): a shared link whose ?eventType= is
   // whitespace-only or over the max is DROPPED by the server parser, so the bar must not present it as an
   // applied filter. The box stays empty, Clear stays disabled, and the coverage hint stays hidden — the bar's

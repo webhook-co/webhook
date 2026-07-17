@@ -216,16 +216,17 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     [],
   );
 
-  // Drop the optimistic overrides once the navigation that COMMITTED is the one we last pushed. Guarding on
-  // that match matters when two pushes are briefly in flight (e.g. Clear, then a facet pick): an INTERMEDIATE
-  // commit — the first push landing while a newer one is still pending — must NOT reset, or it would drop the
-  // newer optimistic selection for a render (a flicker) before its own navigation lands. `null` = nothing in
-  // flight (an external nav: back/forward), which resets harmlessly.
+  // Drop the optimistic overrides on ANY committed URL change — UNCONDITIONALLY. It's tempting to reset only
+  // when the commit matches what we last pushed (to avoid a one-render flicker when two pushes are briefly in
+  // flight, e.g. Clear then a facet pick). But a MATCH guard strands the ref: a no-op push — re-clicking the
+  // already-active date preset pushes an identical query, so router.replace never changes committedQuery and
+  // this effect never fires — pins lastPushedRef; a later Back/forward then finds it neither null nor equal to
+  // the new URL, so it's never cleared, and viewParams drives every control from the abandoned query (a stale
+  // chip-vs-data bar that also merges the next change onto the stale ref). Unconditional reset self-heals on
+  // the very next commit; the rare intermediate-commit flicker is the acceptable cost.
   React.useEffect(() => {
-    if (lastPushedRef.current === null || lastPushedRef.current === committedQuery) {
-      lastPushedRef.current = null;
-      setPendingSel({});
-    }
+    lastPushedRef.current = null;
+    setPendingSel({});
   }, [committedQuery]);
 
   function apply(next: URLSearchParams) {
