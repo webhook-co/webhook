@@ -16,7 +16,12 @@ import * as React from "react";
 
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { effectiveDateRange } from "@/lib/date-range";
-import { SEARCH_MAX_LENGTH, SEARCH_MIN_LENGTH, searchTooShort } from "@/lib/event-filters";
+import {
+  EVENT_TYPE_MAX_LENGTH,
+  effectiveEventType,
+  SEARCH_MIN_LENGTH,
+  searchTooShort,
+} from "@/lib/event-filters";
 import { DEDUP_STRATEGIES, DEDUP_STRATEGY_LABELS, HTTP_METHODS } from "@/lib/event-facets";
 import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verification-state";
 
@@ -71,6 +76,37 @@ export interface EventsFilterBarProps {
   readonly defaultRange?: string;
 }
 
+/**
+ * A screen-reader-stable hint under a free-text filter. ALWAYS MOUNTED as a `role="status"` live region that
+ * toggles its TEXT — never conditionally rendered. A status node inserted into the DOM at announce time is
+ * unreliable: several screen readers only announce changes to regions they were already observing, so a
+ * mount-on-demand hint can stay silent. Kept as one component so the search hint and the event-type coverage
+ * hint can't drift (they already had — one carried the live-region attributes, the other didn't).
+ *
+ * `active` both reveals the text visually and gates whether the linked input should point at it via
+ * aria-describedby (do that at the call site, matching `active`), so an empty box isn't described by a caveat.
+ */
+function FilterHint({
+  id,
+  active,
+  children,
+}: {
+  id: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <p
+      id={id}
+      role="status"
+      aria-live="polite"
+      className={active ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
+    >
+      {active ? children : ""}
+    </p>
+  );
+}
+
 export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -100,7 +136,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   const dedupSel = (pendingSel.dedupStrategy ?? searchParams.getAll("dedupStrategy")).filter((d) =>
     (DEDUP_STRATEGIES as readonly string[]).includes(d),
   );
-  const eventType = searchParams.get("eventType") ?? "";
+  // The EFFECTIVE event type — what the server will actually filter on — not the raw `?eventType=`. Keying the
+  // box, `active`/Clear, and the coverage hint off this (the same predicate the parser uses) means a shared
+  // link with a whitespace-only or over-long value can't light the filter UI over an unfiltered list.
+  const eventType = effectiveEventType(searchParams.get("eventType"));
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
@@ -227,20 +266,27 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   // value lags a commit by one RSC round trip, so an Enter immediately followed by blur would otherwise
   // re-push the same value (a wasted navigation). Kept in sync with the URL when it commits.
   const committedEventTypeRef = React.useRef(eventType);
+  // True while the box is "ahead" of the committed value (the reader has typed since the last commit). It
+  // suppresses the URL→box re-sync below, so a commit's own lagging RSC navigation — or any mid-flight URL
+  // change — can't clobber characters typed during the round trip. The search input carries the same latch
+  // (searchPendingRef); the event-type box had none, so keystrokes entered right after Enter vanished.
+  const eventTypePendingRef = React.useRef(false);
   React.useEffect(() => {
-    setEventTypeInput(eventType);
     committedEventTypeRef.current = eventType;
+    // Adopt an EXTERNAL ?eventType change (back button, Clear) — but only when the box isn't ahead of the
+    // committed value, else we'd overwrite in-flight typing with the value the commit is still navigating to.
+    if (!eventTypePendingRef.current) setEventTypeInput(eventType);
   }, [eventType]);
   function commitEventType() {
-    // Only a value the parser would actually APPLY reaches the URL — mirrors the search path. An event type
-    // over the parser's max (SEARCH_MAX_LENGTH, shared with the contract) is dropped there, so pushing it
-    // would light Clear + the coverage hint over a fully UNFILTERED list: the silent-drop cliff. So an
-    // over-long term applies as "no filter" (effective ""), exactly what the parser does with it.
-    const trimmed = eventTypeInput.trim();
-    const effective = trimmed.length <= SEARCH_MAX_LENGTH ? trimmed : "";
-    // Normalize the displayed value even on a no-op commit, so trailing whitespace / an over-long paste
-    // doesn't linger in the box after blur.
+    // Only a value the parser would actually APPLY reaches the URL — mirrors the search path. A whitespace-only
+    // or over-long term is dropped by the parser, so pushing it would light Clear + the coverage hint over a
+    // fully UNFILTERED list (the silent-drop cliff). effectiveEventType — the exact predicate the parser uses —
+    // collapses those to "" (no filter), so the box, the URL, and the server always agree.
+    const effective = effectiveEventType(eventTypeInput);
+    // Normalize the displayed value even on a no-op commit, so trailing whitespace / an over-long paste doesn't
+    // linger in the box after blur. The box now shows exactly the committed value, so it's no longer ahead.
     setEventTypeInput(effective);
+    eventTypePendingRef.current = false;
     if (effective === committedEventTypeRef.current) return;
     committedEventTypeRef.current = effective;
     applyPatch({ eventType: effective });
@@ -318,20 +364,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
       {/* A term below pg_trgm's 3-char floor cannot be run (no index can serve `%ab%`), and it used to be
           dropped in SILENCE — so the reader got the full unfiltered list back and had to guess that their
           search never happened. Say so instead. Reads off searchInput, not the URL: the point is to answer
-          the reader WHILE they type, before the debounce would (not) push anything.
-
-          The live region is ALWAYS MOUNTED and toggles its TEXT, rather than being mounted on demand. A
-          role="status" node inserted into the DOM at announce time is unreliable across screen readers —
-          several only announce changes to regions they were already observing, so a conditionally-rendered
-          one can stay silent. The wrapper is always present and empty; only the sentence appears. */}
-      <p
-        id="events-search-hint"
-        role="status"
-        aria-live="polite"
-        className={tooShort ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
-      >
-        {tooShort ? `Keep typing — search needs at least ${SEARCH_MIN_LENGTH} characters.` : ""}
-      </p>
+          the reader WHILE they type, before the debounce would (not) push anything. */}
+      <FilterHint id="events-search-hint" active={tooShort}>
+        {`Keep typing — search needs at least ${SEARCH_MIN_LENGTH} characters.`}
+      </FilterHint>
 
       {/* Tier 2 — narrow: the faceting controls, with Clear right-aligned (disabled when nothing's set). */}
       <div className="flex flex-wrap items-center gap-2">
@@ -379,7 +415,12 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
             "we don't extract this provider's type", not "no such events". */}
         <Input
           value={eventTypeInput}
-          onChange={(e) => setEventTypeInput(e.target.value)}
+          onChange={(e) => {
+            setEventTypeInput(e.target.value);
+            // Mark the box "ahead" of the URL whenever it diverges from the committed value, so the URL→box
+            // re-sync (a commit's lagging navigation, or an external change) doesn't overwrite live typing.
+            eventTypePendingRef.current = e.target.value !== committedEventTypeRef.current;
+          }}
           onBlur={commitEventType}
           onKeyDown={(e) => {
             if (e.key === "Enter") commitEventType();
@@ -389,9 +430,9 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           // Only point at the hint while the filter is set — matching the search input. Otherwise a screen
           // reader announces the whole coverage caveat on every focus of an empty box, where it's noise.
           aria-describedby={eventType !== "" ? "events-eventtype-hint" : undefined}
-          // The parser drops anything over this (shared with the contract), so cap the box at the same bound:
-          // a value that can't be applied can't be typed, and the silent-drop cliff can't be reached by hand.
-          maxLength={SEARCH_MAX_LENGTH}
+          // The parser drops anything over this, so cap the box at the same bound: a value that can't be
+          // applied can't be typed, and the silent-drop cliff can't be reached by hand.
+          maxLength={EVENT_TYPE_MAX_LENGTH}
           className="w-56"
         />
 
@@ -421,19 +462,14 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
         </Button>
       </div>
 
-      {/* Always mounted (screen-reader-stable, like the search hint); visible only while an event-type filter
-          is set. It exists because event type is NULL for providers whose payload we don't parse a type from,
-          so an empty result is genuinely ambiguous — say so rather than let it read as "no such events".
-          The TEXT empties when inactive (not just the class) so it's never announced on an empty box — the
-          describedby link on the input is dropped in the same state, matching the search hint. */}
-      <p
-        id="events-eventtype-hint"
-        className={eventType !== "" ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
-      >
-        {eventType !== ""
-          ? "Event type is parsed for some providers only — no matches can mean we don’t extract this provider’s type, not that no events arrived."
-          : ""}
-      </p>
+      {/* Visible + announced only while an event-type filter is set. It exists because event type is NULL for
+          providers whose payload we don't parse a type from, so an empty result is genuinely ambiguous — say
+          so rather than let it read as "no such events". The input's aria-describedby is dropped in the same
+          inactive state (above), so an empty box is never described by the caveat. */}
+      <FilterHint id="events-eventtype-hint" active={eventType !== ""}>
+        Event type is parsed for some providers only — no matches can mean we don’t extract this
+        provider’s type, not that no events arrived.
+      </FilterHint>
     </div>
   );
 }

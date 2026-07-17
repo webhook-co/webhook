@@ -193,14 +193,28 @@ export function parseEventFilters(
   ] as DedupStrategy[];
   if (strategies.length > 0) filters.dedupStrategy = strategies;
 
-  // eventType: an EXACT match on a single free string (unbounded, user-controlled — no enum). Trim, drop
-  // empty/whitespace, and cap at 256 to mirror the contract (the web bypasses contract validation, so this
-  // IS its copy of that bound). Events with no parsed type simply won't match — the UI copy says so.
-  const eventType = cleanString(firstParam(params.eventType ?? undefined));
-  if (eventType !== undefined && eventType.length <= SEARCH_MAX_LENGTH)
-    filters.eventType = eventType;
+  // eventType: an EXACT match on a single free string (unbounded, user-controlled — no enum). One predicate,
+  // effectiveEventType, decides what actually applies — shared with the filter bar so the URL/box/Clear/hint
+  // can never claim a filter the parser then drops (a term that's whitespace-only, or over the max).
+  const eventType = effectiveEventType(firstParam(params.eventType ?? undefined));
+  if (eventType) filters.eventType = eventType;
 
   return filters;
+}
+
+/**
+ * The event type the query will ACTUALLY filter on, from a raw URL/input value: trimmed, and dropped (→ "")
+ * when empty/whitespace or over the max the contract enforces. Returning "" for "no filter" (rather than
+ * undefined) lets the filter bar use it directly as an input value.
+ *
+ * This is the SINGLE source of truth for "is an event-type filter active", shared by the parser (above) and
+ * the client bar. Before it existed, the bar keyed its box/Clear/coverage-hint off the raw `?eventType=` while
+ * the server keyed off a trimmed+capped copy — so a shared link with `?eventType=%20` or an over-long value lit
+ * the whole filter UI over a list the server never filtered: a chip-vs-data lie via URL, not just typed input.
+ */
+export function effectiveEventType(raw: string | null | undefined): string {
+  const cleaned = cleanString(raw);
+  return cleaned !== undefined && cleaned.length <= EVENT_TYPE_MAX_LENGTH ? cleaned : "";
 }
 
 /** A canonical v4/v7 uuid — the only shape `endpoint_id = $1` can take without raising 22P02. */
@@ -241,6 +255,14 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
  */
 export const SEARCH_MIN_LENGTH = 3;
 export const SEARCH_MAX_LENGTH = 256;
+
+/**
+ * Max length of the exact `eventType` filter — its OWN mirror of the contract's `EVENT_TYPE_MAX_LENGTH`, not a
+ * reuse of SEARCH_MAX_LENGTH. The two bounds are independent (they merely coincide at 256 today); a drift test
+ * pins this to the contract so lowering the contract's eventType max can't silently leave web accepting a term
+ * the API/CLI/MCP now 400. Same bundling-boundary reasoning as the search bounds above.
+ */
+export const EVENT_TYPE_MAX_LENGTH = 256;
 
 /**
  * True when a search term was typed but is too short to run (1-2 chars after trimming).

@@ -99,8 +99,10 @@ describe("EventsFilterBar — the search floor is explained, not silently enforc
 
     await user.type(input, "ab");
     expect(screen.getByText(/Keep typing/)).toBeVisible();
-    // Announced, and tied to the input — a sighted reader sees it, a screen-reader user is told.
-    expect(screen.getByRole("status")).toHaveTextContent(/at least 3 characters/);
+    // Announced, and tied to the input — a sighted reader sees it, a screen-reader user is told. There are two
+    // always-mounted status regions (search + event-type coverage); assert one of them carries the message.
+    const liveRegions = screen.getAllByRole("status");
+    expect(liveRegions.some((r) => /at least 3 characters/.test(r.textContent ?? ""))).toBe(true);
     expect(input).toHaveAccessibleDescription(/Keep typing/);
 
     await user.type(input, "c");
@@ -225,5 +227,44 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     expect(input.value).toBe("charge.succeeded");
     await user.click(screen.getByRole("button", { name: /Clear filters/ }));
     expect(input.value).toBe("");
+  });
+
+  // FINDING 1 (the chip-vs-data lie via URL, not just typed input): a shared link whose ?eventType= is
+  // whitespace-only or over the max is DROPPED by the server parser, so the bar must not present it as an
+  // applied filter. The box stays empty, Clear stays disabled, and the coverage hint stays hidden — the bar's
+  // notion of "event-type filter active" is the exact predicate the server applies.
+  it.each([
+    ["whitespace-only", "eventType=%20%20"],
+    ["over the max", `eventType=${"x".repeat(300)}`],
+  ])(
+    "a URL ?eventType that the server drops (%s) does not light the filter UI",
+    (_label, query) => {
+      mockSearch = query;
+      render(<EventsFilterBar providers={["stripe"]} />);
+      const input = screen.getByLabelText<HTMLInputElement>("Filter by event type");
+      expect(input.value).toBe(""); // not the raw junk value
+      expect(input).not.toHaveAttribute("aria-describedby"); // hint not linked
+      expect(screen.queryByText(/parsed for some providers only/)).not.toBeInTheDocument();
+      // Clear is disabled: no filter is actually applied, so there is nothing to clear.
+      expect(screen.getByRole("button", { name: /Clear filters/ })).toBeDisabled();
+    },
+  );
+
+  // FINDING 2: characters typed AFTER a commit, while the commit's RSC navigation is still in flight (the URL
+  // lags), must not be clobbered when that navigation lands. Simulated by committing a value, typing more, then
+  // re-rendering with the URL now caught up to the committed value — the extra characters must survive.
+  it("does not clobber characters typed during a commit's URL round-trip", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Filter by event type");
+    await user.type(input, "charge.succeeded");
+    await user.keyboard("{Enter}"); // commit → pushes ?eventType=charge.succeeded (URL not yet updated)
+    await user.type(input, ".v2"); // refine while the navigation is in flight
+    expect(input.value).toBe("charge.succeeded.v2");
+    // The Enter's navigation now lands: the URL catches up to the committed value.
+    mockSearch = "eventType=charge.succeeded";
+    rerender(<EventsFilterBar providers={["stripe"]} />);
+    // The in-flight ".v2" must NOT have been overwritten by the URL→box re-sync.
+    expect(input.value).toBe("charge.succeeded.v2");
   });
 });

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  EVENT_TYPE_MAX_LENGTH,
+  effectiveEventType,
   firstParam,
   hasAppliedFilters,
   parseEventFilters,
@@ -308,5 +310,63 @@ describe("parseEventFilters — the new facets (method, eventType, dedupStrategy
     expect(hasAppliedFilters(parseEventFilters({ dedupStrategy: ["unique"] }))).toBe(true);
     expect(hasAppliedFilters(parseEventFilters({ eventType: "charge.succeeded" }))).toBe(true);
     expect(hasAppliedFilters(parseEventFilters({}))).toBe(false);
+  });
+});
+
+// The single predicate that both the parser (above) and the filter bar use to decide whether an event-type
+// filter is actually applied. The bar keys its box / Clear / coverage-hint off this exact function, so these
+// cases ARE the guarantee that a shared link can't light the filter UI over a list the server never filtered.
+describe("effectiveEventType", () => {
+  it("trims and passes a real value through", () => {
+    expect(effectiveEventType("charge.succeeded")).toBe("charge.succeeded");
+    expect(effectiveEventType("  invoice.paid  ")).toBe("invoice.paid");
+  });
+
+  it("collapses the no-filter cases (null/undefined/empty/whitespace) to ''", () => {
+    expect(effectiveEventType(null)).toBe("");
+    expect(effectiveEventType(undefined)).toBe("");
+    expect(effectiveEventType("")).toBe("");
+    expect(effectiveEventType("   ")).toBe("");
+  });
+
+  it("collapses an over-long value to '' (it can't be applied, so it isn't a filter)", () => {
+    expect(effectiveEventType("x".repeat(EVENT_TYPE_MAX_LENGTH))).toBe(
+      "x".repeat(EVENT_TYPE_MAX_LENGTH),
+    );
+    expect(effectiveEventType("x".repeat(EVENT_TYPE_MAX_LENGTH + 1))).toBe("");
+  });
+
+  it("agrees with what parseEventFilters actually applies", () => {
+    for (const raw of ["charge.succeeded", "  x  ", "   ", "", "y".repeat(300)]) {
+      const applied = parseEventFilters({ eventType: raw }).eventType ?? "";
+      expect(effectiveEventType(raw)).toBe(applied);
+    }
+  });
+});
+
+// EVENT_TYPE_MAX_LENGTH is web's own mirror of the contract's constant (the barrel can't be imported at
+// runtime under Turbopack — see the SEARCH_MAX_LENGTH note in event-filters.ts). This is the guard that keeps
+// the mirror honest: if the contract lowers its eventType max, web would otherwise silently keep accepting a
+// term the API/CLI/MCP now 400 — a four-surface parity break. The bound is DISTINCT from search's, so it needs
+// its own test even though the two happen to share the value 256 today.
+describe("the web's eventType bound matches the contract's", () => {
+  it("mirrors EVENT_TYPE_MAX_LENGTH exactly", async () => {
+    const contract = await import("@webhook-co/contract");
+    expect(EVENT_TYPE_MAX_LENGTH).toBe(contract.EVENT_TYPE_MAX_LENGTH);
+  });
+
+  it("is the bound the contract's schema actually enforces", async () => {
+    const { eventsList } = await import("@webhook-co/contract");
+    const schema = eventsList.input;
+    const atMax = schema.safeParse({
+      endpointId: crypto.randomUUID(),
+      filter: { eventType: "x".repeat(EVENT_TYPE_MAX_LENGTH) },
+    });
+    const overMax = schema.safeParse({
+      endpointId: crypto.randomUUID(),
+      filter: { eventType: "x".repeat(EVENT_TYPE_MAX_LENGTH + 1) },
+    });
+    expect(atMax.success).toBe(true);
+    expect(overMax.success).toBe(false);
   });
 });
