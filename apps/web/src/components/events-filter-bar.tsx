@@ -333,6 +333,12 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     searchPendingRef.current = false;
     setEventTypeInput("");
     committedEventTypeRef.current = "";
+    // Optimistically empty the multi-selects too. They read `pendingSel[key] ?? URL`, and the cleared URL
+    // hasn't committed yet — so without this the just-picked chips stay checked (and Clear enabled) for the
+    // RSC round trip, the same chip-vs-data flash the free-text resets above avoid. EMPTY ARRAYS, not `{}`:
+    // `{}` falls through to the still-stale URL; `[]` overrides it. The committedQuery effect resets to `{}`
+    // once the navigation lands, by which point the URL is empty too — so the two agree.
+    setPendingSel({ provider: [], status: [], method: [], dedupStrategy: [] });
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
     apply(next);

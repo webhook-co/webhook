@@ -229,6 +229,22 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     expect(input.value).toBe("");
   });
 
+  it("Clear immediately drops a just-selected facet, not a render or two later", async () => {
+    // A multi-select facet is shown optimistically (pendingSel) before its RSC navigation commits. Clear must
+    // reset that optimistic selection too — otherwise the just-picked chip stays checked (and Clear stays
+    // enabled) until the navigation lands: the same chip-vs-data flash the free-text resets avoid.
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    await user.click(screen.getByRole("button", { name: /Filter by HTTP method/ }));
+    await user.click(screen.getByRole("option", { name: "GET" }));
+    const clearBtn = screen.getByRole("button", { name: /Clear filters/ });
+    expect(clearBtn).toBeEnabled(); // the method facet is the one active filter
+    await user.click(clearBtn);
+    // With the fix, the optimistic method selection is emptied on the same render — so with no other filter
+    // set, Clear disables at once. Without it, methodSel would still read ['GET'] until the URL commits.
+    expect(clearBtn).toBeDisabled();
+  });
+
   // FINDING 1 (the chip-vs-data lie via URL, not just typed input): a shared link whose ?eventType= is
   // whitespace-only or over the max is DROPPED by the server parser, so the bar must not present it as an
   // applied filter. The box stays empty, Clear stays disabled, and the coverage hint stays hidden — the bar's
