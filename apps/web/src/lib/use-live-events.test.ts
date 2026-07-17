@@ -171,3 +171,76 @@ describe("useLiveEvents", () => {
     expect(ws.closed).toBe(true);
   });
 });
+
+// LIVE MEANS LIVE — and a PAUSE is not a fresh start. These two rules pull in opposite directions, and the
+// bug was picking one of them. The seed is where they meet, so this is where they are pinned.
+describe("useLiveEvents — the seed distinguishes going live from carrying on", () => {
+  it("a fresh go-live asks for since=now: the reader gets no history", async () => {
+    renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    expect(FakeWebSocket.instances[0].url).toContain("since=now");
+    expect(FakeWebSocket.instances[0].url).not.toContain("sinceCursor");
+  });
+
+  // THE DATA-LOSS BUG. The hook stops the session when the tab hides, so coming back is a FIRST-BIND with no
+  // sticky sessionId. Re-seeding at `now` there silently drops everything that arrived while the tab was
+  // hidden — events that came in while Live was ON, i.e. not history at all. The `since=now` fix on its own
+  // traded a noisy replay for silent loss; the cursor is what makes the pause lossless.
+  it("resumes a hidden-tab pause from the last cursor seen, not from now", async () => {
+    const { result } = renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    act(() => FakeWebSocket.instances[0].ready());
+    // A real uuid: the frame is schema-parsed, and a junk id is dropped before onCursor ever fires.
+    const E1 = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5071";
+    act(() => FakeWebSocket.instances[0].event(E1, "cur-42"));
+    expect(result.current.items.map((i) => i.id)).toContain(E1);
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+
+    const resumed = FakeWebSocket.instances[1];
+    expect(resumed).toBeDefined();
+    expect(resumed.url).toContain("sinceCursor=cur-42");
+    expect(resumed.url).not.toContain("since=now");
+  });
+
+  // Toggling Live OFF ends the live intent, so ON is a NEW one. Without dropping the cursor, toggling off,
+  // going to lunch and toggling on would replay the whole lunch — the history replay this change removes,
+  // reintroduced through the resume path.
+  it("a Live off/on is a NEW go-live: back to since=now, not a resume", async () => {
+    const { rerender } = renderHook(({ on }: { on: boolean }) => useHarness({ enabled: on }), {
+      initialProps: { on: true },
+    });
+    await act(async () => {
+      await flush();
+    });
+    act(() => FakeWebSocket.instances[0].ready());
+    act(() => FakeWebSocket.instances[0].event("0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5072", "cur-42"));
+
+    await act(async () => {
+      rerender({ on: false });
+      await flush();
+    });
+    await act(async () => {
+      rerender({ on: true });
+      await flush();
+    });
+
+    const relit = FakeWebSocket.instances[1];
+    expect(relit).toBeDefined();
+    expect(relit.url).toContain("since=now");
+    expect(relit.url).not.toContain("sinceCursor");
+  });
+});

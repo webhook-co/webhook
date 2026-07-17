@@ -83,9 +83,11 @@ interface Harness {
   mint: ReturnType<typeof vi.fn>;
 }
 
-function makeHarness(
-  mintResult: MintTicketResult,
-): Harness & { start: () => ReturnType<typeof createLiveEventsSession> } {
+function makeHarness(mintResult: MintTicketResult): Harness & {
+  start: (
+    over?: Partial<Parameters<typeof createLiveEventsSession>[0]>,
+  ) => ReturnType<typeof createLiveEventsSession>;
+} {
   const events: EventSummaryItem[] = [];
   const statuses: LiveStatus[] = [];
   const connections: LiveConnectionStatus[] = [];
@@ -99,7 +101,7 @@ function makeHarness(
     errors,
     timers,
     mint,
-    start: () =>
+    start: (over = {}) =>
       createLiveEventsSession({
         wsUrl: "wss://wbhk.my/listen",
         endpointId: ENDPOINT_ID,
@@ -114,6 +116,7 @@ function makeHarness(
           return timers.length - 1;
         },
         clearTimeoutFn: () => {},
+        ...over,
       }),
   };
 }
@@ -331,33 +334,40 @@ describe("backoffMs", () => {
 // The engine already accepts the grammar (now|beginning|<duration>|<RFC3339>) and resolves it server-side; the
 // dashboard simply never asked. The previous version of the URL assertion above PINNED the bug — it asserted
 // the exact url, with no `since`, and passed happily.
-describe("createLiveEventsSession — seeds at the head", () => {
-  it("asks for since=now, so Live means live and not a history replay", async () => {
+describe("createLiveEventsSession — Live means live", () => {
+  it("a fresh go-live asks for since=now, so the reader gets no history", async () => {
     const h = makeHarness(OK_TICKET);
     const session = h.start();
     await flush();
     expect(FakeWebSocket.instances[0].url).toContain("since=now");
+    expect(FakeWebSocket.instances[0].url).not.toContain("sinceCursor");
     session.stop();
   });
 
-  // Safe, and deliberately unconditional. A reconnect carries the sticky sessionId and lands on a DO that
-  // ALREADY has a binding — listen-session takes the `existing` branch, leaves the durable cursor untouched
-  // and never reads the since header, so the resume stays seamless and no event in the gap is skipped.
-  // If the DO is gone entirely, the reconnect re-enters first-bind and `since=now` skips the gap rather than
-  // replaying all history — the better failure for a live tail either way.
-  it("still asks for since=now on a resume (the DO ignores it when the binding exists)", async () => {
+  // A PAUSE is not a fresh start. The hook stops the session when the tab hides, so coming back builds a new
+  // session with NO sticky sessionId — a first-bind. Re-seeding at `now` there would silently drop everything
+  // that arrived while the tab was hidden: those events came in while Live was ON, so they are not history,
+  // and losing them would be a worse bug than the replay this change removes.
+  it("a resumed tail seeds from the last cursor it saw, not from now", async () => {
     const h = makeHarness(OK_TICKET);
-    const session = h.start();
+    const session = h.start({ seedFrom: "cur-abc" });
     await flush();
-    const first = FakeWebSocket.instances[0];
-    first.ready("sess-77");
-    first.fireClose();
-    h.timers[0]();
-    await flush();
+    expect(FakeWebSocket.instances[0].url).toContain("sinceCursor=cur-abc");
+    expect(FakeWebSocket.instances[0].url).not.toContain("since=now");
+    session.stop();
+  });
 
-    const second = FakeWebSocket.instances[1];
-    expect(second.url).toContain("sessionId=sess-77");
-    expect(second.url).toContain("since=now");
+  // The resume position has to come from somewhere: every delivered event reports its cursor, which is what
+  // the hook holds across the pause.
+  it("reports each delivered event's cursor so a pause can be resumed", async () => {
+    const seen: string[] = [];
+    const h = makeHarness(OK_TICKET);
+    const session = h.start({ onCursor: (c) => seen.push(c) });
+    await flush();
+    const ws = FakeWebSocket.instances[0];
+    ws.ready("sess-1");
+    ws.message(summaryFrame(EVENT_ID, "cur-1"));
+    expect(seen).toEqual(["cur-1"]);
     session.stop();
   });
 });

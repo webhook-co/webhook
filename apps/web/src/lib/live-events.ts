@@ -58,6 +58,17 @@ export interface LiveEventsSessionOptions {
   /** A user-facing reason the stream couldn't start (e.g. the ticket mint failed). Optional. */
   readonly onError?: (message: string) => void;
   /** Injected so tests use a FakeWebSocket; defaults to the global `WebSocket`. */
+  /**
+   * An opaque cursor to resume from, for a session that is CONTINUING rather than starting.
+   *
+   * Absent = a fresh "go live" ⇒ the socket asks for `since=now` and the reader sees only what arrives from
+   * that moment on (history is not live). Present = the tail was PAUSED (the tab was hidden, so the hook
+   * stopped the session) and is picking up where it left off — those events arrived while Live was ON, so
+   * they are not history and must not be dropped.
+   */
+  readonly seedFrom?: string;
+  /** Called with each delivered event's opaque cursor, so a caller can survive a pause and resume from it. */
+  readonly onCursor?: (cursor: string) => void;
   readonly WebSocketCtor?: WebSocketCtor;
   /** Injected reconnect timer (deterministic in tests); defaults to `setTimeout`. */
   readonly setTimeoutFn?: (fn: () => void, ms: number) => unknown;
@@ -122,6 +133,8 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     onStatus,
     onConnectionChange,
     onError,
+    seedFrom,
+    onCursor,
     WebSocketCtor = globalThis.WebSocket as unknown as WebSocketCtor,
     setTimeoutFn = (fn, ms) => setTimeout(fn, ms),
     clearTimeoutFn = (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -172,6 +185,9 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
         return;
       case "event":
         onEvent(toItem(frame.summary));
+        // Report the position BEFORE acking: this is what lets a paused tail resume exactly, so a tab switch
+        // costs nothing. At-least-once means a resume may redeliver the last item; the list dedupes by id.
+        onCursor?.(frame.cursor);
         // advisory ack — the inspection tail is at-least-once; acking lets the engine trim.
         ws?.send(encodeClientFrame({ type: "ack", cursor: frame.cursor }));
         return;
@@ -207,18 +223,28 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
       return;
     }
 
-    // `since=now` is load-bearing: WITHOUT it the DO's seed cursor stays unset, and unset means
-    // OLDEST-INCLUSIVE (its own comment says so). Live then replayed the endpoint's entire retained history,
-    // oldest first — so the newest event, the only reason anyone turns Live on, arrived last. The engine has
-    // always accepted the grammar (now|beginning|<duration>|<RFC3339>) and resolves it server-side; the
-    // dashboard just never asked.
+    // LIVE MEANS LIVE. Without a seed the DO's cursor stays unset, and unset means OLDEST-INCLUSIVE (its own
+    // comment says so) — so turning Live on replayed the endpoint's whole retained history, newest last.
+    // History is not live; the reader asked to watch what happens from now on.
     //
-    // Sent unconditionally, including on a resume. A reconnect carries the sticky sessionId to a DO that
+    // Two seeds, because "start watching" and "carry on watching" are different questions:
+    //
+    //   * NO seedFrom = a fresh go-live → `since=now`. The engine resolves it server-side to the head. It is
+    //     NOT wall-clock, which is what makes it safe against the gapless watermark: it lands on the latest
+    //     event AT/BELOW the watermark, so an event still in flight is delivered when it matures rather than
+    //     skipped. A wall-clock instant would skip it — the gap the watermark exists to close.
+    //   * seedFrom = the tail was PAUSED (hidden tab ⇒ the hook stops the session) and is resuming from the
+    //     last cursor it saw. Those events arrived while Live was ON, so they are not history and dropping
+    //     them would be a data-loss bug wearing the fix's clothes. `sinceCursor` is opaque + HMAC-verified by
+    //     the DO, so a resume also costs no connect-time DB query.
+    //
+    // Both only matter on a FIRST-BIND. A reconnect that still has its sticky sessionId lands on a DO that
     // already holds a binding, and listen-session's `existing` branch leaves the durable cursor untouched
-    // without ever reading this header — so the resume stays seamless and nothing in the gap is skipped. If
-    // the DO is gone, the reconnect re-enters first-bind and this skips the gap instead of replaying
-    // everything, which is the right failure for a live tail.
-    const params = new URLSearchParams({ endpointId, since: "now" });
+    // without reading either header. The seed is what makes the NO-sessionId paths (remount, tab show, a
+    // cold DO) correct — and those are the common ones, not the exotic ones.
+    const params = new URLSearchParams({ endpointId });
+    if (seedFrom) params.set("sinceCursor", seedFrom);
+    else params.set("since", "now");
     if (sessionId) params.set("sessionId", sessionId);
     const url = `${wsUrl}?${params.toString()}`;
     const protocols = [LISTEN_SUBPROTOCOL, LISTEN_TICKET_SUBPROTOCOL_PREFIX + minted.ticket];

@@ -83,6 +83,26 @@ export function useLiveEvents({
 
   const active = enabled && visible;
 
+  /**
+   * The last cursor this tail delivered — the resume position across a PAUSE.
+   *
+   * A ref, not state: it must survive the effect teardown/re-run that a visibility change causes, and writing
+   * it must not re-render (every event would).
+   */
+  const lastCursorRef = React.useRef<string | null>(null);
+
+  /**
+   * Turning Live OFF ends the live intent, so the next ON is a FRESH one: `since=now`, no history. Dropping
+   * the cursor here is what encodes that — without it, toggling off, waiting an hour and toggling on would
+   * replay the hour, which is the history-replay the whole change removes.
+   *
+   * Hiding the TAB is deliberately not this. `enabled` stays true, the cursor survives, and coming back
+   * resumes exactly — those events arrived while Live was on, so they are not history.
+   */
+  React.useEffect(() => {
+    if (!enabled) lastCursorRef.current = null;
+  }, [enabled]);
+
   React.useEffect(() => {
     if (!active) {
       setConnection("disconnected");
@@ -107,6 +127,10 @@ export function useLiveEvents({
         if (c === "connected") setError(null);
       },
       onError: setError,
+      // Absent on a fresh go-live (⇒ `since=now`); set when resuming a paused tail (⇒ `sinceCursor=`).
+      // Read at connect time, so the effect deps stay unchanged and a visibility flip does not re-key it.
+      seedFrom: lastCursorRef.current ?? undefined,
+      onCursor: (c) => (lastCursorRef.current = c),
       WebSocketCtor,
     });
     return () => session.stop();
