@@ -52,12 +52,17 @@ import { parse as parseJsonc } from "jsonc-parser";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const APPS_DIR = join(ROOT, "apps");
 
-/**
- * The ONLY binding permitted to resolve to a caching pool. `webhook-prod-cached` exists precisely so the
- * cacheable, NON-tenant-scoped reads have somewhere to go — keeping the tenant pool free to stay uncached.
- * eslint.config.mjs independently bans app code from reading `env.HYPERDRIVE_CACHED`.
- */
-export const CACHING_ALLOWED_BINDINGS = ["HYPERDRIVE_CACHED"];
+// There is deliberately NO exemption list here. One existed — CACHING_ALLOWED_BINDINGS = ["HYPERDRIVE_CACHED"]
+// — and it WAS the hole, twice, because it skipped the binding BY NAME for every app:
+//   round 5: an app binding only HYPERDRIVE_CACHED passed the floor (which counted bindings), passed pinning
+//            (<HYPERDRIVE_CACHED_ID> IS its own placeholder), and was skipped by the posture check.
+//   round 7: after the floor was fixed to demand the tenant binding by name, an app could simply declare
+//            BOTH and route its org-wide reads (no org_id bound ⇒ ONE cache key for every org) through the
+//            cached one. Still green on all three layers.
+// The exemption existed solely to accommodate a binding that ZERO source files ever read. Deleting the
+// binding deletes the exemption, which deletes the hole — so the rule is now ABSOLUTE: every hyperdrive
+// binding must resolve to a pool with caching disabled. If a genuinely cache-safe read ever needs one,
+// re-add the binding and an exemption scoped to an (app, binding) PAIR, never a bare name.
 
 /**
  * The apps that connect to Postgres, and therefore MUST declare the tenant binding.
@@ -220,7 +225,6 @@ export function cachePostureViolations({ bindings, configsById } = {}) {
   const byId = configsById ?? {};
   const violations = [];
   for (const { app, binding, id } of bindings) {
-    if (CACHING_ALLOWED_BINDINGS.includes(binding)) continue;
     // `Object.hasOwn` so a config id can never alias an Object.prototype key and read back a bogus "config".
     const config = Object.hasOwn(byId, id) ? byId[id] : undefined;
     if (!config || typeof config !== "object") {
@@ -410,7 +414,7 @@ async function deployMain() {
     process.exit(1);
   }
   // Report exactly WHAT was checked — never a completeness claim over a set we did not enumerate.
-  const checked = bindings.filter((b) => !CACHING_ALLOWED_BINDINGS.includes(b.binding));
+  const checked = bindings;
   const byApp = new Map();
   for (const b of checked) byApp.set(b.app, [...(byApp.get(b.app) ?? []), b.binding]);
   console.log(
@@ -418,10 +422,6 @@ async function deployMain() {
       "resolve to. This is exactly what was checked — the generated overlays' bindings, nothing more:",
   );
   for (const [app, list] of byApp) console.log(`    ${app}: ${list.sort().join(", ")}`);
-  const exempt = bindings.filter((b) => CACHING_ALLOWED_BINDINGS.includes(b.binding));
-  if (exempt.length > 0) {
-    console.log(`    (exempt by design: ${[...new Set(exempt.map((b) => b.binding))].join(", ")})`);
-  }
 }
 
 // Run only when invoked directly (not when imported by the test — which would trip process.exit).

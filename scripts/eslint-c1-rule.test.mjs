@@ -75,9 +75,11 @@ test("reading the TENANT binding is NOT flagged (the rule is not a blanket ban)"
   );
 });
 
-// Pins the rule's ACKNOWLEDGED limit rather than pretending it doesn't exist. A syntactic selector cannot
-// resolve a variable key; the deploy-time posture check is what covers this case. If someone ever makes this
-// pass — a type-aware rule, say — this test goes red and the comment should be updated to match.
+// Pins the rule's ACKNOWLEDGED limit rather than pretending it doesn't exist: a syntactic selector cannot
+// resolve a variable key. This comment used to add "the deploy-time posture check is what covers this case" —
+// false, and a reviewer trusting it would have approved a real leak: that check reads wrangler configs, not
+// source. What actually makes this safe is that there is no caching BINDING left to resolve to (the dead
+// HYPERDRIVE_CACHED one was deleted). Re-add a caching binding and this gap is real again.
 test("a VARIABLE-keyed access is NOT flagged — the documented limit, not an oversight", async () => {
   assert.equal(
     await flagged(`export const f = (env: any, k: string) => env[k].connectionString;`),

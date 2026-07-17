@@ -15,7 +15,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  CACHING_ALLOWED_BINDINGS,
   DB_APPS,
   REQUIRED_TENANT_BINDING,
   bindingPlaceholderViolations,
@@ -219,17 +218,6 @@ test("every hyperdrive binding in every SHIPPED wrangler.jsonc is pinned to its 
     "the tenant binding must be among them",
   );
   assert.deepEqual(bindingPlaceholderViolations(configs), []);
-
-  // A STALE EXEMPTION is the quiet way this guard dies: if CACHING_ALLOWED_BINDINGS ever names a binding the
-  // repo no longer declares (renamed, retired, or a typo), it silently exempts nothing — or worse, shadows a
-  // real name. Every exemption must correspond to a binding that actually exists.
-  for (const allowed of CACHING_ALLOWED_BINDINGS) {
-    assert.ok(
-      found.some((b) => b.binding === allowed),
-      `${allowed} is exempt from the cache-posture check but no shipped wrangler.jsonc declares it — a stale ` +
-        "exemption. Remove it, or fix the name.",
-    );
-  }
 });
 
 // ---------------------------------------------------------------- Layer 2: cache posture (deploy-time)
@@ -256,22 +244,24 @@ test("a tenant binding resolving to a CACHING pool is a violation", () => {
 // resolving the binding's ACTUAL id catches it — the id resolves to the cached pool, which reports caching on.
 test("deploy-time selection: TENANT resolving to the cached pool's id is a violation", () => {
   const violations = cachePostureViolations({
-    bindings: [
-      { app: "web", binding: "HYPERDRIVE_TENANT", id: "c1" },
-      { app: "engine", binding: "HYPERDRIVE_CACHED", id: "c1" },
-    ],
+    bindings: [{ app: "web", binding: "HYPERDRIVE_TENANT", id: "c1" }],
     configsById: { c1: on("webhook-prod-cached") },
   });
   assert.equal(violations.length, 1);
   assert.match(violations[0], /HYPERDRIVE_TENANT/);
 });
 
-test("HYPERDRIVE_CACHED is the ONE binding allowed to cache", () => {
+// THE ROUND-7 HOLE, as a regression. The exemption skipped HYPERDRIVE_CACHED BY NAME for every app, so an app
+// could declare it ALONGSIDE the tenant binding and route org-wide reads (no org_id bound ⇒ one cache key for
+// every org) through the caching pool with all three layers green. There is now NO exemption: every binding is
+// checked, whatever it is called.
+test("NO binding is exempt — a caching pool is a violation even for HYPERDRIVE_CACHED", () => {
   const violations = cachePostureViolations({
-    bindings: [{ app: "engine", binding: "HYPERDRIVE_CACHED", id: "c1" }],
+    bindings: [{ app: "web", binding: "HYPERDRIVE_CACHED", id: "c1" }],
     configsById: { c1: on("webhook-prod-cached") },
   });
-  assert.deepEqual(violations, []);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /caching is ENABLED/);
 });
 
 test("FAILS CLOSED when a config can't be read", () => {

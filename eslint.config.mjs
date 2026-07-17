@@ -52,8 +52,14 @@ export default tseslint.config(
       // NOT flagged, and not claimed to be: a VARIABLE-keyed access (`env[k]`), which no
       // syntactic selector can resolve, and a type/interface declaration of the binding
       // (neither node type). This comment used to say "every value access ... and any
-      // indirection" is caught; that was false — `env[k]` escapes all four. The dynamic
-      // case is covered by the deploy-time posture check, not here.
+      // indirection" is caught; that was false — `env[k]` escapes all four.
+      //
+      // It then said the dynamic case was "covered by the deploy-time posture check".
+      // That was ALSO false: the posture check reads wrangler configs, not source, and it
+      // exempted the cached binding by name. Nothing covered it. The real answer is that
+      // there is no longer a caching binding to reach: the dead HYPERDRIVE_CACHED binding
+      // was deleted, so `env[k]` cannot resolve to a caching pool from app code. If one is
+      // ever re-added, this gap is REAL again and this comment must say so.
       // If a read is genuinely non-tenant/cache-safe, opt in explicitly:
       //   // eslint-disable-next-line no-restricted-syntax -- cache-safe (C1): <reason>
       "no-restricted-syntax": [

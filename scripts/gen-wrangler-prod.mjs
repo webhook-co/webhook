@@ -40,7 +40,11 @@ const jsonStringBody = (v) => JSON.stringify(v).slice(1, -1);
 // placeholder/literal token -> real value (resource ids from the env; bucket dev -> prod).
 const TOKEN = {
   "<HYPERDRIVE_TENANT_ID>": reqEnv("HYPERDRIVE_TENANT_ID"),
-  "<HYPERDRIVE_CACHED_ID>": reqEnv("HYPERDRIVE_CACHED_ID"),
+  // <HYPERDRIVE_CACHED_ID> is gone: the HYPERDRIVE_CACHED binding it filled was read by ZERO source files for
+  // its whole life, and its mere existence forced the cache-posture guard to carry a by-name exemption that
+  // TWO review rounds walked a cross-tenant leak straight through. The webhook-prod-cached Hyperdrive config
+  // and the HYPERDRIVE_CACHED_ID repo var both still exist; only the binding is retired. Re-adding it means
+  // re-adding the guard's exemption too — scoped to an (app, binding) pair, never a bare name.
   "<HYPERDRIVE_ANCHOR_ID>": reqEnv("HYPERDRIVE_ANCHOR_ID"),
   // The delivery reconciler's webhook_reconciler Hyperdrive (S3 Slice 3 PR3c-2) — bound to a least-privilege,
   // SELECT-only cross-org Neon role. The operator provisions the role + Hyperdrive and sets the
@@ -116,7 +120,6 @@ const APPS = {
     ],
     placeholders: [
       "<HYPERDRIVE_TENANT_ID>",
-      "<HYPERDRIVE_CACHED_ID>",
       "<HYPERDRIVE_ANCHOR_ID>",
       "<HYPERDRIVE_RECONCILER_ID>",
       "<HYPERDRIVE_METER_ID>",
