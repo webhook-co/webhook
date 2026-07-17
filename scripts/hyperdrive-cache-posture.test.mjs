@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import {
   CACHING_ALLOWED_BINDINGS,
   DB_APPS,
+  REQUIRED_TENANT_BINDING,
   bindingPlaceholderViolations,
   cachePostureViolations,
   configsByIdFromPages,
@@ -85,6 +86,32 @@ test("hyperdriveBindings sees bindings nested under an env.<name> section", () =
   assert.equal(bindingPlaceholderViolations([{ name: "web", text }]).length, 1);
 });
 
+// REGRESSION (round-5 review). Wrangler's own config-schema.json puts `previews` on BOTH RawConfig and
+// RawEnvironment, each with a `hyperdrive` array — so a binding declared there was invisible to both layers.
+test("hyperdriveBindings sees bindings under previews, incl. env.<name>.previews", () => {
+  const text = `{
+    "previews": { "hyperdrive": [{ "binding": "HYPERDRIVE_TENANT", "id": "<HYPERDRIVE_CACHED_ID>" }] },
+    "env": { "staging": { "previews": { "hyperdrive": [
+      { "binding": "HYPERDRIVE_INGEST", "id": "<HYPERDRIVE_INGEST_ID>" }
+    ] } } }
+  }`;
+  assert.deepEqual(hyperdriveBindings(text), [
+    { binding: "HYPERDRIVE_TENANT", id: "<HYPERDRIVE_CACHED_ID>" },
+    { binding: "HYPERDRIVE_INGEST", id: "<HYPERDRIVE_INGEST_ID>" },
+  ]);
+  // the re-pointing inside previews is caught, not swallowed
+  assert.equal(bindingPlaceholderViolations([{ name: "web", text }]).length, 1);
+});
+
+// A malformed ENTRY was silently dropped while a malformed KEY threw — the same swallow, one level down.
+test("hyperdriveBindings THROWS on an entry missing a string binding or id", () => {
+  assert.throws(
+    () => hyperdriveBindings(`{"hyperdrive":[{"binding":"HYPERDRIVE_X"}]}`),
+    /refusing to skip/,
+  );
+  assert.throws(() => hyperdriveBindings(`{"hyperdrive":[{"id":"y"}]}`), /refusing to skip/);
+});
+
 // `"hyperdrive"` present but NOT an array parses with zero errors. Silently reading it as "no bindings" is
 // the same swallow; it is a malformed config and must be refused.
 test("hyperdriveBindings THROWS when `hyperdrive` is present but not an array", () => {
@@ -139,11 +166,6 @@ test("hyperdriveBindings tolerates trailing commas (the configs use them)", () =
 // Reporting bindings from a partial parse is how a guard silently checks less than it claims.
 test("hyperdriveBindings THROWS on unparseable input rather than reporting a partial set", () => {
   assert.throws(() => hyperdriveBindings(`{ "hyperdrive": [ { "binding": `), /refusing to report/);
-});
-
-test("hyperdriveBindings ignores an entry missing binding or id", () => {
-  const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_X"},{"id":"y"},{"binding":"HYPERDRIVE_Z","id":"z"}]}`;
-  assert.deepEqual(hyperdriveBindings(text), [{ binding: "HYPERDRIVE_Z", id: "z" }]);
 });
 
 // ---------------------------------------------------------------- Layer 1: placeholder pinning (no network)
@@ -319,7 +341,7 @@ test("reports every offending binding, not just the first", () => {
 // wrangler.jsonc actually declares a hyperdrive binding. A tautological `deepEqual(DB_APPS, [...the same
 // literal])` would be green and worthless — add a sixth DB-touching app and this goes red; retire one and it
 // goes red too, so the floor can never quietly stop covering an app.
-test("DB_APPS equals the apps whose SHIPPED wrangler.jsonc declares a hyperdrive binding", async () => {
+test("DB_APPS equals the apps whose SHIPPED wrangler.jsonc declares the TENANT binding", async () => {
   const appDirs = (await readdir(join(ROOT, "apps"), { withFileTypes: true }))
     .filter((d) => d.isDirectory())
     .map((d) => d.name);
@@ -331,36 +353,37 @@ test("DB_APPS equals the apps whose SHIPPED wrangler.jsonc declares a hyperdrive
     } catch {
       continue; // not a Worker
     }
-    if (hyperdriveBindings(text).length > 0) withBindings.push(name);
+    if (hyperdriveBindings(text).some((b) => b.binding === REQUIRED_TENANT_BINDING)) {
+      withBindings.push(name);
+    }
   }
   assert.deepEqual([...DB_APPS].sort(), withBindings.sort());
 });
 
-test("missingDbApps flags a DB-touching app that yielded no bindings", () => {
-  const seen = [
-    { name: "engine", bindings: 2 },
-    { name: "api", bindings: 1 },
-    { name: "mcp", bindings: 1 },
-    { name: "auth", bindings: 1 },
-    // web absent — renamed to wrangler.toml, or discovered with zero bindings
-  ];
+const tenant = () => [{ binding: REQUIRED_TENANT_BINDING, id: "<HYPERDRIVE_TENANT_ID>" }];
+const allDbApps = (over = {}) =>
+  DB_APPS.map((name) => ({ name, bindings: over[name] ?? tenant() }));
+
+test("missingDbApps flags a DB app absent from discovery", () => {
+  const seen = allDbApps().filter((a) => a.name !== "web"); // renamed to wrangler.toml
   assert.deepEqual(missingDbApps(seen), ["web"]);
 });
 
-test("missingDbApps flags an app that was FOUND but contributed zero bindings", () => {
-  const seen = [
-    { name: "engine", bindings: 2 },
-    { name: "api", bindings: 1 },
-    { name: "mcp", bindings: 1 },
-    { name: "auth", bindings: 1 },
-    { name: "web", bindings: 0 },
-  ];
-  assert.deepEqual(missingDbApps(seen), ["web"]);
+test("missingDbApps flags an app FOUND with zero bindings", () => {
+  assert.deepEqual(missingDbApps(allDbApps({ web: [] })), ["web"]);
 });
 
-test("missingDbApps is empty when every DB app contributed a binding", () => {
-  const seen = ["engine", "api", "mcp", "auth", "web"].map((name) => ({ name, bindings: 1 }));
-  assert.deepEqual(missingDbApps(seen), []);
+// THE ROUND-5 HOLE, as a regression. Counting bindings let an app whose ONLY binding is the cache-exempt
+// HYPERDRIVE_CACHED satisfy the floor — while pinning passed (<HYPERDRIVE_CACHED_ID> IS its own placeholder)
+// and the posture check skipped it (exempt BY NAME). All three layers returned zero violations for an app
+// reading tenant data through the CACHING pool. The floor must demand the tenant binding by name.
+test("missingDbApps flags an app whose ONLY binding is the cache-exempt one", () => {
+  const cachedOnly = [{ binding: "HYPERDRIVE_CACHED", id: "<HYPERDRIVE_CACHED_ID>" }];
+  assert.deepEqual(missingDbApps(allDbApps({ web: cachedOnly })), ["web"]);
+});
+
+test("missingDbApps is empty when every DB app declares the tenant binding", () => {
+  assert.deepEqual(missingDbApps(allDbApps()), []);
 });
 
 // ---------------------------------------------------------------- pagination

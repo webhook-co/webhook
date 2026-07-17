@@ -39,15 +39,21 @@ export default tseslint.config(
       // C1 (ADR-0002): the cached Hyperdrive binding must NEVER serve tenant-scoped
       // reads — its query cache is keyed on SQL+params and is blind to the RLS session
       // GUC, so a cached tenant query could serve one org's rows to another. Every
-      // *value* access to the binding is flagged: member access
-      // (`env.HYPERDRIVE_CACHED`), computed access (`env["HYPERDRIVE_CACHED"]`), and
-      // DESTRUCTURING (`const { HYPERDRIVE_CACHED } = env`, incl. a renamed or
-      // string-keyed pattern). The destructure selectors are load-bearing, not
-      // belt-and-braces: a destructure is an ObjectPattern, NOT a MemberExpression, so
-      // the first two selectors miss it entirely — `const { HYPERDRIVE_CACHED } = env;
-      // createClient(HYPERDRIVE_CACHED.connectionString)` passed this rule cleanly until
-      // a code review probed it. An interface/type declaration of the binding is neither
-      // a MemberExpression nor an ObjectPattern, so it still isn't matched.
+      // four STATIC access forms are flagged: member (`env.HYPERDRIVE_CACHED`),
+      // computed-literal (`env["HYPERDRIVE_CACHED"]`), and destructuring
+      // (`const { HYPERDRIVE_CACHED } = env`, plain / renamed / string-keyed).
+      //
+      // The destructure selectors are load-bearing, not belt-and-braces: a destructure is
+      // an ObjectPattern, NOT a MemberExpression, so the first two miss it entirely —
+      // `const { HYPERDRIVE_CACHED } = env; createClient(HYPERDRIVE_CACHED.connectionString)`
+      // passed this rule cleanly until a code review probed it. Exercised by
+      // scripts/eslint-c1-rule.test.mjs, which is what would have caught that.
+      //
+      // NOT flagged, and not claimed to be: a VARIABLE-keyed access (`env[k]`), which no
+      // syntactic selector can resolve, and a type/interface declaration of the binding
+      // (neither node type). This comment used to say "every value access ... and any
+      // indirection" is caught; that was false — `env[k]` escapes all four. The dynamic
+      // case is covered by the deploy-time posture check, not here.
       // If a read is genuinely non-tenant/cache-safe, opt in explicitly:
       //   // eslint-disable-next-line no-restricted-syntax -- cache-safe (C1): <reason>
       "no-restricted-syntax": [

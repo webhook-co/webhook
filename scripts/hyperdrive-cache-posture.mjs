@@ -32,11 +32,16 @@
 //   node scripts/hyperdrive-cache-posture.mjs --lint     (no network; wired into `pnpm lint`)
 //   node scripts/hyperdrive-cache-posture.mjs            (deploy preflight; needs CLOUDFLARE_ACCOUNT_ID +
 //                                                         CLOUDFLARE_API_TOKEN and the generated overlays)
-// The deploy path runs AFTER gen-wrangler-prod.mjs. That generator emits EVERY app's wrangler.prod.jsonc on
-// every run — not only the apps the calling workflow deploys — so this checks every app's bindings regardless
-// of which workflow invoked it. That is deliberate: a binding resolving to a caching pool is a tenant leak no
-// matter which deploy noticed it, so blocking all of them is right. It is NOT "exactly what this run ships",
-// and this comment used to say that it was.
+// The deploy path runs AFTER gen-wrangler-prod.mjs, and checks whatever bindings the overlays it emitted
+// declare. Two things that are NOT true of that set, both of which this comment previously claimed:
+//   - it is not "exactly what this run ships" (the generator emits every app's overlay, not just the
+//     deploying one), and
+//   - it is not "every app's bindings regardless of workflow": the generator STRIPS an `@gen-optional` block
+//     whose id var the calling workflow does not forward, so a pool checked on a deploy.yml run is absent on
+//     a deploy-web.yml run. Coverage varies BY WORKFLOW.
+// Checking the union of what was emitted is still the right behaviour — a binding on a caching pool is a leak
+// whichever deploy noticed it — but the report says which bindings it saw precisely because that set is not
+// fixed.
 
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -55,25 +60,35 @@ const APPS_DIR = join(ROOT, "apps");
 export const CACHING_ALLOWED_BINDINGS = ["HYPERDRIVE_CACHED"];
 
 /**
- * The apps that connect to Postgres, and therefore MUST declare at least one hyperdrive binding.
+ * The apps that connect to Postgres, and therefore MUST declare the tenant binding.
  *
- * This list is the floor's whole point. A global "did we find ANY bindings?" check only fires when EVERY app
- * breaks at once — so moving ONE app to a filename discovery misses (wrangler.json / wrangler.toml are both
- * valid) dropped it silently while the guard still printed a completeness claim over the others. Naming the
- * apps makes a single app's disappearance a red build.
+ * A global "did we find ANY bindings?" check only fires when EVERY app breaks at once — so moving ONE app to
+ * a filename discovery misses dropped it silently while the guard printed a completeness claim over the rest.
+ * Naming the apps makes a single app's disappearance a red build.
  *
- * Kept honest by a test asserting this equals the set of apps whose wrangler config declares a hyperdrive
- * binding — so adding a sixth DB-touching app without listing it here goes red.
+ * Kept honest by a test asserting this equals the set of apps whose SHIPPED wrangler config declares the
+ * tenant binding — so adding a sixth DB-touching app without listing it here goes red.
  */
 export const DB_APPS = ["engine", "api", "mcp", "web", "auth"];
 
 /**
- * Which DB-touching apps did NOT contribute a binding — either absent from discovery, or found with none.
- * @param {ReadonlyArray<{name: string, bindings: number}>} seen @returns {string[]}
+ * The binding every DB-touching app reads tenant data through. The floor demands THIS BY NAME, not merely
+ * "some binding": counting was a hole. An app whose only binding was the cache-exempt HYPERDRIVE_CACHED
+ * satisfied a count-based floor, pinned correctly (`<HYPERDRIVE_CACHED_ID>` IS its own placeholder), and was
+ * skipped by the posture check (exempt by name) — so all three layers returned zero violations for an app
+ * reading tenant data through the CACHING pool, and it never even appeared in the deploy report.
+ */
+export const REQUIRED_TENANT_BINDING = "HYPERDRIVE_TENANT";
+
+/**
+ * Which DB-touching apps did NOT declare the tenant binding — absent from discovery, or present without it.
+ * @param {ReadonlyArray<{name: string, bindings: ReadonlyArray<{binding: string}>}>} seen @returns {string[]}
  */
 export function missingDbApps(seen) {
-  const counted = new Map((seen ?? []).map((s) => [s.name, s.bindings]));
-  return DB_APPS.filter((app) => (counted.get(app) ?? 0) === 0);
+  const byApp = new Map((seen ?? []).map((s) => [s.name, s.bindings ?? []]));
+  return DB_APPS.filter(
+    (app) => !(byApp.get(app) ?? []).some((b) => b.binding === REQUIRED_TENANT_BINDING),
+  );
 }
 
 /**
@@ -110,7 +125,16 @@ export function hyperdriveBindings(text) {
   // for a config that declares them under an env, so a tenant binding re-pointed at the cached pool inside an
   // env section passed both layers green. A `hyperdrive` key that is present but NOT an array is a malformed
   // config, not "no bindings": refuse it rather than swallow it.
-  const sections = [config, ...Object.values(config?.env ?? {})];
+  // EVERY place wrangler accepts a hyperdrive array, per its own config-schema.json: the top level, each
+  // `env.<name>`, and the `previews` block on BOTH (RawConfig.previews and RawEnvironment.previews). Reading
+  // fewer of these is how a binding goes invisible — that has now been the under-match twice (a brace in a
+  // comment, then env sections), so this enumerates the schema rather than the shapes we happen to use today.
+  //
+  // Note this UNIONS the sections rather than modelling wrangler's env REPLACE semantics. Deliberate: a guard
+  // that over-approximates checks a binding that may not deploy (harmless), while one that under-approximates
+  // misses a binding that does (a leak). Over-checking is the only safe direction here.
+  const envs = Object.values(config?.env ?? {});
+  const sections = [config, config?.previews, ...envs, ...envs.map((e) => e?.previews)];
   const out = [];
   for (const section of sections) {
     if (section?.hyperdrive === undefined) continue;
@@ -121,12 +145,36 @@ export function hyperdriveBindings(text) {
       );
     }
     for (const e of section.hyperdrive) {
-      if (typeof e?.binding === "string" && typeof e?.id === "string") {
-        out.push({ binding: e.binding, id: e.id });
+      // A malformed ENTRY is refused for the same reason a malformed key is: silently dropping it checks
+      // less than we claim. Previously this filtered them out — one level down from where the throw lived.
+      if (typeof e?.binding !== "string" || typeof e?.id !== "string") {
+        throw new Error(
+          "a wrangler `hyperdrive` entry is missing a string `binding` or `id` — refusing to skip it.",
+        );
       }
+      out.push({ binding: e.binding, id: e.id });
     }
   }
   return out;
+}
+
+/**
+ * Configs that exist but are NEVER deployed by a workflow, and so carry no prod tenant risk.
+ *
+ * `wrangler.bench.jsonc` is the ingest-benchmark harness: its own header says it is "deployed ONLY for the
+ * benchmark window, then torn down with the bench Neon branch + Hyperdrive config", and its Hyperdrive is
+ * created ad-hoc at bench time (`wrangler hyperdrive create`) rather than referencing a prod pool. It also
+ * uses a different naming convention (binding `HYPERDRIVE`, id `<BENCH_HYPERDRIVE_ID>`), so the pinning rule
+ * does not apply to it. Excluded BY NAME so the exclusion is a decision on the record, not a glob that
+ * happens to miss it — and so a new variant config is covered by default.
+ */
+const NON_DEPLOYED_CONFIGS = new Set(["engine/wrangler.bench.jsonc"]);
+
+/** `wrangler.jsonc` → also `wrangler.bench.jsonc`; `wrangler.prod.jsonc` → itself only. */
+function matchesConfig(file, filename) {
+  if (filename === "wrangler.jsonc")
+    return /^wrangler(\..+)?\.jsonc$/.test(file) && !file.endsWith(".prod.jsonc");
+  return file === filename;
 }
 
 /** The id placeholder a binding MUST use: `HYPERDRIVE_TENANT` ⇒ `<HYPERDRIVE_TENANT_ID>`. */
@@ -144,12 +192,12 @@ const placeholderFor = (binding) => `<${binding}_ID>`;
 export function bindingPlaceholderViolations(configs) {
   if (!Array.isArray(configs)) return ["could not read the wrangler configs (fail closed)"];
   const violations = [];
-  for (const { name, text } of configs) {
+  for (const { name, file, text } of configs) {
     for (const { binding, id } of hyperdriveBindings(text)) {
       const want = placeholderFor(binding);
       if (id === want) continue;
       violations.push(
-        `apps/${name}/wrangler.jsonc: binding "${binding}" uses id ${JSON.stringify(id)}, expected ` +
+        `apps/${name}/${file ?? "wrangler.jsonc"}: binding "${binding}" uses id ${JSON.stringify(id)}, expected ` +
           `"${want}". A hyperdrive binding must be pinned to its OWN pool: pointing one at another pool's ` +
           "placeholder (e.g. a tenant read at <HYPERDRIVE_CACHED_ID>) would run RLS-scoped queries through a " +
           "caching pool, whose cache key is blind to the org GUC — serving one org's rows to another.",
@@ -228,7 +276,10 @@ export async function fetchAllConfigs(accountId, token, fetchImpl = fetch, perPa
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/hyperdrive/configs` +
       `?per_page=${perPage}&page=${page}`;
     const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
-    const body = await res.json();
+    // Parse defensively: a 5xx from an edge can be HTML, and letting `.json()` throw would surface a bare
+    // SyntaxError instead of the status — which is what an operator needs to tell "CF is down" from "the
+    // token lost its Hyperdrive:Read scope".
+    const body = await res.json().catch(() => null);
     if (!res.ok || !body?.success) {
       // Cloudflare error bodies are {success:false, errors:[{code,message}]} and never echo the request's
       // Authorization header, so this cannot reflect the token.
@@ -238,10 +289,14 @@ export async function fetchAllConfigs(accountId, token, fetchImpl = fetch, perPa
     }
     const result = body.result ?? [];
     pages.push(result);
+    // total_pages is AUTHORITATIVE when present; the short-page rule is the FALLBACK for when it is not.
+    // These must not be OR'd: under a per_page cap (CF returning 50 when asked for 100) every page is
+    // "short", so an OR lets the fallback truncate the walk at page 1 while total_pages says there is more —
+    // dropping configs, failing each dropped id closed, and wedging every prod deploy over a leak that does
+    // not exist. That is worse than either signal alone, and is exactly what the OR shipped.
     const totalPages = body.result_info?.total_pages;
-    const doneByTotal = typeof totalPages === "number" && page >= totalPages;
-    const doneByShortPage = result.length < perPage;
-    if (doneByTotal || doneByShortPage) return configsByIdFromPages(pages);
+    const done = typeof totalPages === "number" ? page >= totalPages : result.length < perPage;
+    if (done) return configsByIdFromPages(pages);
   }
   throw new Error(
     `Hyperdrive config listing did not terminate within ${MAX_PAGES} pages — refusing to report a posture ` +
@@ -257,20 +312,26 @@ export async function fetchAllConfigs(accountId, token, fetchImpl = fetch, perPa
  * would drop the app, and the caller would cheerfully report that every binding it found is fine.
  */
 async function readAppConfigs(filename) {
-  const apps = await readdir(APPS_DIR, { withFileTypes: true });
-  const configs = await Promise.all(
-    apps
-      .filter((d) => d.isDirectory())
-      .map(async ({ name }) => {
-        try {
-          return { name, text: await readFile(join(APPS_DIR, name, filename), "utf8") };
-        } catch (err) {
-          if (err?.code === "ENOENT") return null;
-          throw err;
-        }
-      }),
-  );
-  return configs.filter(Boolean);
+  const apps = (await readdir(APPS_DIR, { withFileTypes: true })).filter((d) => d.isDirectory());
+  const out = [];
+  for (const { name } of apps) {
+    const dir = join(APPS_DIR, name);
+    let files;
+    try {
+      files = await readdir(dir);
+    } catch (err) {
+      if (err?.code === "ENOENT") continue;
+      throw err;
+    }
+    // Every wrangler config VARIANT, not just the exact filename: apps/engine/wrangler.bench.jsonc already
+    // declares a hyperdrive binding that an exact-filename match left outside layer 1 entirely. Globbing means
+    // a NEW variant is covered by default rather than silently unchecked.
+    for (const file of files.filter((f) => matchesConfig(f, filename))) {
+      if (NON_DEPLOYED_CONFIGS.has(`${name}/${file}`)) continue;
+      out.push({ name, file, text: await readFile(join(dir, file), "utf8") });
+    }
+  }
+  return out;
 }
 
 /**
@@ -280,16 +341,17 @@ async function readAppConfigs(filename) {
  * @param {ReadonlyArray<{name: string, text: string}>} configs
  */
 function assertEveryDbAppSeen(configs) {
-  const seen = configs.map(({ name, text }) => ({
-    name,
-    bindings: hyperdriveBindings(text).length,
-  }));
-  const missing = missingDbApps(seen);
+  // Merge across an app's config VARIANTS (an app can ship more than one wrangler config).
+  const byApp = new Map();
+  for (const { name, text } of configs) {
+    byApp.set(name, [...(byApp.get(name) ?? []), ...hyperdriveBindings(text)]);
+  }
+  const missing = missingDbApps([...byApp].map(([name, bindings]) => ({ name, bindings })));
   if (missing.length > 0) {
     throw new Error(
-      `these apps connect to Postgres but contributed no hyperdrive binding: ${missing.join(", ")}. ` +
-        "Refusing to report a posture that skips them — did a wrangler config get renamed (wrangler.json / " +
-        ".toml are both valid), or move its bindings somewhere this guard does not read?",
+      `these apps connect to Postgres but do not declare ${REQUIRED_TENANT_BINDING}: ${missing.join(", ")}. ` +
+        "Refusing to report a posture that skips them — did a wrangler config get renamed, lose its tenant " +
+        "binding, or move it somewhere this guard does not read?",
     );
   }
 }
