@@ -27,6 +27,7 @@ const bindings = env as unknown as Env;
 const HDR = {
   ORG: "x-listen-org-id",
   ENDPOINT: "x-listen-endpoint-id",
+  SCOPE: "x-listen-scope",
   SESSION: "x-listen-session-id",
   USER: "x-listen-user-id",
   SINCE: "x-listen-since-cursor",
@@ -35,7 +36,8 @@ const HDR = {
 
 interface Binding {
   orgId: string;
-  endpointId: string;
+  scope: "org" | "endpoint";
+  endpointId?: string; // present iff scope === "endpoint"
   sessionId: string;
   userId?: string;
 }
@@ -44,8 +46,7 @@ type PollFn = (
   resume: Cursor | undefined,
 ) => Promise<{ events: ItemWithCursor<EventSummary>[]; caughtUp: boolean }>;
 type MetaFn = (
-  orgId: string,
-  endpointId: string,
+  binding: Pick<Binding, "orgId" | "scope" | "endpointId">,
   resume: Cursor | undefined,
 ) => Promise<{ headCursor: Cursor | null; backlogCount: number }>;
 /** The DO with its protected seams exposed for injection (tests aren't typechecked by tsc). */
@@ -94,7 +95,18 @@ function stubFor(sessionId: string): DurableObjectStub {
 function newBinding(over: Partial<Binding> = {}): Binding {
   return {
     orgId: crypto.randomUUID(),
+    scope: "endpoint",
     endpointId: crypto.randomUUID(),
+    sessionId: crypto.randomUUID(),
+    ...over,
+  };
+}
+
+/** An org-scoped binding: whole-org tail, no endpoint. */
+function newOrgBinding(over: Partial<Binding> = {}): Binding {
+  return {
+    orgId: crypto.randomUUID(),
+    scope: "org",
     sessionId: crypto.randomUUID(),
     ...over,
   };
@@ -112,9 +124,10 @@ function connect(
   const headers: Record<string, string> = {
     Upgrade: "websocket",
     [HDR.ORG]: b.orgId,
-    [HDR.ENDPOINT]: b.endpointId,
+    [HDR.SCOPE]: b.scope,
     [HDR.SESSION]: b.sessionId,
   };
+  if (b.scope === "endpoint" && b.endpointId) headers[HDR.ENDPOINT] = b.endpointId;
   if (b.userId) headers[HDR.USER] = b.userId;
   if (opts.since) headers[HDR.SINCE] = opts.since;
   if (opts.sinceSpec) headers[HDR.SINCE_SPEC] = opts.sinceSpec;
@@ -123,11 +136,7 @@ function connect(
 
 /** The DO with the --since resolver seam exposed for injection (no live Postgres in the pool). */
 type WithResolve = ListenSession & {
-  resolveSinceCursor: (
-    orgId: string,
-    endpointId: string,
-    since: { kind: string },
-  ) => Promise<Cursor | undefined>;
+  resolveSinceCursor: (orgId: string, since: { kind: string }) => Promise<Cursor | undefined>;
 };
 
 /** Inject the poll + backlog seams (default empty) THEN connect — so neither connect nor the
@@ -195,7 +204,7 @@ describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)"
     await runInDurableObject(stub, (inst) => {
       (inst as Pollable).pollEvents = EMPTY_POLL;
       (inst as Pollable).backlogMeta = EMPTY_META;
-      (inst as WithResolve).resolveSinceCursor = async (_o, _e, since) => {
+      (inst as WithResolve).resolveSinceCursor = async (_o, since) => {
         seen.push(since);
         return resolved;
       };
@@ -219,7 +228,7 @@ describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)"
     await runInDurableObject(stub, (inst) => {
       (inst as Pollable).pollEvents = EMPTY_POLL;
       (inst as Pollable).backlogMeta = EMPTY_META;
-      (inst as WithResolve).resolveSinceCursor = async (_o, _e, since) => {
+      (inst as WithResolve).resolveSinceCursor = async (_o, since) => {
         seen.push(since);
         return undefined;
       };
@@ -408,6 +417,81 @@ describe("ListenSession — session pinning", () => {
     expect((await connect(stub, { ...b, orgId: crypto.randomUUID() })).status).toBe(403);
     // The legitimate same-binding reconnect still upgrades.
     expect((await connect(stub, b)).status).toBe(101);
+  });
+
+  // R1 — the guaranteed 30-minute wedge this discriminator exists to avoid. An org binding stores NO
+  // endpointId and the reconnect header carries none either; a naive `existing.endpointId !== endpointId`
+  // (undefined !== null) would 403 EVERY org reconnect into a re-mint loop. This proves it does not.
+  it("an org-scoped session reconnects to itself without a 403 (R1)", async () => {
+    const b = newOrgBinding();
+    const first = await openSession(b);
+    expect(first.res.status).toBe(101);
+    // Same org-scoped session, reconnecting: must upgrade, not wedge.
+    expect((await connect(first.stub, b)).status).toBe(101);
+    // The persisted binding is org-scoped with no endpoint.
+    const binding = await runInDurableObject(first.stub, (_i, state) =>
+      state.storage.get<{ scope: string; endpointId?: string }>("binding"),
+    );
+    expect(binding?.scope).toBe("org");
+    expect(binding?.endpointId).toBeUndefined();
+  });
+
+  // Deploy compat: a binding persisted by the PRE-scope build has no `scope` field. An endpoint tab whose
+  // hibernated session spans the deploy must reconnect cleanly (101) and have its binding UPGRADED in place —
+  // not 403 forever on `undefined !== "endpoint"`.
+  it("upgrades a legacy scope-less endpoint binding on reconnect (no 403)", async () => {
+    const b = newBinding();
+    const stub = stubFor(b.sessionId);
+    // Seed a PRE-scope binding (no `scope`) and inject the poll seams, exactly as the old build left it.
+    await runInDurableObject(stub, async (inst, state) => {
+      (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as Pollable).backlogMeta = EMPTY_META;
+      (inst as Pollable).checkStillMember = async () => true;
+      await state.storage.put("binding", {
+        orgId: b.orgId,
+        endpointId: b.endpointId,
+        sessionId: b.sessionId,
+        boundAtMs: Date.now(),
+      });
+    });
+    // Reconnect with the new scoped header set → must upgrade, not wedge.
+    expect((await connect(stub, b)).status).toBe(101);
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ scope?: string; endpointId?: string }>("binding"),
+    );
+    expect(binding?.scope).toBe("endpoint"); // upgraded in place
+    expect(binding?.endpointId).toBe(b.endpointId);
+  });
+
+  it("refuses a reconnect that FLIPS scope (org↔endpoint) on the same session (403)", async () => {
+    const b = newOrgBinding();
+    const { stub } = await openSession(b);
+    // Same org + session, but now presenting an endpoint scope → a scope flip must be refused.
+    const asEndpoint = newBinding({ orgId: b.orgId, sessionId: b.sessionId });
+    expect((await connect(stub, asEndpoint)).status).toBe(403);
+    // And the reverse: an endpoint session can't be re-presented as org-wide.
+    const ep = newBinding();
+    await openSession(ep);
+    const epStub = stubFor(ep.sessionId);
+    const asOrg = newOrgBinding({ orgId: ep.orgId, sessionId: ep.sessionId });
+    expect((await connect(epStub, asOrg)).status).toBe(403);
+  });
+
+  it("streams an org-scoped tail: pollEvents receives an org binding with no endpoint", async () => {
+    const b = newOrgBinding();
+    const seen: Binding[] = [];
+    const poll: PollFn = async (binding) => {
+      seen.push(binding);
+      return { events: [], caughtUp: true };
+    };
+    const { stub, res } = await openSession(b, poll);
+    expect(res.status).toBe(101);
+    (res.webSocket as WebSocket).accept();
+    await runDurableObjectAlarm(stub);
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(1));
+    expect(seen[0].scope).toBe("org");
+    expect(seen[0].endpointId).toBeUndefined();
+    expect(seen[0].orgId).toBe(b.orgId);
   });
 });
 

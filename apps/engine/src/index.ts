@@ -612,6 +612,7 @@ export async function handleListenUpgrade(
     // Sec-WebSocket-Protocol subprotocol + an Origin the engine allowlists. Either way we resolve a trusted
     // (orgId, endpointId) that the client never controls, then bind the DO from it.
     let orgId: string;
+    let scope: "org" | "endpoint";
     let endpointId: string | null;
     let userId: string | undefined; // the DO's membership re-check subject (S.8); absent on a userless key
     let acceptSubprotocol: string | undefined;
@@ -635,6 +636,7 @@ export async function handleListenUpgrade(
       orgId = authz.ctx.orgId;
       userId = authz.ctx.userId; // present for a grant-bound key; a standalone api key has none (no re-check)
       endpointId = url.searchParams.get("endpointId");
+      scope = "endpoint"; // the CLI/bearer tail is always one endpoint (org-wide tail is a dashboard feature)
     } else {
       // Dashboard ticket path. Enforce the Origin allowlist FIRST (a cross-origin page must never even
       // attempt to tail), then verify the HMAC ticket. Both org + endpoint come from the SIGNED ticket —
@@ -645,19 +647,24 @@ export async function handleListenUpgrade(
       const grant = await verifyTicket(ticket);
       if (!grant) return new Response("invalid or expired listen ticket", { status: 401 });
       orgId = grant.orgId;
-      endpointId = grant.endpointId;
+      scope = grant.scope; // "org" (whole-org tail) or "endpoint"; both come from the SIGNED ticket
+      endpointId = grant.scope === "endpoint" ? grant.endpointId : null;
       userId = grant.userId; // dashboard tickets carry the user so the DO can re-check membership (S.8)
       acceptSubprotocol = LISTEN_SUBPROTOCOL;
     }
 
-    if (!endpointId || !UUID_RE.test(endpointId)) {
-      return new Response("invalid or missing endpointId", { status: 400 });
-    }
-    // Existence guard under the resolved org's RLS: a cross-org or unknown id is NOT_FOUND (and
-    // indistinguishable — a caller can't probe another org's endpoints). For the ticket path this is
-    // defense-in-depth: the mint-time action already checked the endpoint belongs to the org.
-    if (!(await handle.endpointExists(orgId, endpointId))) {
-      return new Response("endpoint not found", { status: 404 });
+    // Endpoint scope names one endpoint — validate + existence-check it. Org scope names none: RLS scopes
+    // the tail to the org and there is no endpoint to check, so both guards are skipped for it.
+    if (scope === "endpoint") {
+      if (!endpointId || !UUID_RE.test(endpointId)) {
+        return new Response("invalid or missing endpointId", { status: 400 });
+      }
+      // Existence guard under the resolved org's RLS: a cross-org or unknown id is NOT_FOUND (and
+      // indistinguishable — a caller can't probe another org's endpoints). For the ticket path this is
+      // defense-in-depth: the mint-time action already checked the endpoint belongs to the org.
+      if (!(await handle.endpointExists(orgId, endpointId))) {
+        return new Response("endpoint not found", { status: 404 });
+      }
     }
 
     // Per-session DO: a fresh id on first connect, or the client's id on reconnect (sticky resume).
@@ -669,7 +676,11 @@ export async function handleListenUpgrade(
     // Never forward the raw ticket subprotocol to the DO — keep the secret off the internal hop + its logs.
     headers.delete("sec-websocket-protocol");
     headers.set("x-listen-org-id", orgId);
-    headers.set("x-listen-endpoint-id", endpointId);
+    headers.set("x-listen-scope", scope);
+    // Endpoint id only for an endpoint-scoped tail; an org tail names none. Always delete first so a client
+    // can't inject one (the DO 400s an org scope that carries an endpoint header).
+    headers.delete("x-listen-endpoint-id");
+    if (scope === "endpoint" && endpointId) headers.set("x-listen-endpoint-id", endpointId);
     headers.set("x-listen-session-id", sessionId);
     // Bearer-derived user for the DO's periodic membership re-check (S.8). Always delete first so a client
     // can't inject one; set only when the resolved credential actually carries a user.

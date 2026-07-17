@@ -539,16 +539,24 @@ export interface TailEventsOptions {
 // so do not collapse δ back to the bare timeout. The filter stays on the RAW received_at (µs). The
 // keyset is ALSO on the raw received_at (the cursor carries exact µs), so both ride events_tunnel_idx
 // (endpoint_id, received_at, id) — a forward scan for this ASC tail.
-async function tailEventRows(tx: TenantTx, opts: TailEventsOptions): Promise<EventRow[]> {
+// The ONE forward-tail row body. `endpointId` is optional: present → endpoint-scoped (rides
+// events_tunnel_idx); omitted → ORG-WIDE (the endpoint predicate drops and RLS's `org_id = current_org_id()`
+// is the only scope, riding events_org_ordered_idx). You reach org-wide by a different, greppable public
+// function name (tailOrgEventsWithCursors), never by forgetting to pass endpointId — same two-doors discipline
+// as listEvents / listOrgEvents.
+async function tailEventRows(
+  tx: TenantTx,
+  opts: { readonly endpointId?: string; readonly sinceCursor?: Cursor; readonly limit?: number },
+): Promise<EventRow[]> {
   const limit = clampLimit(opts.limit);
   const { endpointId, sinceCursor } = opts;
   return tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
            ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
     from events
-    where endpoint_id = ${endpointId}
-      and deleted_at is null
+    where deleted_at is null
       and ${belowWatermark(tx)}
+      ${endpointId !== undefined ? tx`and endpoint_id = ${endpointId}` : tx``}
       ${sinceCursor ? keysetAfter(tx, sinceCursor) : tx``}
     order by received_at asc, id asc
     limit ${limit + 1}`;
@@ -586,6 +594,32 @@ export async function tailEventsWithCursors(
   );
 }
 
+/** Options for the ORG-WIDE forward tail — no endpointId; RLS scopes to the org. */
+export interface TailOrgEventsOptions {
+  /** Resume position; the scan returns rows strictly AFTER it (omit to start from the oldest). */
+  readonly sinceCursor?: Cursor;
+  readonly limit?: number;
+}
+
+/**
+ * The org-wide twin of {@link tailEventsWithCursors}: the same watermark-bounded forward tail with per-event
+ * µs cursors, but across EVERY endpoint in the caller's org (the consolidated events page's live tail). The
+ * keyset `(received_at, id)` is org-wide, so a page boundary can fall between two events on different
+ * endpoints that share a microsecond — the cursor still resumes exactly. Reaching org scope by calling this
+ * NAMED function (rather than dropping endpointId from the endpoint-scoped one) keeps the widening greppable.
+ */
+export async function tailOrgEventsWithCursors(
+  tx: TenantTx,
+  opts: TailOrgEventsOptions = {},
+): Promise<Page<ItemWithCursor<EventSummary>>> {
+  return buildPageWithCursors(
+    await tailEventRows(tx, { sinceCursor: opts.sinceCursor, limit: opts.limit }),
+    clampLimit(opts.limit),
+    toEventSummary,
+    tailCursorOf,
+  );
+}
+
 /**
  * The cursor of the LATEST event at/below the gapless watermark for an endpoint, or null if there is none —
  * the head position for the connect-time STATUS frame and the browse `headCursor`. (NOT the `?since=now`
@@ -603,6 +637,23 @@ export async function latestTailCursor(
     from events
     where endpoint_id = ${opts.endpointId}
       and deleted_at is null
+      and ${belowWatermark(tx)}
+    order by received_at desc, id desc
+    limit 1`;
+  return r ? { orderKey: r.order_key, id: r.id } : null;
+}
+
+/**
+ * The org-wide twin of {@link latestTailCursor}: the cursor of the LATEST event at/below the gapless watermark
+ * across EVERY endpoint in the caller's org (null if none) — the head position for the org tail's connect-time
+ * STATUS frame. RLS is the only scope (no endpoint predicate); ordered DESC on the raw received_at to take the
+ * max (received_at, id) at exact µs. Rides events_org_ordered_idx (org_id, received_at, id).
+ */
+export async function latestOrgTailCursor(tx: TenantTx): Promise<Cursor | null> {
+  const [r] = await tx<{ order_key: string; id: string }[]>`
+    select ${orderKeyCol(tx, "received_at")}, id
+    from events
+    where deleted_at is null
       and ${belowWatermark(tx)}
     order by received_at desc, id desc
     limit 1`;
@@ -666,6 +717,31 @@ export async function tailMeta(
   return { headCursor, backlogCount: row?.n ?? 0 };
 }
 
+/**
+ * The org-wide twin of {@link tailMeta}: the watermark head + capped backlog for the org tail's connect-time
+ * STATUS frame, across EVERY endpoint in the caller's org. Same window + raw-µs keyset, RLS the only scope;
+ * `headCursor` is {@link latestOrgTailCursor}. The COUNT is capped at `cap` via `limit cap + 1` (a returned
+ * `cap + 1` means "more than cap").
+ */
+export async function orgTailMeta(
+  tx: TenantTx,
+  opts: { readonly sinceCursor?: Cursor; readonly cap?: number } = {},
+): Promise<{ headCursor: Cursor | null; backlogCount: number }> {
+  const { sinceCursor } = opts;
+  const cap = opts.cap ?? LISTEN_LAG_CAP;
+  const headCursor = await latestOrgTailCursor(tx);
+  const [row] = await tx<{ n: number }[]>`
+    select count(*)::int as n from (
+      select 1
+      from events
+      where deleted_at is null
+        and ${belowWatermark(tx)}
+        ${sinceCursor ? keysetAfter(tx, sinceCursor) : tx``}
+      limit ${cap + 1}
+    ) s`;
+  return { headCursor, backlogCount: row?.n ?? 0 };
+}
+
 // The all-zero UUID sorts below every UUIDv7, so a synthetic boundary `(ms, ZERO_UUID)` with exclusive
 // `>` keyset semantics includes EVERY real event at that millisecond (never skips a same-ms sibling).
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
@@ -685,11 +761,10 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
  */
 export async function resolveSince(
   tx: TenantTx,
-  // `endpointId` is still accepted (every caller is endpoint-scoped and passes it) but is no longer READ:
-  // once `now` became wall-clock, all four `since` kinds resolve without touching the endpoint. Dropping it
-  // from the signature ripples into the engine caller, so it rides with the resolveSince/backlogMeta dedupe
-  // (task #27) rather than widening this change.
-  opts: { readonly endpointId: string; readonly since: Exclude<Since, { kind: "invalid" }> },
+  // `endpointId` is OPTIONAL and no longer READ: once `now` became wall-clock, all four `since` kinds resolve
+  // without touching the endpoint. Endpoint-scoped callers still pass it (harmless); the ORG-WIDE tail seed
+  // omits it entirely — there is no endpoint to name. (Fully dropping the param is task #27's dedupe.)
+  opts: { readonly endpointId?: string; readonly since: Exclude<Since, { kind: "invalid" }> },
 ): Promise<Cursor | undefined> {
   const { since } = opts;
   if (since.kind === "beginning") return undefined;

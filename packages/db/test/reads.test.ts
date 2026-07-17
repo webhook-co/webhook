@@ -24,15 +24,18 @@ import {
   getEndpoint,
   getEvent,
   isIngestPaused,
+  latestOrgTailCursor,
   latestTailCursor,
   likeContains,
   listEndpoints,
   listEvents,
   listEndpointNames,
   listOrgEvents,
+  orgTailMeta,
   resolveSince,
   tailEvents,
   tailMeta,
+  tailOrgEventsWithCursors,
 } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -1144,6 +1147,92 @@ describe("tailMeta (watermark head + capped backlog count)", () => {
     for (let i = 0; i < 5; i++) await seedEventAt(orgA, epCap, tailAt(20_000 + i * 1000), "stripe");
     const meta = await withTenant(app, orgA, (tx) => tailMeta(tx, { endpointId: epCap, cap: 2 }));
     expect(meta.backlogCount).toBe(3); // cap+1 = "more than 2" — NOT 5, so the scan stopped in SQL
+  });
+});
+
+// The ORG-WIDE forward tail — the read behind the consolidated events page's live tail. Like the org-wide
+// browse it carries NO endpoint predicate; RLS's org_id = current_org_id() is the only scope. The load-bearing
+// property beyond correctness is that the µs keyset holds ACROSS endpoints (a page/resume boundary can fall
+// between two events on different endpoints at the same microsecond). Asserts PROPERTIES over a known event
+// subset, never exact counts — the suite shares one org and other blocks seed more events.
+describe("tailOrgEventsWithCursors / orgTailMeta / latestOrgTailCursor (org-wide tail)", () => {
+  // A SECOND below-watermark endpoint in org A, interleaved in time with epTail's events (1000<1500<2000<
+  // 2500<3000), so an org-wide asc tail must weave the two endpoints together.
+  let epTail2: string;
+  let eMid1: string; // tailAt(1500) — between eTail1 and eTail2
+  let eMid2: string; // tailAt(2500) — between eTail2 and eTail3
+  const known = () => [eTail1, eMid1, eTail2, eMid2, eTail3];
+
+  beforeAll(async () => {
+    epTail2 = (await createEndpoint(app, { orgId: orgA, name: "ep-tail-2" }, hasher)).id;
+    eMid1 = await seedEventAt(orgA, epTail2, tailAt(1500), "stripe");
+    eMid2 = await seedEventAt(orgA, epTail2, tailAt(2500), "github");
+  }, setupHookTimeoutMs());
+
+  it("weaves events from MULTIPLE endpoints in one oldest-first stream", async () => {
+    const page = await withTenant(app, orgA, (tx) => tailOrgEventsWithCursors(tx, { limit: 200 }));
+    const ids = page.items.map((i) => i.item.id);
+    // The whole point: an endpoint-scoped tail can only ever see one of these endpoints.
+    const endpoints = new Set(page.items.map((i) => i.item.endpointId));
+    expect(endpoints.has(epTail)).toBe(true);
+    expect(endpoints.has(epTail2)).toBe(true);
+    // Filtered to the known set, the interleave order is exact — proving the cross-endpoint µs ordering.
+    expect(ids.filter((id) => known().includes(id))).toEqual(known());
+  });
+
+  it("is RLS-scoped: another org's org-wide tail never sees this org's events", async () => {
+    const bPage = await withTenant(app, orgB, (tx) => tailOrgEventsWithCursors(tx, { limit: 200 }));
+    const bIds = bPage.items.map((i) => i.item.id);
+    for (const id of known()) expect(bIds).not.toContain(id);
+  });
+
+  it("resumes across endpoints from a per-event cursor without a dup or a skip", async () => {
+    // Take the first known event's cursor, then resume: the stream must continue with the NEXT known event on
+    // the OTHER endpoint, never re-deliver, never skip.
+    const first = await withTenant(app, orgA, (tx) => tailOrgEventsWithCursors(tx, { limit: 200 }));
+    const cursorOfETail1 = first.items.find((i) => i.item.id === eTail1)!.cursor;
+    const resumed = await withTenant(app, orgA, (tx) =>
+      tailOrgEventsWithCursors(tx, { sinceCursor: cursorOfETail1, limit: 200 }),
+    );
+    const resumedIds = resumed.items.map((i) => i.item.id);
+    expect(resumedIds).not.toContain(eTail1); // strictly AFTER the cursor
+    expect(resumedIds.filter((id) => known().includes(id))).toEqual([eMid1, eTail2, eMid2, eTail3]);
+  });
+
+  it("latestOrgTailCursor is the newest below-watermark event across the whole org", async () => {
+    const head = await withTenant(app, orgA, (tx) => latestOrgTailCursor(tx));
+    // eTail3 at tailAt(3000) is the newest of the known set; nothing seeded here is later. (Other blocks may
+    // seed even-later backdated events, so assert the head is at least as new as eTail3, and never below it.)
+    const eTail3Cursor = await withTenant(app, orgA, (tx) =>
+      latestTailCursor(tx, { endpointId: epTail }),
+    );
+    expect(head).not.toBeNull();
+    expect(head!.orderKey >= eTail3Cursor!.orderKey).toBe(true);
+  });
+
+  it("orgTailMeta head = latestOrgTailCursor and its backlog spans endpoints, capped in SQL", async () => {
+    const [meta, head] = await Promise.all([
+      withTenant(app, orgA, (tx) => orgTailMeta(tx, {})),
+      withTenant(app, orgA, (tx) => latestOrgTailCursor(tx)),
+    ]);
+    expect(meta.headCursor?.id).toBe(head?.id);
+    // The known set alone is 5 events across 2 endpoints; the full org backlog is ≥ that. Cap it low to prove
+    // the SQL `limit cap+1` stop rather than a JS clamp.
+    const capped = await withTenant(app, orgA, (tx) => orgTailMeta(tx, { cap: 3 }));
+    expect(capped.backlogCount).toBe(4); // cap+1 = "more than 3", not the full count
+  });
+
+  it("resolveSince needs no endpointId for the org tail: now → empty, beginning → from oldest", async () => {
+    const rows = async (since: string) =>
+      withTenant(app, orgA, async (tx) => {
+        const parsed = parseSince(since);
+        if (parsed.kind === "invalid") throw new Error(`bad --since ${since}`);
+        const cursor = await resolveSince(tx, { since: parsed }); // NO endpointId
+        const page = await tailOrgEventsWithCursors(tx, { sinceCursor: cursor, limit: 200 });
+        return page.items.map((i) => i.item.id).filter((id) => known().includes(id));
+      });
+    expect(await rows("now")).toEqual([]); // everything already arrived is history
+    expect(await rows("beginning")).toEqual(known()); // oldest-inclusive across endpoints
   });
 });
 

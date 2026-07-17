@@ -2,10 +2,12 @@ import { DurableObject } from "cloudflare:workers";
 
 import {
   createClient,
+  orgTailMeta,
   readMembershipRole,
   resolveSince,
   tailEventsWithCursors,
   tailMeta,
+  tailOrgEventsWithCursors,
   withTenant,
   type ItemWithCursor,
   type Page,
@@ -99,6 +101,8 @@ export interface ListenEnv {
 /** Trusted upgrade-handler headers carrying the bearer-derived binding (never from a client frame). */
 const HDR_ORG = "x-listen-org-id";
 const HDR_ENDPOINT = "x-listen-endpoint-id";
+/** The tail scope: `endpoint` (one endpoint, `HDR_ENDPOINT` present) or `org` (whole org, no endpoint). */
+const HDR_SCOPE = "x-listen-scope";
 const HDR_SESSION = "x-listen-session-id";
 /** The user id the ticket was minted for (dashboard path); absent on the CLI/bearer path. */
 const HDR_USER = "x-listen-user-id";
@@ -108,10 +112,9 @@ const HDR_SINCE_SPEC = "x-listen-since-spec";
 /** The WebSocket subprotocol to echo on the 101 (dashboard ticket path) — a browser aborts if unechoed. */
 const HDR_ACCEPT_SUBPROTOCOL = "x-listen-accept-subprotocol";
 
-/** The org/endpoint/session this DO is pinned to, persisted once on first connect. */
-interface Binding {
+/** Fields common to both scopes of the binding this DO is pinned to, persisted once on first connect. */
+interface BindingBase {
   readonly orgId: string;
-  readonly endpointId: string;
   readonly sessionId: string;
   /**
    * The user this socket was authorized for (dashboard ticket path). Carried so the poll can periodically
@@ -122,6 +125,15 @@ interface Binding {
   /** Wall-clock ms when the binding was first established — the absolute-lifetime cap reads it (S.8). */
   readonly boundAtMs: number;
 }
+
+/**
+ * The scope/org/endpoint/session this DO is pinned to — a discriminated union on `scope`, so an endpoint
+ * binding provably carries `endpointId` and an org binding provably does not (the tail seams narrow on
+ * `scope` and can't read a phantom endpoint off an org binding, nor forget one on an endpoint binding).
+ */
+type Binding =
+  | (BindingBase & { readonly scope: "endpoint"; readonly endpointId: string })
+  | (BindingBase & { readonly scope: "org" });
 
 /** The durable resume position (last ACKed cursor). Stores the cursor's UTC ISO-µs `orderKey` verbatim (a
  *  plain string is JSON/structured-clone clean) so the resume keeps FULL microsecond precision — storing a
@@ -186,22 +198,49 @@ export class ListenSession extends DurableObject<ListenEnv> {
 
   override async fetch(request: Request): Promise<Response> {
     const orgId = request.headers.get(HDR_ORG);
-    const endpointId = request.headers.get(HDR_ENDPOINT);
+    const scope = request.headers.get(HDR_SCOPE);
+    // Normalize a missing endpoint header to `undefined` (NOT the raw `null`): an org-scoped upgrade omits it,
+    // and the persisted binding stores `undefined`, so the reconnect equality below must compare undefined to
+    // undefined — comparing `undefined !== null` would 403 EVERY org-wide reconnect into a re-mint loop (R1).
+    const endpointId = request.headers.get(HDR_ENDPOINT) ?? undefined;
     const sessionId = request.headers.get(HDR_SESSION);
     const userId = request.headers.get(HDR_USER) ?? undefined; // dashboard path only; CLI/bearer omit it
-    if (!orgId || !endpointId || !sessionId) {
-      // The trusted upgrade handler always sets these; a missing one is a wiring bug, not a client.
+    if (!orgId || !sessionId || (scope !== "org" && scope !== "endpoint")) {
+      // The trusted upgrade handler always sets org/scope/session; a missing/unknown one is a wiring bug.
+      return new Response("missing listen binding", { status: 400 });
+    }
+    // Scope and endpoint must agree, exactly as the ticket codec enforces: endpoint scope REQUIRES an
+    // endpoint; org scope must carry none. A disagreement is a wiring bug (the upgrade handler derives both
+    // from the same verified grant), so fail closed rather than guess.
+    if (scope === "endpoint" && !endpointId) {
+      return new Response("missing listen binding", { status: 400 });
+    }
+    if (scope === "org" && endpointId !== undefined) {
       return new Response("missing listen binding", { status: 400 });
     }
 
-    // A session is pinned to its first (org, endpoint) binding. On reconnect, REFUSE a mismatched
-    // binding: a reused sessionId pointed at another endpoint, or a stolen sessionId presented under
+    // A session is pinned to its first (scope, org, endpoint) binding. On reconnect, REFUSE a mismatched
+    // binding: a reused sessionId pointed at another endpoint or scope, or a stolen sessionId presented under
     // another org's bearer, must never stream the original binding's events. This is defense in depth
-    // beyond the unguessable, server-minted session id; orgId/endpointId here are the trusted,
-    // bearer-derived headers the upgrade handler set (re-authorized for the presented credential).
+    // beyond the unguessable, server-minted session id; the values here are the trusted, upgrade-handler-set
+    // headers (re-authorized for the presented credential). endpointId is `undefined` for an org binding on
+    // BOTH sides, so an org reconnect matches itself (R1).
     const existing = await this.ctx.storage.get<Binding>("binding");
     if (existing) {
-      if (existing.orgId !== orgId || existing.endpointId !== endpointId) {
+      // A binding persisted by the PRE-scope build has no `scope` field; it was always endpoint-scoped, so
+      // normalize a missing scope to "endpoint". Without this, an endpoint tab whose HIBERNATED session spans
+      // the deploy would read `existing.scope === undefined`, hit `undefined !== "endpoint"`, and 403 on every
+      // reconnect — a permanent wedge on the already-shipped endpoint feature that never self-heals (the
+      // 403 returns before the re-persist below). `?? "endpoint"` mirrors reauthReason's legacy boundAtMs
+      // handling; the re-persist then upgrades the binding to a scoped one.
+      const existingScope: "org" | "endpoint" = existing.scope ?? "endpoint";
+      const existingEndpointId = (existing as { endpointId?: string }).endpointId;
+      if (existing.orgId !== orgId || existingScope !== scope) {
+        return new Response("session binding mismatch", { status: 403 });
+      }
+      // Scopes match here; only an endpoint binding has an endpoint to compare (an org binding has none on
+      // either side, so it matches itself — the R1 fix).
+      if (existingScope === "endpoint" && existingEndpointId !== endpointId) {
         return new Response("session binding mismatch", { status: 403 });
       }
       // RESET the lifetime clock on this reconnect. Reaching here means the upgrade handler already verified
@@ -209,14 +248,23 @@ export class ListenSession extends DurableObject<ListenEnv> {
       // client just re-authorized. The absolute-lifetime cap exists to FORCE that periodic re-auth, not to
       // kill a session that keeps proving itself: without this reset a client that reconnects with the same
       // sticky sessionId would land on the same DO with the old boundAtMs and be re-closed 1008 immediately,
-      // permanently wedging the tail (and hot-looping the CLI). The membership subject may also have arrived
-      // (an older userless ticket upgrading to a userful one), so refresh it too. Cursor/binding identity are
-      // unchanged, so the resume stays seamless.
-      await this.ctx.storage.put<Binding>("binding", {
-        ...existing,
-        ...(userId ? { userId } : {}),
+      // permanently wedging the tail (and hot-looping the CLI). REBUILD the binding from the validated headers
+      // (rather than spreading `existing`) so a legacy scope-less binding is upgraded to a scoped one in place;
+      // org/endpoint/session are proven-equal above so identity is unchanged and the resume stays seamless.
+      // The membership subject may also have arrived (an older userless ticket upgrading to a userful one), so
+      // carry the newly-arrived userId, else keep the persisted one.
+      const finalUserId = userId ?? existing.userId;
+      const base = {
+        orgId,
+        sessionId,
+        ...(finalUserId ? { userId: finalUserId } : {}),
         boundAtMs: Date.now(),
-      });
+      };
+      const rebound: Binding =
+        scope === "endpoint"
+          ? { ...base, scope: "endpoint", endpointId: endpointId! }
+          : { ...base, scope: "org" };
+      await this.ctx.storage.put<Binding>("binding", rebound);
     } else {
       // Resolve the seed cursor BEFORE persisting the binding, so a load-bearing `--since` resolution
       // failure leaves NO binding behind — the CLI's retry re-enters first-bind and re-seeds, rather
@@ -245,7 +293,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
           return new Response("invalid --since spec", { status: 400 });
         }
         try {
-          seed = await this.resolveSinceCursor(orgId, endpointId, parsed);
+          seed = await this.resolveSinceCursor(orgId, parsed);
         } catch (err) {
           console.log(
             JSON.stringify({ message: "listen.since_resolve_failed", error: String(err) }),
@@ -253,13 +301,15 @@ export class ListenSession extends DurableObject<ListenEnv> {
           return new Response("could not resolve --since position", { status: 503 });
         }
       }
-      await this.ctx.storage.put<Binding>("binding", {
-        orgId,
-        endpointId,
-        sessionId,
-        ...(userId ? { userId } : {}),
-        boundAtMs: Date.now(),
-      });
+      const base = { orgId, sessionId, ...(userId ? { userId } : {}), boundAtMs: Date.now() };
+      // `endpointId!` is the single point where the scope↔endpoint invariant is asserted — the two 400 guards
+      // above already proved endpoint scope carries a non-empty endpoint. Everything downstream reads the
+      // discriminated union and needs no assertion.
+      const binding: Binding =
+        scope === "endpoint"
+          ? { ...base, scope: "endpoint", endpointId: endpointId! }
+          : { ...base, scope: "org" };
+      await this.ctx.storage.put<Binding>("binding", binding);
       if (seed) await this.persistCursor(seed);
     }
 
@@ -287,7 +337,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
       // the consumer up; the caught-up transition still fires later.
       try {
         const resume = this.toCursor(await this.ctx.storage.get<AnyStoredCursor>("cursor"));
-        const meta = await this.backlogMeta(orgId, endpointId, resume);
+        const meta = await this.backlogMeta({ orgId, scope, endpointId }, resume);
         const caughtUp = meta.backlogCount === 0;
         const headLagMs =
           meta.headCursor === null
@@ -441,10 +491,14 @@ export class ListenSession extends DurableObject<ListenEnv> {
     try {
       // tailEventsWithCursors pairs each event with its EXACT-µs cursor — the tunnel emits a cursor per event
       // frame, so a client can ack any single event; the cursor must NOT be re-derived from the display Date.
+      // An org-scoped binding tails EVERY endpoint (RLS the only scope); an endpoint binding tails just its
+      // endpoint. Same watermark + keyset either way, so the cursor/ack contract is identical.
       return await drainPages(
         (cursor) =>
           withTenant(tenant, binding.orgId, (tx) =>
-            tailEventsWithCursors(tx, { endpointId: binding.endpointId, sinceCursor: cursor }),
+            binding.scope === "org"
+              ? tailOrgEventsWithCursors(tx, { sinceCursor: cursor })
+              : tailEventsWithCursors(tx, { endpointId: binding.endpointId, sinceCursor: cursor }),
           ),
         resume,
       );
@@ -463,12 +517,14 @@ export class ListenSession extends DurableObject<ListenEnv> {
    */
   protected async resolveSinceCursor(
     orgId: string,
-    endpointId: string,
     since: Exclude<Since, { kind: "invalid" }>,
   ): Promise<Cursor | undefined> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
-      return await withTenant(tenant, orgId, (tx) => resolveSince(tx, { endpointId, since }));
+      // `--since` resolution is scope-agnostic — every `since` kind resolves without an endpoint (all four
+      // are wall-clock/boundary since `now` became wall-clock), so the same call serves an org OR endpoint
+      // tail. Endpoint is no longer passed (task #27's dedupe).
+      return await withTenant(tenant, orgId, (tx) => resolveSince(tx, { since }));
     } finally {
       await tenant.end();
     }
@@ -481,14 +537,15 @@ export class ListenSession extends DurableObject<ListenEnv> {
    * tests (inject a canned result; no live Postgres).
    */
   protected async backlogMeta(
-    orgId: string,
-    endpointId: string,
+    binding: Pick<Binding, "orgId" | "scope"> & { readonly endpointId?: string },
     resume: Cursor | undefined,
   ): Promise<{ headCursor: Cursor | null; backlogCount: number }> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
-      return await withTenant(tenant, orgId, (tx) =>
-        tailMeta(tx, { endpointId, sinceCursor: resume }),
+      return await withTenant(tenant, binding.orgId, (tx) =>
+        binding.scope === "org"
+          ? orgTailMeta(tx, { sinceCursor: resume })
+          : tailMeta(tx, { endpointId: binding.endpointId!, sinceCursor: resume }),
       );
     } finally {
       await tenant.end();

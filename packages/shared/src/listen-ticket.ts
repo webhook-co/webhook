@@ -36,46 +36,81 @@ export const LISTEN_SUBPROTOCOL = "wbhk.listen.v1";
 export const LISTEN_TICKET_SUBPROTOCOL_PREFIX = "ticket.";
 
 /**
- * The current envelope version. `verifyListenTicket` rejects any envelope whose `v` is missing or != this,
- * so a codec change is a clean break: mismatched tickets fail closed (→ null) and the client re-mints.
+ * The current envelope version. `verifyListenTicket` rejects any envelope whose `v` is missing or != this.
+ *
+ * Stays **1** across the slice-9 scope addition: the `s` scope discriminator is ADDITIVE, exactly like `u`
+ * before it. An endpoint ticket omits `s` entirely, so it is byte-identical to a pre-scope v1 ticket — a
+ * rolling web/engine deploy therefore NEVER 401s the shipped endpoint live-events feature (old engine
+ * verifies new web's endpoint tickets and vice-versa). A version bump would have reintroduced exactly the
+ * deploy-window 401 that keeping `u` additive was written to avoid. Safety is preserved without a bump
+ * because absence defaults to the NARROWER endpoint scope: only an explicit, signed `s:"org"` ever widens,
+ * and forging that needs the HMAC key. (Org tickets ARE understood only by a new engine, but the org feature
+ * is new too — no old client mints them, and its own first rollout self-heals.)
  */
 export const LISTEN_TICKET_VERSION = 1;
 
 /**
  * Ticket lifetime (seconds). Kept SHORT — the ticket only has to survive the round-trip from mint to the
- * WebSocket handshake, so a leaked ticket is replayable for at most this window (and only grants read-only
- * tailing of the one endpoint it names). `mintListenTicket` stamps `exp = nowSeconds + this`.
+ * WebSocket handshake, so a leaked ticket is replayable for at most this window (read-only tailing of exactly
+ * the scope it names). `mintListenTicket` stamps `exp = nowSeconds + this`.
  */
 export const LISTEN_TICKET_TTL_SECONDS = 60;
 
-/** The signed grant: version + org + endpoint + user + expiry. The engine derives the DO binding from o/e/u. */
+/**
+ * The scope a ticket authorizes: one named endpoint, or the caller's whole org. Org scope is what the
+ * consolidated org-wide events page tails; RLS already scopes every read to the org, so an org-scoped ticket
+ * grants zero authority the caller's session didn't already have — it only widens a leaked ticket's blast
+ * radius from one endpoint to the org's endpoints, for at most the TTL.
+ */
+export type ListenTicketScope = "org" | "endpoint";
+
+/** The signed grant: version + org + scope (+ endpoint iff endpoint-scoped) + user + expiry. */
 interface ListenTicketEnvelope {
   /** Envelope version — must equal LISTEN_TICKET_VERSION to verify. */
   v: number;
   /** The org the ticket authorizes (set from the minting session, never the client). */
   o: string;
-  /** The endpoint the ticket authorizes tailing (validated to belong to `o` at mint time). */
-  e: string;
   /**
-   * The user the ticket was minted for (from the minting session, never the client). OPTIONAL, and
-   * deliberately NOT gated by a version bump: the engine and web deploy independently, so a hard v1->v2 break
-   * would 401 every live-events session in the window where one side is ahead. An ADDITIVE optional field
-   * interoperates both ways — an older userless ticket verifies fine and just falls back to the lifetime cap
-   * (no membership re-check), a newer one carries the user for the periodic re-check (S.8). Forging a userless
-   * ticket to EVADE the check is impossible: minting requires the HMAC key.
+   * The scope discriminator. OPTIONAL and ADDITIVE: absent or "endpoint" → endpoint scope (so a legacy /
+   * endpoint ticket with no `s` is byte-identical to a v1 ticket); "org" → org scope; any OTHER value → null.
+   * Absence defaults to the NARROWER endpoint scope and still requires an endpoint — it never grants org.
+   */
+  s?: ListenTicketScope;
+  /**
+   * The endpoint the ticket authorizes tailing (validated to belong to `o` at mint time). Present for endpoint
+   * scope (incl. an `s`-less endpoint ticket); an org-scoped envelope MUST omit it, and an `s:"org"`/`e`
+   * disagreement is rejected.
+   */
+  e?: string;
+  /**
+   * The user the ticket was minted for (from the minting session, never the client). OPTIONAL within a
+   * version: a mint that omits it verifies fine and the engine falls back to the lifetime cap (no membership
+   * re-check); a mint that carries it enables the periodic re-check. Forging a userless ticket to EVADE the
+   * check is impossible — minting requires the HMAC key.
    */
   u?: string;
   /** Unix seconds — the ticket is dead strictly after this (now > exp). */
   exp: number;
 }
 
-/** The verified grant returned to the engine. */
-export interface ListenTicketGrant {
-  readonly orgId: string;
-  readonly endpointId: string;
-  /** Present on a current mint; absent on an older userless ticket (then only the lifetime cap applies). */
-  readonly userId?: string;
-}
+/**
+ * The verified grant returned to the engine — a discriminated union on `scope`, so `endpointId` is provably
+ * present exactly when the ticket is endpoint-scoped (the engine must branch, and can't read a phantom
+ * endpoint off an org grant).
+ */
+export type ListenTicketGrant =
+  | {
+      readonly scope: "endpoint";
+      readonly orgId: string;
+      readonly endpointId: string;
+      /** Present on a current mint; absent on a userless ticket (then only the lifetime cap applies). */
+      readonly userId?: string;
+    }
+  | {
+      readonly scope: "org";
+      readonly orgId: string;
+      readonly userId?: string;
+    };
 
 /**
  * Import raw key bytes as a non-extractable HMAC key. LISTEN_TICKET_KEY is a dedicated 32-byte secret,
@@ -101,10 +136,11 @@ async function tag(key: CryptoKey, payload: Uint8Array): Promise<Uint8Array> {
 }
 
 /**
- * Mint a signed listen ticket binding `{orgId, endpointId}` with an expiry `nowSeconds +
- * LISTEN_TICKET_TTL_SECONDS`. `nowSeconds` is the injected clock (Unix seconds) so the codec stays pure and
- * the expiry is deterministically testable. The caller (a session-authed web action) MUST have verified the
- * endpoint belongs to the org before minting — this codec signs whatever it's given.
+ * Mint a signed listen ticket for the given scope with an expiry `nowSeconds + LISTEN_TICKET_TTL_SECONDS`.
+ * `nowSeconds` is the injected clock (Unix seconds) so the codec stays pure and the expiry is
+ * deterministically testable. The caller (a session-authed web action) MUST have verified the org/endpoint
+ * belongs to the caller before minting — this codec signs whatever it's given. An endpoint-scoped grant
+ * writes `e`; an org-scoped grant omits it entirely (the discriminated union makes that a compile-time fact).
  */
 export async function mintListenTicket(
   key: CryptoKey,
@@ -114,7 +150,9 @@ export async function mintListenTicket(
   const env: ListenTicketEnvelope = {
     v: LISTEN_TICKET_VERSION,
     o: grant.orgId,
-    e: grant.endpointId,
+    // Endpoint tickets OMIT `s` → byte-identical to a pre-scope v1 ticket, so a rolling deploy never 401s the
+    // shipped endpoint feature. Only org tickets carry the widening `s:"org"`.
+    ...(grant.scope === "org" ? { s: "org" } : { e: grant.endpointId }),
     ...(grant.userId ? { u: grant.userId } : {}),
     exp: nowSeconds + LISTEN_TICKET_TTL_SECONDS,
   };
@@ -124,10 +162,16 @@ export async function mintListenTicket(
 }
 
 /**
- * Verify a listen ticket and return its `{orgId, endpointId}` grant ONLY when the MAC recomputes AND the
- * envelope is the current version AND it has not expired (`nowSeconds <= exp`, inclusive). Any malformed,
- * tampered, forged, wrong-key, stale-version, or expired ticket returns null (never throws) — the cases are
- * indistinguishable to the caller (no oracle). `nowSeconds` is the injected clock (Unix seconds).
+ * Verify a listen ticket and return its scope-discriminated grant ONLY when the MAC recomputes AND the
+ * envelope is the current version AND it has not expired (`nowSeconds <= exp`, inclusive) AND its scope +
+ * endpoint agree. Any malformed, tampered, forged, wrong-key, stale-version, expired, or shape-inconsistent
+ * ticket returns null (never throws) — the cases are indistinguishable to the caller (no oracle).
+ *
+ * Scope safety — "absence never grants ORG": `s` is optional and ADDITIVE. Absent or "endpoint" → endpoint
+ * scope, which still REQUIRES a non-empty `e`; "org" → org scope, which must NOT carry `e` (a contradictory
+ * `s:"org"`+`e` envelope is rejected); any OTHER `s` value → null. So a truncated or old-shape envelope
+ * (no `s`) resolves to the NARROWER endpoint scope and still needs an endpoint — it can never widen to org.
+ * Only an explicit, signed `s:"org"` grants org scope.
  */
 export async function verifyListenTicket(
   key: CryptoKey,
@@ -152,13 +196,28 @@ export async function verifyListenTicket(
   } catch {
     return null;
   }
+  // JSON.parse succeeds on the literals `null`/`true`/`123`/`"x"`; guard that `env` is a non-null object
+  // before dereferencing `env.v` — otherwise `null.v` throws, breaking the never-throws (no-oracle) contract.
+  if (typeof env !== "object" || env === null) return null;
   if (env.v !== LISTEN_TICKET_VERSION) return null;
   if (typeof env.exp !== "number" || nowSeconds > env.exp) return null;
-  if (typeof env.o !== "string" || env.o === "" || typeof env.e !== "string" || env.e === "") {
-    return null;
-  }
-  // `u` is optional (deploy-compat). If present it must be a non-empty string (a malformed one is a bad
-  // ticket); if absent, the socket simply has no membership re-check and relies on the lifetime cap.
+  if (typeof env.o !== "string" || env.o === "") return null;
+  // `u` is optional (deploy-compat within a version). If present it must be a non-empty string (a malformed
+  // one is a bad ticket); if absent, the socket simply has no membership re-check and relies on the lifetime
+  // cap.
   if (env.u !== undefined && (typeof env.u !== "string" || env.u === "")) return null;
-  return { orgId: env.o, endpointId: env.e, ...(env.u ? { userId: env.u } : {}) };
+  const userId = env.u ? { userId: env.u } : {};
+
+  if (env.s === undefined || env.s === "endpoint") {
+    // Endpoint scope (incl. an `s`-less v1/legacy ticket) REQUIRES a non-empty endpoint.
+    if (typeof env.e !== "string" || env.e === "") return null;
+    return { scope: "endpoint", orgId: env.o, endpointId: env.e, ...userId };
+  }
+  if (env.s === "org") {
+    // Org scope must NOT carry an endpoint — a contradictory envelope fails closed.
+    if (env.e !== undefined) return null;
+    return { scope: "org", orgId: env.o, ...userId };
+  }
+  // Absent or unknown scope → null. Absence never grants.
+  return null;
 }
