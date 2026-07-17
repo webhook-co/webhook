@@ -208,14 +208,20 @@ export function configsByIdFromPages(pages) {
  */
 export async function fetchAllConfigs(accountId, token, fetchImpl = fetch, perPage = 100) {
   const pages = [];
-  // Page while the API keeps handing back FULL pages. Deliberately NOT driven by `result_info.total_pages`:
-  // that is a field only our own test fake was ever seen to emit, so keying the loop on it proved the MOCK,
-  // not the API. If CF omits it, that loop stopped at page 1, every dropped id failed closed, and EVERY prod
-  // deploy died citing a leak that does not exist. A short page ends the walk; an exactly-full last page
-  // costs one extra empty request and then ends.
+  // Stop on EITHER signal, so neither one alone can silently truncate the set:
   //
-  // MAX_PAGES is a runaway backstop, not a limit we expect to reach — if it trips, that is a bug HERE, so it
-  // throws rather than silently reporting a posture over a truncated set.
+  //   - `result_info.total_pages` when the response carries it. VERIFIED against the live account: CF does
+  //     send it (`{"page":1,"per_page":100,"count":16,"total_count":16,"total_pages":1}`) and it honours the
+  //     requested per_page rather than capping it. A review speculated this field was "only our own fake
+  //     known to emit it" and I repeated that as fact in an earlier commit message — it is wrong; the API
+  //     sends it. Corrected here rather than left standing.
+  //   - a SHORT page, which needs no result_info at all. This is the fallback if CF ever drops the field or
+  //     caps per_page below the request — either of which would otherwise end the walk early, fail every
+  //     dropped id closed, and wedge EVERY prod deploy citing a leak that does not exist.
+  //
+  // Using both means the loop is correct under CF's actual behaviour AND under the behaviour it was feared
+  // to have. MAX_PAGES is a runaway backstop, not a limit we expect to reach — if it trips that is a bug
+  // HERE, so it throws rather than silently reporting a posture over a truncated set.
   const MAX_PAGES = 100;
   for (let page = 1; page <= MAX_PAGES; page++) {
     const url =
@@ -232,7 +238,10 @@ export async function fetchAllConfigs(accountId, token, fetchImpl = fetch, perPa
     }
     const result = body.result ?? [];
     pages.push(result);
-    if (result.length < perPage) return configsByIdFromPages(pages);
+    const totalPages = body.result_info?.total_pages;
+    const doneByTotal = typeof totalPages === "number" && page >= totalPages;
+    const doneByShortPage = result.length < perPage;
+    if (doneByTotal || doneByShortPage) return configsByIdFromPages(pages);
   }
   throw new Error(
     `Hyperdrive config listing did not terminate within ${MAX_PAGES} pages — refusing to report a posture ` +

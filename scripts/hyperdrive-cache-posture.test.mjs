@@ -426,6 +426,31 @@ test("fetchAllConfigs asks for per_page=100 by default", async () => {
   assert.match(calls[0], /per_page=100/);
 });
 
+// Pins CF's REAL response shape, captured from the live account rather than invented:
+//   {"page":1,"per_page":100,"count":16,"total_count":16,"total_pages":1}
+// A round-3 review speculated total_pages was a field "only our own fake is known to emit"; it is not — the
+// API sends it. The loop honours it AND the short-page fallback, so neither signal alone can truncate.
+test("fetchAllConfigs stops on total_pages even when the page is FULL", async () => {
+  const calls = [];
+  const twoOfTwo = [{ id: "a" }, { id: "b" }];
+  const fake = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      json: async () => ({
+        success: true,
+        result: twoOfTwo,
+        // A full page (perPage=2) that total_pages says is the LAST — without honouring total_pages the
+        // short-page rule alone would issue a needless extra request.
+        result_info: { page: 1, per_page: 2, count: 2, total_count: 2, total_pages: 1 },
+      }),
+    };
+  };
+  const byId = await fetchAllConfigs("acct", "tok", fake, 2);
+  assert.deepEqual(Object.keys(byId).sort(), ["a", "b"]);
+  assert.equal(calls.length, 1);
+});
+
 test("fetchAllConfigs stops after the last page (no infinite loop)", async () => {
   const calls = [];
   await fetchAllConfigs("acct", "tok", fakeCf([[{ id: "a" }]], calls));
