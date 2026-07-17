@@ -653,18 +653,11 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
  * yields everything (= beginning) and "T in the future / past the watermark" yields nothing (= resume
  * live) — the clamp emerges from the keyset + watermark, needing no extra query or index. `<RFC3339>` uses
  * the parsed instant (a ms Date → `.sss000Z` µs order key); `<duration>` resolves now() minus the duration
- * against the DB clock (skew-safe) as a µs order key. `beginning` → no cursor (oldest-inclusive). `now` is
- * the ONE mode that must skip the ENTIRE backlog (only NEW events): it resolves to WALL-CLOCK server-now (a
- * `(now(), ZERO_UUID)` boundary), so every already-arrived row — whose received_at is in the past — is
- * excluded, and only events arriving after this instant are delivered (once they mature below the watermark,
- * their received_at is still > the seed, so the keyset admits them). This deliberately means an in-flight
- * event a few seconds old but not yet visible is skipped: it arrived before the reader asked to go live, so
- * it is history. Wall-clock has NO null/degenerate case — earlier this branch used
- * `latestTailCursor(...) ?? undefined`, which for a young endpoint (nothing below the watermark) returned
- * undefined = the oldest-inclusive sentinel = a full replay of the young burst; that is gone. ZERO_UUID sorts
- * below every UUIDv7, so `(now, ZERO_UUID)` with `>` admits an event landing on the exact µs (one possible
- * dup, deduped by id — the safe direction). Resolved SERVER-side, never a client clock. Resolve once, iterate
- * by cursor. NOTE: `wbhk listen --since now` shares this and changed with it (was the watermark head).
+ * against the DB clock (skew-safe) as a µs order key. `beginning` → no cursor (oldest-inclusive). `now` →
+ * WALL-CLOCK server-now, so only events arriving after the connect instant are delivered ("live = from this
+ * point forward"); the WHY — the founder decision, the removed young-endpoint null case, the ZERO_UUID
+ * tiebreaker, and the shared `wbhk listen --since now` caveat — is at the `now` branch in the body, not
+ * restated here. Resolve once, iterate by cursor.
  */
 export async function resolveSince(
   tx: TenantTx,
