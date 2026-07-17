@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { firstParam, hasAppliedFilters, parseEventFilters } from "./event-filters";
+import {
+  firstParam,
+  hasAppliedFilters,
+  parseEventFilters,
+  SEARCH_MAX_LENGTH,
+  SEARCH_MIN_LENGTH,
+  searchTooShort,
+} from "./event-filters";
 
 const PROVIDERS = ["stripe", "github", "shopify"] as const;
 
@@ -181,5 +188,88 @@ describe("parseEventFilters — a preset OWNS the range (why the page must not b
     const f = parseEventFilters({ from: "2026-01-01", to: "2026-01-10" });
     expect(f.receivedAfter).toEqual(new Date("2026-01-01T00:00:00.000Z"));
     expect(f.receivedBefore).toEqual(new Date("2026-01-10T00:00:00.000Z"));
+  });
+});
+
+describe("parseEventFilters — the search floor (pg_trgm needs 3 chars)", () => {
+  // Below 3 chars pg_trgm extracts NO trigrams, so `%ab%` returns everything from the GIN and rechecks it —
+  // unservable by any index, at any volume. Matches the contract's .min(3) so the four surfaces agree.
+  it("DROPS a term shorter than 3 characters", () => {
+    expect(parseEventFilters({ search: "a" })).toEqual({});
+    expect(parseEventFilters({ search: "ab" })).toEqual({});
+  });
+
+  it("keeps a 3-character term", () => {
+    expect(parseEventFilters({ search: "abc" })).toEqual({ search: "abc" });
+  });
+
+  // The uuid short-circuit is unaffected — it resolves by PK, not by trigram.
+  it("keeps a full uuid (the paste-an-id-to-jump-to-it path)", () => {
+    const id = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
+    expect(parseEventFilters({ search: id })).toEqual({ search: id });
+  });
+});
+
+// A DROPPED TERM MUST BE VISIBLE, not silent.
+//
+// The 3-char floor is real (pg_trgm extracts zero trigrams below it), but dropping a short term silently is a
+// UX cliff: typing "ab" applied NO filter, so the reader saw every event in the org and had to infer that
+// their search hadn't run. Worse, hasAppliedFilters went false, so the page could show onboarding copy in
+// response to a search. The same term 400s on API/CLI/MCP — web was the only surface that pretended.
+//
+// The filter is still not RUN (that part was right). What changes is that the caller can now TELL, and say so.
+describe("a below-floor search term is reported, not silently swallowed", () => {
+  it("does not run the filter, but reports the term as too short", () => {
+    const parsed = parseEventFilters({ search: "ab" }, ["stripe"]);
+    expect(parsed.search).toBeUndefined();
+    expect(searchTooShort({ search: "ab" })).toBe(true);
+  });
+
+  it("is false for a term that actually runs, and for no term at all", () => {
+    expect(searchTooShort({ search: "abc" })).toBe(false);
+    expect(searchTooShort({ search: "" })).toBe(false);
+    expect(searchTooShort({})).toBe(false);
+    // Whitespace-only is "no search", not "too short" — it must not nag someone who typed a space.
+    expect(searchTooShort({ search: "  " })).toBe(false);
+  });
+
+  it("counts the TRIMMED term, matching the contract's .trim().min(3)", () => {
+    expect(searchTooShort({ search: " ab " })).toBe(true);
+    expect(searchTooShort({ search: " abc " })).toBe(false);
+  });
+});
+
+// THE DRIFT GUARD for a value duplicated across a bundling boundary.
+//
+// event-filters.ts declares the search bounds rather than importing them: it is client-imported, and the
+// contract's constants sit alongside every zod schema (importing them would ship the schemas to the browser),
+// while the contract BARREL's `export *` resolves to undefined under Turbopack — a runtime 500, not a build
+// error. So the mirror is deliberate, and this test is the thing that keeps it honest. It runs in node, where
+// importing the contract is free and safe.
+//
+// If this fails, the API and the web now disagree about the floor: web would silently drop a term the API
+// accepts, or forward one it 400s.
+describe("the web's search bounds match the contract's", () => {
+  it("mirrors SEARCH_MIN_LENGTH / SEARCH_MAX_LENGTH exactly", async () => {
+    const contract = await import("@webhook-co/contract");
+    expect(SEARCH_MIN_LENGTH).toBe(contract.SEARCH_MIN_LENGTH);
+    expect(SEARCH_MAX_LENGTH).toBe(contract.SEARCH_MAX_LENGTH);
+  });
+
+  // And the constants must be the ones the SHIPPED schema enforces — not merely two numbers that agree with
+  // each other while the schema hardcodes something else.
+  it("is the floor the contract's schema actually enforces", async () => {
+    const { eventsList } = await import("@webhook-co/contract");
+    const schema = eventsList.input;
+    const tooShort = schema.safeParse({
+      endpointId: crypto.randomUUID(),
+      filter: { search: "ab" },
+    });
+    const longEnough = schema.safeParse({
+      endpointId: crypto.randomUUID(),
+      filter: { search: "abc" },
+    });
+    expect(tooShort.success).toBe(false);
+    expect(longEnough.success).toBe(true);
   });
 });

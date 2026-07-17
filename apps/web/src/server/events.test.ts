@@ -5,6 +5,7 @@ import {
   loadEvent,
   loadEvents,
   loadMoreEvents,
+  loadOrgEvents,
   revealHeader,
   type EventDetailItem,
   type EventReaders,
@@ -194,5 +195,46 @@ describe("revealHeader", () => {
   it("returns null when the reader finds no sensitive header at the index", async () => {
     const r = readers({ revealHeader: vi.fn(async () => null) });
     expect(await revealHeader("o", { ...input, index: 9 }, r)).toBeNull();
+  });
+});
+
+// A TIMED-OUT BROWSE IS NOT A BLIP, AND THE PAGE MUST BE ABLE TO TELL.
+//
+// browseEvents bounds every events browse with a 5s statement_timeout — the guard that makes the org page's
+// one-click "Any time" survivable. When it fires, Postgres cancels with SQLSTATE 57014. That failure is
+// DETERMINISTIC: the same query times out again, so the generic "Refresh to try again" is advice that cannot
+// work. The reader has to narrow the window, and they can only know that if we say so — which the page can
+// only do if this layer distinguishes the two.
+describe("loadOrgEvents — a timeout is reported as a timeout", () => {
+  const pgError = (code: string) => Object.assign(new Error("canceling statement"), { code });
+
+  it("reports reason=timeout when Postgres cancels the statement (57014)", async () => {
+    const result = await loadOrgEvents("o", undefined, {
+      ...readers(),
+      orgFirstPage: vi.fn(async () => {
+        throw pgError("57014");
+      }),
+    } as unknown as EventReaders);
+    expect(result).toEqual({ status: "error", reason: "timeout" });
+  });
+
+  it("reports reason=unknown for any other fault (where refreshing IS the right advice)", async () => {
+    const result = await loadOrgEvents("o", undefined, {
+      ...readers(),
+      orgFirstPage: vi.fn(async () => {
+        throw pgError("08006"); // connection failure — a genuine blip
+      }),
+    } as unknown as EventReaders);
+    expect(result).toEqual({ status: "error", reason: "unknown" });
+  });
+
+  it("reports reason=unknown for a non-Postgres throw (no code at all)", async () => {
+    const result = await loadOrgEvents("o", undefined, {
+      ...readers(),
+      orgFirstPage: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    } as unknown as EventReaders);
+    expect(result).toEqual({ status: "error", reason: "unknown" });
   });
 });

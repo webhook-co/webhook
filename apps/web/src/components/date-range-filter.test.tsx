@@ -106,3 +106,39 @@ describe("DateRangeFilter", () => {
     ).toBeInTheDocument();
   });
 });
+
+// "Any time" IS OPT-IN, and the reason is a bug I shipped into this very file.
+//
+// DateRangeFilter is SHARED: the events bar uses it, and so does the dashboard. Adding "Any time"
+// unconditionally put the option on the dashboard's chip too — where resolveDashboardWindow does not know
+// the `all` token, silently falls back to 14 days, and would have rendered a chip reading "Any time" next to
+// a stat tile reading "last 14 days". That is the exact chip-vs-data lie the token was added to FIX, faithfully
+// reproduced one page over, because I never checked the component had a second caller.
+//
+// So the option only exists where the page can actually honour it.
+describe("DateRangeFilter — the all-time option is opt-in", () => {
+  it("offers Any time only when the caller allows it", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <DateRangeFilter value={{ range: "", from: "", to: "" }} onApply={vi.fn()} />,
+    );
+    await user.click(screen.getByRole("button", { name: /Filter by received date/ }));
+    expect(screen.queryByRole("button", { name: "Any time", exact: true })).not.toBeInTheDocument();
+
+    rerender(
+      <DateRangeFilter value={{ range: "", from: "", to: "" }} onApply={vi.fn()} allowAllTime />,
+    );
+    expect(screen.getByRole("button", { name: "Any time", exact: true })).toBeVisible();
+  });
+
+  it("applies the explicit token (never a param clear, which would round-trip to the default)", async () => {
+    const onApply = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DateRangeFilter value={{ range: "", from: "", to: "" }} onApply={onApply} allowAllTime />,
+    );
+    await user.click(screen.getByRole("button", { name: /Filter by received date/ }));
+    await user.click(screen.getByRole("button", { name: "Any time", exact: true }));
+    expect(onApply).toHaveBeenCalledWith({ range: "all", from: "", to: "" });
+  });
+});

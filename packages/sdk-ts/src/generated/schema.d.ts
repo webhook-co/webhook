@@ -1308,7 +1308,7 @@ export interface operations {
                 receivedAfter?: string;
                 /** @description Exclusive upper bound (RFC 3339 instant). */
                 receivedBefore?: string;
-                /** @description Case-insensitive substring across id fields + header names/values. */
+                /** @description Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id. */
                 search?: string;
                 /** @description Filter by verification state: verified | failed | unattempted (repeatable). */
                 verificationState?: ("verified" | "authenticated" | "failed" | "unattempted")[];

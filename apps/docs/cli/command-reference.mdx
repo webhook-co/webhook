@@ -56,7 +56,7 @@ List filters:
 | `--status <state>` | Filter by verification state: `verified`, `authenticated`, `failed`, or `unattempted`. Repeatable / comma-separated. |
 | `--after <ts>`     | Events received at or after this time (ISO-8601 / RFC3339).                                                          |
 | `--before <ts>`    | Events received strictly before this time.                                                                           |
-| `--search <term>`  | Substring search over event/provider/external ids and request header names/values.                                   |
+| `--search <term>`  | Substring (min 3 chars) over the provider event id + dedup key, or an exact event id.                                |
 | `--limit <n>`      | Max results per page (1–200).                                                                                        |
 | `--cursor <token>` | Resume from a `nextCursor` (advanced).                                                                               |
 | `--all`            | Follow the cursor to the end and return every page.                                                                  |

@@ -277,7 +277,8 @@ export const ROUTES: readonly RouteDef[] = [
       },
       {
         name: "search",
-        description: "Case-insensitive substring across id fields + header names/values.",
+        description:
+          "Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id.",
         schemaFrom: "filter.search",
       },
     ],

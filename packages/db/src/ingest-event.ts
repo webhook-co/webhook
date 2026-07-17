@@ -55,8 +55,12 @@ export async function insertIngestEvent(
   // bytea wants a Buffer; jsonb values go through sql.json() so postgres.js serializes them EXACTLY
   // once. A manual JSON.stringify(...)::jsonb DOUBLE-encodes — postgres.js re-encodes the string, so
   // the column stores a jsonb STRING instead of an array/object, which then fails the read-side
-  // EventSchema (e.g. `headers: expected array, received string`). external_id stays null (no SW
-  // external-id wiring yet); verified/verification carry the best-effort verification outcome.
+  // EventSchema (e.g. `headers: expected array, received string`). external_id stays null — BY DESIGN, not
+  // pending work: it is v1's superseded idempotency key (dedup_key replaced it), retained nullable "for human
+  // correlation only" per the design record. It is NOT the Standard Webhooks `webhook-id`, and there is no
+  // "wiring" owed — a human-correlation id is customer-supplied, so populating it would be a new inbound
+  // capability with its own ADR. An earlier comment here guessed otherwise, and that guess is what kept a
+  // dead search branch alive (migration 0090). verified/verification carry the best-effort outcome.
   // verification is normalized to null before sql.json — it's typed `unknown`, and sql.json(undefined)
   // throws UNDEFINED_VALUE, so a caller that leaves it undefined stores SQL NULL rather than 500ing.
   const contentHash = row.contentHash === null ? null : Buffer.from(row.contentHash);
