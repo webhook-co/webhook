@@ -166,6 +166,30 @@ describe("EventsList", () => {
     );
   });
 
+  // A row links to ITS OWN event's endpoint, not to whatever endpoint the list was handed. On the
+  // per-endpoint page the two are always equal, so nothing above can tell them apart — the assertion at the
+  // end of the tri-state test passes either way. They diverge the moment a list carries events from more than
+  // one endpoint (the consolidated /org/{slug}/events browse), and building the href from the list's prop
+  // would then point every row at the wrong endpoint: `loadEvent` asserts
+  // `event.endpointId !== endpointId → not_found`, so every link would 404.
+  it("links each row to its OWN event's endpoint, not the list's endpointId prop", () => {
+    const OTHER_ENDPOINT = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5099";
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[ev(A, { endpointId: OTHER_ENDPOINT })]}
+        initialCursor={null}
+        filterParams={{}}
+        isFiltered={false}
+        loadMore={vi.fn()}
+      />,
+    );
+    expect(within(screen.getByText(A).closest("tr")!).getByRole("link")).toHaveAttribute(
+      "href",
+      `/endpoints/${OTHER_ENDPOINT}/events/${A}`,
+    );
+  });
+
   it("loads more, appends the next page, and hides the button when the cursor is exhausted", async () => {
     const user = userEvent.setup();
     const cursor: Cursor = { receivedAt: new Date("2026-06-28T12:00:00Z"), id: A };
