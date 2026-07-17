@@ -221,3 +221,66 @@ test("a junk ?range= falls back to the default rather than widening to all-time"
     page.getByRole("button", { name: /^Filter by received date:/ }),
   ).toHaveAccessibleName(/Last 7 days/);
 });
+
+// THE NEW FACETS, end to end — method + event type filter the real list through the URL. Unit tests can't
+// prove this: the facet control is a Client Component, the filter is applied in the RSC read, and only a real
+// navigation exercises the round trip. Seeds its own endpoint + events (with method/event_type the shared
+// seed omits) so the assertions are about rows this test controls.
+test("the method + event-type facets filter the org list (and NULL-method rows drop out)", async ({
+  page,
+}) => {
+  const { orgs, users, appConnectionString } = world();
+  const db = createClient(appConnectionString, { max: 1 });
+  let getId: string;
+  let postId: string;
+  try {
+    const ep = (await createEndpoint(db, { orgId: orgs.alpha.id, name: "facet-ep" }, hasher)).id;
+    const mk = async (method: string, eventType: string) => {
+      const id = newId();
+      await withTenant(
+        db,
+        orgs.alpha.id,
+        (tx) => tx`
+          insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, headers,
+                              dedup_key, dedup_strategy, method, event_type, provider, verified)
+          values (${id}, ${orgs.alpha.id}, ${ep}, ${`k/${id}`}, 10, '[]'::jsonb,
+                  ${`unique:${id}`}, 'unique', ${method}, ${eventType}, 'stripe', true)`,
+      );
+      return id;
+    };
+    getId = await mk("GET", "charge.succeeded");
+    postId = await mk("POST", "invoice.paid");
+  } finally {
+    await db.end();
+  }
+
+  await signIn(page, users.dana.id, orgs.alpha.id);
+  await page.goto(`/org/${orgs.alpha.slug}/events`);
+
+  // Pick method = GET. The URL carries it, the GET row stays, the POST row and every NULL-method shared
+  // event drop (a `method in (...)` filter never matches NULL).
+  await page.getByRole("button", { name: /Filter by HTTP method/ }).click();
+  await page.getByRole("option", { name: "GET", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/[?&]method=GET\b/);
+  await expect(page.getByRole("cell", { name: getId })).toBeVisible();
+  await expect(page.getByRole("cell", { name: postId })).toHaveCount(0);
+
+  // Event type is an exact free match, committed on Enter. Narrow to invoice.paid: neither the GET row
+  // (charge.succeeded) nor the method filter's survivors match, and the POST row returns.
+  await page.getByRole("button", { name: /Filter by HTTP method/ }).click();
+  await page.getByRole("option", { name: "GET", exact: true }).click(); // clear method
+  await page.keyboard.press("Escape");
+  // WAIT for the method-clear navigation to fully settle before committing the next filter — otherwise the
+  // two navigations race and the eventType filter can land on top of a not-yet-cleared method=GET, filtering
+  // the POST row back out. The POST row returning is the signal the unfiltered list has re-seeded. (The
+  // earlier method step waits the same way; this step must too.)
+  await expect(page).not.toHaveURL(/[?&]method=GET\b/);
+  await expect(page.getByRole("cell", { name: postId })).toBeVisible();
+  const eventTypeInput = page.getByLabel("Filter by event type");
+  await eventTypeInput.fill("invoice.paid");
+  await eventTypeInput.press("Enter");
+  await expect(page).toHaveURL(/[?&]eventType=invoice\.paid\b/);
+  await expect(page.getByRole("cell", { name: postId })).toBeVisible();
+  await expect(page.getByRole("cell", { name: getId })).toHaveCount(0);
+});

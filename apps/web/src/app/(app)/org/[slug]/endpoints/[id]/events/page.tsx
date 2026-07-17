@@ -7,10 +7,11 @@ import { notFound } from "next/navigation";
 import { EventsFilterBar } from "@/components/events-filter-bar";
 import { EventsList } from "@/components/events-list";
 import {
+  type EventFilterParams,
+  filterListKey,
   firstParam,
   hasAppliedFilters,
   parseEventFilters,
-  type EventFilterParams,
 } from "@/lib/event-filters";
 import { queryString } from "@/lib/org-url";
 import { getListenWsUrl } from "@/server/env";
@@ -35,6 +36,9 @@ export default async function EventsPage({
     to?: string | string[];
     search?: string | string[];
     range?: string | string[];
+    method?: string | string[];
+    dedupStrategy?: string | string[];
+    eventType?: string | string[];
   }>;
 }) {
   const { slug, id } = await params;
@@ -53,6 +57,9 @@ export default async function EventsPage({
     to: firstParam(sp.to),
     search: firstParam(sp.search),
     range: firstParam(sp.range),
+    method: sp.method,
+    dedupStrategy: sp.dedupStrategy,
+    eventType: firstParam(sp.eventType),
   };
   const filters = parseEventFilters(rawParams, PROVIDERS);
   const result = await loadEvents(session.orgId, id, filters);
@@ -68,6 +75,9 @@ export default async function EventsPage({
     provider: rawParams.provider,
     status: rawParams.status,
     search: rawParams.search,
+    method: rawParams.method,
+    dedupStrategy: rawParams.dedupStrategy,
+    eventType: rawParams.eventType,
     from: filters.receivedAfter?.toISOString(),
     to: filters.receivedBefore?.toISOString(),
   };
@@ -110,9 +120,20 @@ export default async function EventsPage({
           <EventsList
             // Re-key on the endpoint + the (frozen) active filters so a filter change replaces the list's
             // once-seeded state with the freshly-filtered first page. `from` carries the resolved preset
-            // bound, so changing the preset re-keys without a separate `range` term; a multi-select array
-            // stringifies to a comma-join (distinct per selection).
-            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}:${filterParams.search ?? ""}`}
+            // bound, so changing the preset re-keys without a separate `range` term. filterListKey
+            // percent-encodes each part so a free-text search/eventType containing the delimiter can't make two
+            // distinct filter states collide onto one key (which would strand a stale first page).
+            key={filterListKey([
+              id,
+              filterParams.provider,
+              filterParams.status,
+              filterParams.from,
+              filterParams.to,
+              filterParams.search,
+              filterParams.method,
+              filterParams.dedupStrategy,
+              filterParams.eventType,
+            ])}
             endpointId={id}
             initialItems={result.items}
             initialCursor={result.nextCursor}

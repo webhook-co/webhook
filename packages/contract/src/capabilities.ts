@@ -51,6 +51,15 @@ function multiEnum<T extends z.ZodTypeAny>(schema: T) {
 export const SEARCH_MIN_LENGTH = 3;
 export const SEARCH_MAX_LENGTH = 256;
 
+/**
+ * Max length of the exact `eventType` filter. Deliberately its OWN constant, not a reuse of
+ * SEARCH_MAX_LENGTH: the two bounds are independent (a substring search and an exact event-type match are
+ * different fields), they merely coincide at 256 today. Naming it lets every surface — the contract schema
+ * below, the web parser + input cap, the CLI — mirror ONE number, and lets a drift test pin them together so
+ * lowering this can never silently desync web (which keeps its own copy to dodge the Turbopack barrel trap).
+ */
+export const EVENT_TYPE_MAX_LENGTH = 256;
+
 const uuid = z.uuid();
 const cursor = z.string();
 
@@ -271,7 +280,7 @@ export const eventsList = defineCapability({
         // NULL for providers whose type we don't parse, which never matches.
         dedupStrategy: multiEnum(DedupStrategySchema).optional(),
         method: multiEnum(HttpMethodSchema).optional(),
-        eventType: z.string().trim().min(1).max(256).optional(),
+        eventType: z.string().trim().min(1).max(EVENT_TYPE_MAX_LENGTH).optional(),
       })
       .optional(),
   }),

@@ -13,9 +13,10 @@
 // include June 2, set `to=2026-06-03`.) Keeping this exclusive holds the cross-surface parity that an
 // inclusive-of-the-to-day shortcut would break.
 
-import type { VerificationState } from "@webhook-co/shared";
+import type { DedupStrategy, HttpMethod, VerificationState } from "@webhook-co/shared";
 
 import { isDatePreset, resolvePresetBound } from "./date-range";
+import { DEDUP_STRATEGIES, HTTP_METHODS } from "./event-facets";
 import { VERIFICATION_STATES } from "./verification-state";
 
 /** The coerced, SQL-ready filter (instant bounds). Mirrors the db `ListEventsOptions` filter fields. */
@@ -29,6 +30,12 @@ export interface EventFilters {
   readonly search?: string;
   /** Drill down to ONE endpoint (the org-wide browse). Absent = every endpoint in the org. */
   readonly endpointId?: string;
+  /** Multi-select HTTP-method filter — OR'd. Set only when non-empty. */
+  readonly method?: readonly HttpMethod[];
+  /** Multi-select dedup-strategy filter — OR'd. Set only when non-empty. */
+  readonly dedupStrategy?: readonly DedupStrategy[];
+  /** Exact event-type match. Set only when non-empty (max 256, mirroring the contract). */
+  readonly eventType?: string;
 }
 
 /** The raw, human-facing filter values as they ride in the URL query + across the load-more boundary. */
@@ -46,6 +53,12 @@ export interface EventFilterParams {
   readonly range?: string | null;
   /** Drill down to ONE endpoint (`?endpointId=`) — org-wide browse only; the per-endpoint page ignores it. */
   readonly endpointId?: string | string[] | null;
+  /** Multi-select HTTP method (`?method=GET&method=POST`). */
+  readonly method?: string | string[] | null;
+  /** Multi-select dedup strategy (`?dedupStrategy=unique`). */
+  readonly dedupStrategy?: string | string[] | null;
+  /** Exact event-type match (`?eventType=charge.succeeded`). */
+  readonly eventType?: string | null;
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -101,6 +114,9 @@ export function parseEventFilters(
     verificationState?: VerificationState[];
     search?: string;
     endpointId?: string;
+    method?: HttpMethod[];
+    dedupStrategy?: DedupStrategy[];
+    eventType?: string;
   } = {};
   // Multi-select: validate each provider against the vocabulary (a hand-edited `?provider=foo` member
   // is dropped, not passed to SQL), de-dup, and only set the filter when at least one valid one remains.
@@ -159,7 +175,65 @@ export function parseEventFilters(
   // copy). Membership-checking here would also force an endpoint query on EVERY load-more.
   const endpointId = firstParam(params.endpointId ?? undefined);
   if (endpointId !== undefined && isUuid(endpointId)) filters.endpointId = endpointId;
+
+  // method + dedupStrategy: multi-select, validated against the closed client vocab (a hand-edited junk
+  // member is dropped, not passed to SQL), de-duped, set only when non-empty — the same shape as provider.
+  const methods = [
+    ...new Set(
+      paramList(params.method).filter((m) => (HTTP_METHODS as readonly string[]).includes(m)),
+    ),
+  ] as HttpMethod[];
+  if (methods.length > 0) filters.method = methods;
+  const strategies = [
+    ...new Set(
+      paramList(params.dedupStrategy).filter((d) =>
+        (DEDUP_STRATEGIES as readonly string[]).includes(d),
+      ),
+    ),
+  ] as DedupStrategy[];
+  if (strategies.length > 0) filters.dedupStrategy = strategies;
+
+  // eventType: an EXACT match on a single free string (unbounded, user-controlled — no enum). One predicate,
+  // effectiveEventType, decides what actually applies — shared with the filter bar so the URL/box/Clear/hint
+  // can never claim a filter the parser then drops (a term that's whitespace-only, or over the max).
+  const eventType = effectiveEventType(firstParam(params.eventType ?? undefined));
+  if (eventType) filters.eventType = eventType;
+
   return filters;
+}
+
+/**
+ * The event type the query will ACTUALLY filter on, from a raw URL/input value: trimmed, and dropped (→ "")
+ * when empty/whitespace or over the max the contract enforces. Returning "" for "no filter" (rather than
+ * undefined) lets the filter bar use it directly as an input value.
+ *
+ * This is the SINGLE source of truth for "is an event-type filter active", shared by the parser (above) and
+ * the client bar. Before it existed, the bar keyed its box/Clear/coverage-hint off the raw `?eventType=` while
+ * the server keyed off a trimmed+capped copy — so a shared link with `?eventType=%20` or an over-long value lit
+ * the whole filter UI over a list the server never filtered: a chip-vs-data lie via URL, not just typed input.
+ */
+export function effectiveEventType(raw: string | null | undefined): string {
+  const cleaned = cleanString(raw);
+  return cleaned !== undefined && cleaned.length <= EVENT_TYPE_MAX_LENGTH ? cleaned : "";
+}
+
+/**
+ * A collision-free React re-seed key from a filter's values. Both events pages re-key their client list on the
+ * active filter set so a filter change replaces the once-seeded first page rather than appending onto a stale
+ * one — but a naive `parts.join("|")` collides when a FREE-TEXT value (search, eventType) itself contains the
+ * delimiter: `eventType="a|b"` with no next field keys the same as `eventType="a"` + `next="b"`, so two distinct
+ * filter states share a key and the list fails to re-seed (stale page until a hard reload). Percent-encoding
+ * every part first removes `|` and `,` from the values (→ `%7C` / `%2C`), so no value can forge a delimiter.
+ * One helper for both pages so the two can't drift.
+ */
+export function filterListKey(
+  parts: readonly (string | readonly string[] | null | undefined)[],
+): string {
+  const encodePart = (v: string | readonly string[] | null | undefined): string => {
+    const members = Array.isArray(v) ? v : v == null ? [] : [v as string];
+    return members.map(encodeURIComponent).join(",");
+  };
+  return parts.map(encodePart).join("|");
 }
 
 /** A canonical v4/v7 uuid — the only shape `endpoint_id = $1` can take without raising 22P02. */
@@ -178,7 +252,10 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
     filters.receivedBefore !== undefined ||
     filters.verificationState !== undefined ||
     filters.search !== undefined ||
-    filters.endpointId !== undefined
+    filters.endpointId !== undefined ||
+    filters.method !== undefined ||
+    filters.dedupStrategy !== undefined ||
+    filters.eventType !== undefined
   );
 }
 
@@ -197,6 +274,14 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
  */
 export const SEARCH_MIN_LENGTH = 3;
 export const SEARCH_MAX_LENGTH = 256;
+
+/**
+ * Max length of the exact `eventType` filter — its OWN mirror of the contract's `EVENT_TYPE_MAX_LENGTH`, not a
+ * reuse of SEARCH_MAX_LENGTH. The two bounds are independent (they merely coincide at 256 today); a drift test
+ * pins this to the contract so lowering the contract's eventType max can't silently leave web accepting a term
+ * the API/CLI/MCP now 400. Same bundling-boundary reasoning as the search bounds above.
+ */
+export const EVENT_TYPE_MAX_LENGTH = 256;
 
 /**
  * True when a search term was typed but is too short to run (1-2 chars after trimming).

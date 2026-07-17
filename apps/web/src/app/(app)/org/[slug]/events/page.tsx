@@ -6,10 +6,11 @@ import { EventsFilterBar } from "@/components/events-filter-bar";
 import { OrgEventsList } from "@/components/org-events-list";
 import { DEFAULT_ORG_EVENTS_RANGE, effectiveDateRange } from "@/lib/date-range";
 import {
+  type EventFilterParams,
+  filterListKey,
   firstParam,
   hasAppliedFilters,
   parseEventFilters,
-  type EventFilterParams,
 } from "@/lib/event-filters";
 import { queryString } from "@/lib/org-url";
 import { loadMoreOrgEventsAction } from "@/server/event-actions";
@@ -40,6 +41,9 @@ export default async function OrgEventsPage({
     search?: string | string[];
     range?: string | string[];
     endpointId?: string | string[];
+    method?: string | string[];
+    dedupStrategy?: string | string[];
+    eventType?: string | string[];
   }>;
 }) {
   const { slug } = await params;
@@ -79,6 +83,9 @@ export default async function OrgEventsPage({
     search: firstParam(sp.search),
     range,
     endpointId: firstParam(sp.endpointId),
+    method: sp.method,
+    dedupStrategy: sp.dedupStrategy,
+    eventType: firstParam(sp.eventType),
   };
   const filters = parseEventFilters(rawParams, PROVIDERS);
   const result = await loadOrgEvents(session.orgId, filters);
@@ -103,22 +110,28 @@ export default async function OrgEventsPage({
     status: rawParams.status,
     search: rawParams.search,
     endpointId: rawParams.endpointId,
+    method: rawParams.method,
+    dedupStrategy: rawParams.dedupStrategy,
+    eventType: rawParams.eventType,
     from: filters.receivedAfter?.toISOString(),
     to: filters.receivedBefore?.toISOString(),
   };
 
   // Re-seed the client list whenever the filter set changes, so a filter change replaces the once-seeded
-  // state with this render's fresh first page rather than appending onto a stale one.
-  const listKey = [
+  // state with this render's fresh first page rather than appending onto a stale one. filterListKey
+  // percent-encodes each part so a free-text search/eventType containing `|` or `,` can't forge the delimiter
+  // and make two distinct filter states collide onto one key (which would leave a stale first page).
+  const listKey = filterListKey([
     rawParams.provider,
     rawParams.status,
     rawParams.search,
     rawParams.endpointId,
+    rawParams.method,
+    rawParams.dedupStrategy,
+    rawParams.eventType,
     filterParams.from,
     filterParams.to,
-  ]
-    .map((v) => (Array.isArray(v) ? v.join(",") : (v ?? "")))
-    .join("|");
+  ]);
 
   return (
     <PageContainer>

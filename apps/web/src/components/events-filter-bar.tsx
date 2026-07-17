@@ -16,7 +16,13 @@ import * as React from "react";
 
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { effectiveDateRange } from "@/lib/date-range";
-import { SEARCH_MIN_LENGTH, searchTooShort } from "@/lib/event-filters";
+import {
+  EVENT_TYPE_MAX_LENGTH,
+  effectiveEventType,
+  SEARCH_MIN_LENGTH,
+  searchTooShort,
+} from "@/lib/event-filters";
+import { DEDUP_STRATEGIES, DEDUP_STRATEGY_LABELS, HTTP_METHODS } from "@/lib/event-facets";
 import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verification-state";
 
 // The events-list filter bar, driven entirely by the URL query so the filtered view is shareable,
@@ -27,7 +33,18 @@ import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verificati
 // list. No client-side filtering — the DB does it.
 
 // `endpointId` is listed unconditionally: Clear deleting a param the per-endpoint page never sets is a no-op.
-const FILTER_KEYS = ["provider", "status", "from", "to", "search", "range", "endpointId"] as const;
+const FILTER_KEYS = [
+  "provider",
+  "status",
+  "from",
+  "to",
+  "search",
+  "range",
+  "endpointId",
+  "method",
+  "dedupStrategy",
+  "eventType",
+] as const;
 /** Exported so tests wait on the REAL window rather than a duplicated guess that could drift from it. */
 export const SEARCH_DEBOUNCE_MS = 300;
 
@@ -59,41 +76,97 @@ export interface EventsFilterBarProps {
   readonly defaultRange?: string;
 }
 
+/**
+ * A screen-reader-stable hint under a free-text filter. ALWAYS MOUNTED as a `role="status"` live region that
+ * toggles its TEXT — never conditionally rendered. A status node inserted into the DOM at announce time is
+ * unreliable: several screen readers only announce changes to regions they were already observing, so a
+ * mount-on-demand hint can stay silent. Kept as one component so the search hint and the event-type coverage
+ * hint can't drift (they already had — one carried the live-region attributes, the other didn't).
+ *
+ * `active` both reveals the text visually and gates whether the linked input should point at it via
+ * aria-describedby (do that at the call site, matching `active`), so an empty box isn't described by a caveat.
+ */
+function FilterHint({
+  id,
+  active,
+  children,
+}: {
+  id: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <p
+      id={id}
+      role="status"
+      aria-live="polite"
+      className={active ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
+    >
+      {active ? children : ""}
+    </p>
+  );
+}
+
 export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const committedQuery = searchParams.toString();
 
-  // provider + status are MULTI-select (repeated params). An optimistic override reflects a just-pushed
-  // selection BEFORE the RSC navigation commits, so rapid multi-toggling (faster than the round-trip)
-  // computes each toggle against the live selection instead of a stale committed URL (which would drop
-  // earlier picks). Cleared once the URL commits. The displayed selection is also filtered to the known
-  // vocabulary, so a hand-edited invalid `?provider=`/`?status=` member isn't counted as active.
-  const [pendingSel, setPendingSel] = React.useState<{
-    provider?: string[];
-    status?: string[];
-  }>({});
-  const providerSel = (pendingSel.provider ?? searchParams.getAll("provider")).filter((p) =>
-    providers.includes(p),
-  );
-  const statusSel = (pendingSel.status ?? searchParams.getAll("status")).filter((s) =>
-    (VERIFICATION_STATES as readonly string[]).includes(s),
-  );
-  const from = searchParams.get("from") ?? "";
-  const to = searchParams.get("to") ?? "";
-  const search = searchParams.get("search") ?? "";
+  // ONE optimistic snapshot of the query. `lastPushedRef` is the query string we last pushed; it is the merge
+  // base for the next write AND the source every control reads for display (viewParams), so a single click
+  // updates the whole bar on the SAME render, uniformly — no control jumps ahead while another lags the RSC
+  // round trip. Rapid multi-toggling merges against this live snapshot, so no earlier pick is dropped.
+  const lastPushedRef = React.useRef<string | null>(null);
+  // The committed query AT THE MOMENT of that push. The instant the committed URL moves off it — whether our
+  // push landed OR the reader hit Back/forward — the snapshot is spent, so we drop it HERE, during render
+  // (React's sanctioned "adjust during render"), not in an effect. Consequences: viewParams never renders from
+  // a stale snapshot (no post-commit flash); a NO-OP push — which never changes committedQuery, so never fires
+  // an effect — can't strand it; and it's UNCONDITIONAL, so an external nav is adopted at once. The lone cost
+  // is a 1-frame flicker when a SECOND push is in flight as the first commits (e.g. a facet clicked within
+  // Clear's round trip) — cosmetic, self-healing, and cheaper than tracking per-push causality would be.
+  const committedAtPushRef = React.useRef(committedQuery);
+  if (committedQuery !== committedAtPushRef.current) {
+    committedAtPushRef.current = committedQuery;
+    lastPushedRef.current = null;
+  }
+  // A push mutates lastPushedRef (a ref → no re-render on its own); bump so the optimistic value shows at once.
+  const [, bumpView] = React.useReducer((n: number) => n + 1, 0);
+  const viewParams = new URLSearchParams(lastPushedRef.current ?? committedQuery);
+
+  // provider/status/method/dedupStrategy are MULTI-select (repeated params). Each displayed selection is
+  // filtered to the KNOWN vocabulary, so a hand-edited invalid member is neither shown nor counted as active.
+  const providerSel = viewParams.getAll("provider").filter((p) => providers.includes(p));
+  const statusSel = viewParams
+    .getAll("status")
+    .filter((s) => (VERIFICATION_STATES as readonly string[]).includes(s));
+  const methodSel = viewParams
+    .getAll("method")
+    .filter((m) => (HTTP_METHODS as readonly string[]).includes(m));
+  const dedupSel = viewParams
+    .getAll("dedupStrategy")
+    .filter((d) => (DEDUP_STRATEGIES as readonly string[]).includes(d));
+  // The EFFECTIVE event type — what the server will actually filter on — not the raw `?eventType=`. Keying the
+  // box, `active`/Clear, and the coverage hint off this (the same predicate the parser uses) means a shared
+  // link with a whitespace-only or over-long value can't light the filter UI over an unfiltered list.
+  const eventType = effectiveEventType(viewParams.get("eventType"));
+  const from = viewParams.get("from") ?? "";
+  const to = viewParams.get("to") ?? "";
+  const search = viewParams.get("search") ?? "";
   // RAW (what the URL says) vs EFFECTIVE (what the page applied). They differ exactly when the URL names no
   // date choice and the page falls back — the case the chip used to mislabel.
-  const rawRange = searchParams.get("range") ?? "";
+  const rawRange = viewParams.get("range") ?? "";
   // Read GUARDED: without the `endpoints &&`, a hand-added ?endpointId= on the per-endpoint page (which has
   // no such control) would enable Clear with nothing visibly set.
-  const endpointSel = endpoints ? (searchParams.get("endpointId") ?? "") : "";
+  const endpointSel = endpoints ? (viewParams.get("endpointId") ?? "") : "";
   const range = effectiveDateRange({ range: rawRange, from, to }, defaultRange ?? "");
   const active =
     endpointSel !== "" ||
     providerSel.length > 0 ||
     statusSel.length > 0 ||
+    methodSel.length > 0 ||
+    dedupSel.length > 0 ||
+    eventType !== "" ||
     from !== "" ||
     to !== "" ||
     search !== "" ||
@@ -135,19 +208,24 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     () => VERIFICATION_STATES.map((s) => ({ value: s, label: VERIFICATION_STATE_LABELS[s] })),
     [],
   );
+  // method labels ARE the verbs (no mapping); dedup shows a human label, never the raw slug.
+  const methodOptions = React.useMemo<MultiSelectOption[]>(
+    () => HTTP_METHODS.map((m) => ({ value: m, label: m })),
+    [],
+  );
+  const dedupOptions = React.useMemo<MultiSelectOption[]>(
+    () => DEDUP_STRATEGIES.map((d) => ({ value: d, label: DEDUP_STRATEGY_LABELS[d] })),
+    [],
+  );
 
-  // The query string WE last pushed. Changing two controls within the RSC-navigation commit window
-  // would otherwise both start from the stale `searchParams` snapshot and clobber each other; merging
-  // against the last-pushed value keeps every change. Reset once the URL actually commits.
-  const lastPushedRef = React.useRef<string | null>(null);
-  React.useEffect(() => {
-    lastPushedRef.current = null;
-    setPendingSel({});
-  }, [committedQuery]);
-
+  // Record the URL we're pushing FROM (so adjust-during-render can tell when it has moved on), pin the pushed
+  // query as the optimistic snapshot, and bump so it renders immediately. There is no reset effect: the
+  // snapshot is cleared during render, above, the moment committedQuery changes.
   function apply(next: URLSearchParams) {
     const qs = next.toString();
+    committedAtPushRef.current = committedQuery;
     lastPushedRef.current = qs;
+    bumpView();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
@@ -165,8 +243,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
 
   // Set a multi-value key to the given list (repeated params), merged against the last-pushed value so a
   // concurrent single-key change isn't clobbered. An empty list deletes the key (no filter).
-  function setMulti(key: "provider" | "status", values: readonly string[]) {
-    setPendingSel((prev) => ({ ...prev, [key]: [...values] }));
+  function setMulti(
+    key: "provider" | "status" | "method" | "dedupStrategy",
+    values: readonly string[],
+  ) {
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     next.delete(key);
     for (const value of values) next.append(key, value);
@@ -182,6 +262,41 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   // Off the LIVE input, not the URL: the hint answers the reader as they type, before the debounce decides
   // (correctly) not to push a term that cannot run.
   const tooShort = searchTooShort({ search: searchInput });
+
+  // eventType is an EXACT match, so it commits on Enter/blur — NOT debounced-as-you-type like search, which
+  // would query partial types (`charge` never equals `charge.succeeded`). This box therefore uses a DIFFERENT
+  // URL-sync strategy from the search box, by design (not a copy that drifted): search self-heals via its
+  // always-running debounce timer, which this box has no equivalent of. Instead we compare the incoming URL
+  // value against what WE last pushed (committedEventTypeRef) to tell our own commit's lagging echo apart from
+  // a genuine external navigation — see the effect below.
+  const [eventTypeInput, setEventTypeInput] = React.useState(eventType);
+  // What we last PUSHED (kept current as the URL commits). It does two jobs: (1) makes commit idempotent — the
+  // URL lags a commit by one RSC round trip, so Enter-then-blur would otherwise re-push the same value; and
+  // (2) discriminates, in the effect, our own commit's echo from an external change.
+  const committedEventTypeRef = React.useRef(eventType);
+  React.useEffect(() => {
+    // Adopt the URL value into the box ONLY when it differs from what we last pushed — i.e. an EXTERNAL change
+    // (back/forward, Clear, a shared link): the reader navigated, so the box must reflect where they landed.
+    // When it EQUALS the committed value it's merely our own commit's navigation catching up, and the box may
+    // hold characters typed during that round trip — adopting here would clobber them. This one comparison
+    // replaces a "pending" latch that (unlike search's timer-reset one) never self-healed: a stuck latch left
+    // the box stale over freshly-navigated data and re-pushed the stale value on the next blur.
+    if (eventType !== committedEventTypeRef.current) setEventTypeInput(eventType);
+    committedEventTypeRef.current = eventType;
+  }, [eventType]);
+  function commitEventType() {
+    // Only a value the parser would actually APPLY reaches the URL — mirrors the search path. A whitespace-only
+    // or over-long term is dropped by the parser, so pushing it would light Clear + the coverage hint over a
+    // fully UNFILTERED list (the silent-drop cliff). effectiveEventType — the exact predicate the parser uses —
+    // collapses those to "" (no filter), so the box, the URL, and the server always agree.
+    const effective = effectiveEventType(eventTypeInput);
+    // Normalize the displayed value even on a no-op commit, so trailing whitespace / an over-long paste doesn't
+    // linger in the box after blur.
+    setEventTypeInput(effective);
+    if (effective === committedEventTypeRef.current) return;
+    committedEventTypeRef.current = effective;
+    applyPatch({ eventType: effective });
+  }
   const searchPendingRef = React.useRef(false);
   React.useEffect(() => {
     if (!searchPendingRef.current) setSearchInput(search);
@@ -208,20 +323,30 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
       if (effective) next.set("search", effective);
       else next.delete("search");
       const qs = next.toString();
+      // Same push discipline as apply(): record where we pushed from + pin the snapshot + bump. Inlined
+      // (rather than calling apply) so the effect's deps stay stable — listing apply would reset the debounce
+      // timer every render. bumpView/setSearchInput/router identities are stable, so none belong in the deps.
+      committedAtPushRef.current = committedQuery;
       lastPushedRef.current = qs;
+      bumpView();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [searchInput, search, committedQuery, router, pathname]);
 
   function clear() {
-    // Wipe every filter — including the search box. Reset the search input + pending flag so an in-flight
+    // Wipe every filter — including the free-text boxes. Reset the search input + pending flag so an in-flight
     // debounce (if the user typed then hit Clear within the window) no-ops instead of re-pushing the
-    // just-cleared term.
+    // just-cleared term; reset the event-type box + its committed ref too, since typed-but-uncommitted text
+    // otherwise lingers (its URL value never changed, so the URL→input sync effect wouldn't fire).
     setSearchInput("");
     searchPendingRef.current = false;
+    setEventTypeInput("");
+    committedEventTypeRef.current = "";
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
+    // apply() pins this (empty) query as the snapshot and bumps, so viewParams reads empty on the next render:
+    // every control — facets, endpoint, date, and Clear's own `active` flag — clears together, at once.
     apply(next);
   }
 
@@ -252,20 +377,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
       {/* A term below pg_trgm's 3-char floor cannot be run (no index can serve `%ab%`), and it used to be
           dropped in SILENCE — so the reader got the full unfiltered list back and had to guess that their
           search never happened. Say so instead. Reads off searchInput, not the URL: the point is to answer
-          the reader WHILE they type, before the debounce would (not) push anything.
-
-          The live region is ALWAYS MOUNTED and toggles its TEXT, rather than being mounted on demand. A
-          role="status" node inserted into the DOM at announce time is unreliable across screen readers —
-          several only announce changes to regions they were already observing, so a conditionally-rendered
-          one can stay silent. The wrapper is always present and empty; only the sentence appears. */}
-      <p
-        id="events-search-hint"
-        role="status"
-        aria-live="polite"
-        className={tooShort ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
-      >
-        {tooShort ? `Keep typing — search needs at least ${SEARCH_MIN_LENGTH} characters.` : ""}
-      </p>
+          the reader WHILE they type, before the debounce would (not) push anything. */}
+      <FilterHint id="events-search-hint" active={tooShort}>
+        {`Keep typing — search needs at least ${SEARCH_MIN_LENGTH} characters.`}
+      </FilterHint>
 
       {/* Tier 2 — narrow: the faceting controls, with Clear right-aligned (disabled when nothing's set). */}
       <div className="flex flex-wrap items-center gap-2">
@@ -287,6 +402,46 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           selected={statusSel}
           onChange={(values) => setMulti("status", values)}
           className="w-40"
+        />
+
+        <MultiSelect
+          label="Filter by HTTP method"
+          placeholder="All methods"
+          options={methodOptions}
+          selected={methodSel}
+          onChange={(values) => setMulti("method", values)}
+          className="w-36"
+        />
+
+        <MultiSelect
+          label="Filter by dedup strategy"
+          placeholder="All dedup"
+          options={dedupOptions}
+          selected={dedupSel}
+          onChange={(values) => setMulti("dedupStrategy", values)}
+          className="w-44"
+        />
+
+        {/* eventType is a free EXACT match, not a dropdown: the vocabulary is unbounded + user-controlled, so
+            a `select distinct` per render would be the wrong shape. Commits on Enter/blur. The hint is honest
+            about coverage — event type is only parsed for some providers, so a "no results" here can mean
+            "we don't extract this provider's type", not "no such events". */}
+        <Input
+          value={eventTypeInput}
+          onChange={(e) => setEventTypeInput(e.target.value)}
+          onBlur={commitEventType}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitEventType();
+          }}
+          placeholder="Event type (e.g. charge.succeeded)"
+          aria-label="Filter by event type"
+          // Only point at the hint while the filter is set — matching the search input. Otherwise a screen
+          // reader announces the whole coverage caveat on every focus of an empty box, where it's noise.
+          aria-describedby={eventType !== "" ? "events-eventtype-hint" : undefined}
+          // The parser drops anything over this, so cap the box at the same bound: a value that can't be
+          // applied can't be typed, and the silent-drop cliff can't be reached by hand.
+          maxLength={EVENT_TYPE_MAX_LENGTH}
+          className="w-56"
         />
 
         {endpoints ? (
@@ -314,6 +469,15 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           Clear filters
         </Button>
       </div>
+
+      {/* Visible + announced only while an event-type filter is set. It exists because event type is NULL for
+          providers whose payload we don't parse a type from, so an empty result is genuinely ambiguous — say
+          so rather than let it read as "no such events". The input's aria-describedby is dropped in the same
+          inactive state (above), so an empty box is never described by the caveat. */}
+      <FilterHint id="events-eventtype-hint" active={eventType !== ""}>
+        Event type is parsed for some providers only — no matches can mean we don’t extract this
+        provider’s type, not that no events arrived.
+      </FilterHint>
     </div>
   );
 }
