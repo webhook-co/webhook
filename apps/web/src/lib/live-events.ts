@@ -249,10 +249,10 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     //
     // Two seeds, because "start watching" and "carry on watching" are different questions:
     //
-    //   * NO seedFrom = a fresh go-live → `since=now`. The engine resolves it server-side to the head. It is
-    //     NOT wall-clock, which is what makes it safe against the gapless watermark: it lands on the latest
-    //     event AT/BELOW the watermark, so an event still in flight is delivered when it matures rather than
-    //     skipped. A wall-clock instant would skip it — the gap the watermark exists to close.
+    //   * NO seedFrom = a fresh go-live → `since=now`. The engine resolves it SERVER-side to wall-clock now
+    //     (founder decision), so the reader sees only what arrives from that instant on — history, including
+    //     an event that arrived seconds ago but is not yet visible, is excluded, which is what "live" means.
+    //     Server-resolved, so a skewed browser clock never shifts the boundary.
     //   * seedFrom = the tail was PAUSED (hidden tab ⇒ the hook stops the session) and is resuming from the
     //     last cursor it saw. Those events arrived while Live was ON, so they are not history and dropping
     //     them would be a data-loss bug wearing the fix's clothes. `sinceCursor` is opaque + HMAC-verified by
