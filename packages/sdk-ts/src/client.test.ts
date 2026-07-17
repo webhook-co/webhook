@@ -349,8 +349,15 @@ describe("events", () => {
     expect(() => client.events.listPageByEndpoint("ep_1", { endpointId: "ep_2" })).toThrow(
       /don't also set it in filters/,
     );
-    // And an empty positional id fails fast rather than building /v1/endpoints//events.
+    // An empty positional id fails fast rather than building /v1/endpoints//events.
     expect(() => client.events.listByEndpoint("")).toThrow(/must be a non-empty endpoint id/);
+    // An untyped JS caller passing undefined/null gets the SAME friendly message, not a raw ".trim of
+    // undefined" crash.
+    const byEndpoint = client.events.listByEndpoint as unknown as (a: unknown) => unknown;
+    expect(() => byEndpoint.call(client.events, undefined)).toThrow(
+      /must be a non-empty endpoint id/,
+    );
+    expect(() => byEndpoint.call(client.events, null)).toThrow(/must be a non-empty endpoint id/);
   });
 
   it("getPayload() decodes the base64 envelope to bytes", async () => {

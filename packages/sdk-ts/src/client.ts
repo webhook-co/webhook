@@ -318,7 +318,9 @@ function assertByEndpointArgs(
   filters: EventsListFilters,
   method: string,
 ): void {
-  if (endpointId.trim() === "") {
+  // typeof guard first: an untyped JS caller passing undefined/null must get this friendly message, not a
+  // raw "cannot read .trim of undefined" (matches validateEventsListArg's string-arg handling).
+  if (typeof endpointId !== "string" || endpointId.trim() === "") {
     throw new TypeError(
       `events.${method}(): endpointId (the first argument) must be a non-empty endpoint id.`,
     );
