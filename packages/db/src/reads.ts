@@ -331,7 +331,8 @@ function verificationStateCase(tx: TenantTx, prefix: "" | "e.") {
   return tx`case when ${p}verified and ${p}verification->>'authenticity' is not null then 'authenticated' when ${p}verified then 'verified' when ${p}verification is not null then 'failed' else 'unattempted' end`;
 }
 
-// The truthful verification tri-state, projected in SQL so the lean summary carries it WITHOUT shipping
+// The verification state (FOUR: verified | authenticated | failed | unattempted — the case below produces
+// all four), projected in SQL so the lean summary carries it WITHOUT shipping
 // the `verification` jsonb. Used by listEvents + tailEvents.
 function verificationStateColumn(tx: TenantTx) {
   return tx`${verificationStateCase(tx, "")} as verification_state`;
@@ -386,7 +387,7 @@ export interface EventBrowseFilters extends ListOptions {
   readonly receivedAfter?: Date;
   /** Exclusive upper bound on received_at (events strictly before this instant). */
   readonly receivedBefore?: Date;
-  /** Multi-select verification tri-state filter (verified | failed | unattempted) — OR'd. */
+  /** Multi-select verification-state filter (verified | authenticated | failed | unattempted) — OR'd. */
   readonly verificationState?: readonly VerificationState[];
   /** Case-insensitive substring across provider_event_id + dedup_key (+ exact id match when a uuid). */
   readonly search?: string;
@@ -433,7 +434,7 @@ export async function listOrgEvents(
 
 /**
  * The ONE body behind both doors, so the two browses can never drift on the projection, the µs cursor, the
- * verification tri-state, or the soft-delete filter — the drift this file's header forbids.
+ * verification state, or the soft-delete filter — the drift this file's header forbids.
  *
  * `deleted_at is null` is the non-optional anchor (0058: every reader that SURFACES event data filters it;
  * metering must NOT). `endpoint_id` is just another optional equality filter, the same shape `destinationId`
@@ -718,7 +719,7 @@ export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> 
     dedupStrategy: r.dedup_strategy,
     verified: r.verified,
     // Derived in JS here (getEvent selects the `verification` jsonb, unlike the lean summary reads
-    // that project the SQL CASE) so events.get reports the same tri-state as the list.
+    // that project the SQL CASE) so events.get reports the same verification state (all four) as the list.
     verificationState: deriveVerificationState(r.verified, r.verification),
     payloadR2Key: r.payload_r2_key,
     payloadBytes: Number(r.payload_bytes),

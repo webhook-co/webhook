@@ -180,19 +180,23 @@ extension), tracked in the internal backlog.
 
 ## amendment — search + filtering slice (2026-06-29)
 
-The dashboard search + filtering fast-follow shipped as its own 3-PR slice (provider/date/name → tri-state
-verified-status → substring search). Two refinements to the `truthful UX` above:
+The dashboard search + filtering fast-follow shipped as its own 3-PR slice (provider/date/name →
+verification-state → substring search). Two refinements to the `truthful UX` above:
 
-- **The events-list verified pill is now TRI-STATE — `failed` shows RED on the list** (PR 1b), SUPERSEDING the
+- **The events-list verified pill distinguishes `failed` (RED) from unsigned** (PR 1b), SUPERSEDING the
   "neutral for unsigned" decision recorded under the as-built amendment. That decision was forced only because
   the lossy `verified` boolean couldn't distinguish a verification *failure* from *never-attempted*. PR 1b adds
-  a **derived `verificationState`** (`verified` | `failed` | `unattempted`) — projected in SQL by the summary
-  reads (`case when verified then 'verified' when verification is not null then 'failed' else 'unattempted'
-  end`) and derived in `getEvent` — so the list CAN now tell them apart. The pill renders `verified` ok/green,
-  `failed` (an adapter ran and REJECTED the signature) danger/red, and **`unattempted` stays neutral**:
+  a **derived `verificationState`** — `verified` | `failed` | `unattempted` at the time, later a QUAD once
+  Tier-4 (token/HTTP-Basic) providers added the weaker `authenticated` positive. It is projected in SQL by the
+  summary reads (now `case when verified and verification->>'authenticity' is not null then 'authenticated'
+  when verified then 'verified' when verification is not null then 'failed' else 'unattempted' end`) and
+  derived in `getEvent` — so the list CAN now tell them apart. The pill renders `verified` ok/green,
+  `authenticated` ok (a weaker, non-cryptographic positive), `failed` (an adapter ran and REJECTED the
+  signature) danger/red, and **`unattempted` stays neutral**:
   `verification IS NULL` collapses no-secret / signature-header-absent / a rare KMS-or-internal error into one
   bucket the row cannot disambiguate, so it must never be presented as a failure (only engine logs can tell
-  those apart). The same tri-state is a contract `events.list.filter.verificationState` enum at CLI/API/web/MCP
+  those apart). The same enum — `verified | authenticated | failed | unattempted` (a QUAD; `authenticated`, a
+  weaker token/Basic positive, was always the 4th) — is `events.list.filter.verificationState` at CLI/API/web/MCP
   parity. `verificationState` is an **OPTIONAL** `EventSummary` field (a required one would throw in `getEvent`
   and silently drop `wbhk listen` frames under version skew).
 - **Date-range filter is half-open `[from, to)` — `to` is EXCLUSIVE** (PR 1a), to hold byte-for-byte

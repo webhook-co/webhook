@@ -262,7 +262,8 @@ export const ROUTES: readonly RouteDef[] = [
       {
         name: "verificationState",
         multi: true,
-        description: "Filter by verification state: verified | failed | unattempted (repeatable).",
+        description:
+          "Filter by verification state: verified | authenticated | failed | unattempted (repeatable).",
         schemaFrom: "filter.verificationState",
       },
       {

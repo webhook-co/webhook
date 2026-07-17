@@ -110,7 +110,7 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
         kind: "enum",
         values: VERIFICATION_STATES,
         brief:
-          "filter by verification state (verified | failed | unattempted; repeatable / comma-separated)",
+          "filter by verification state (verified | authenticated | failed | unattempted; repeatable / comma-separated)",
         variadic: ",",
         optional: true,
       },
