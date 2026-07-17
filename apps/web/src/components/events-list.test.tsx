@@ -178,7 +178,7 @@ describe("EventsList", () => {
 
   // A row links to ITS OWN event's endpoint, not to whatever endpoint the list was handed. On the
   // per-endpoint page the two are always equal, so nothing above can tell them apart — the assertion at the
-  // end of the tri-state test passes either way. They diverge the moment a list carries events from more than
+  // end of the verification-pill test passes either way. They diverge the moment a list carries events from more than
   // one endpoint (the consolidated /org/{slug}/events browse), and building the href from the list's prop
   // would then point every row at the wrong endpoint: `loadEvent` asserts
   // `event.endpointId !== endpointId → not_found`, so every link would 404.

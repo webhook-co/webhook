@@ -111,9 +111,10 @@ export function EventsTable({ items, isFiltered, endpointNames, emptyMessage }: 
                 </span>
               </TableCell>
               <TableCell>
-                {/* Tri-state (ADR-0077 amendment): the list projects the verification state, so a genuine
-                    signature FAILURE shows red. "Not verified" (unattempted) stays neutral — it collapses
-                    no-secret / header-absent / KMS-error, none of which is a failure. */}
+                {/* ADR-0077 amendment: the list projects the verification state (four — verified,
+                    authenticated, failed, unattempted), so a genuine signature FAILURE shows red. "Not
+                    verified" (unattempted) stays neutral — it collapses no-secret / header-absent / KMS-error,
+                    none of which is a failure. */}
                 {(() => {
                   const pill = verificationStatePill(event.verificationState, event.verified);
                   return <StatusPill tone={pill.tone}>{pill.label}</StatusPill>;

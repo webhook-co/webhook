@@ -719,7 +719,7 @@ export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> 
     dedupStrategy: r.dedup_strategy,
     verified: r.verified,
     // Derived in JS here (getEvent selects the `verification` jsonb, unlike the lean summary reads
-    // that project the SQL CASE) so events.get reports the same tri-state as the list.
+    // that project the SQL CASE) so events.get reports the same verification state (all four) as the list.
     verificationState: deriveVerificationState(r.verified, r.verification),
     payloadR2Key: r.payload_r2_key,
     payloadBytes: Number(r.payload_bytes),

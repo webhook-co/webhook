@@ -213,7 +213,7 @@ describe("events.list filter (provider + received-at range)", () => {
   });
 
   // `authenticated` IS a real, accepted verification state — the 4th one, weaker than `verified` (a shared
-  // static token / HTTP Basic, not a signature). Five doc surfaces called this a TRI-state (verified | failed
+  // static token / HTTP Basic, not a signature). Many surfaces across the repo called this a TRI-state (verified | failed
   // | unattempted) and silently dropped it; on MCP, where the description IS the interface, an agent was told
   // a filter value that works does not exist. This pins the accept-side truth so the prose can't drift from it
   // again without a red test.
