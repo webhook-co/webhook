@@ -120,6 +120,32 @@ describe("keyset browse reads use their covering index (no Sort node)", () => {
     });
   });
 
+  it("listOrgEvents (org-wide DESC) rides events_org_ordered_idx", async () => {
+    await withTenant(app, orgId, async (tx) => {
+      // The org-wide browse carries NO org_id predicate — RLS supplies `org_id = current_org_id()`, which is
+      // what the index leads on. Mirrors browseEvents' WHERE + ORDER BY exactly (incl. deleted_at, which the
+      // pre-existing per-endpoint assertions above omit).
+      const desc = await planOf(
+        tx,
+        (t) =>
+          t`select id from events where deleted_at is null order by received_at desc, id desc limit 51`,
+      );
+      expect(usesIndexNoSort(desc, "events_org_ordered_idx")).toBe(true);
+    });
+  });
+
+  it("the org-wide failed filter rides events_org_failed_idx (0022's partial, one scope wider)", async () => {
+    await withTenant(app, orgId, async (tx) => {
+      const p = await planOf(
+        tx,
+        (t) => t`select id from events
+                 where deleted_at is null and verification is not null and not verified
+                 order by received_at desc, id desc limit 51`,
+      );
+      expect(usesIndexNoSort(p, "events_org_failed_idx")).toBe(true);
+    });
+  });
+
   it("listDeliveries org-wide rides delivery_attempts_org_ordered_idx", async () => {
     await withTenant(app, orgId, async (tx) => {
       const p = await planOf(

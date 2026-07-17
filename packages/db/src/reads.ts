@@ -328,8 +328,8 @@ function toEventSummary(r: EventRow): EventSummary {
   });
 }
 
-export interface ListEventsOptions extends ListOptions {
-  readonly endpointId: string;
+/** The filters shared by the endpoint-scoped and org-wide event browses. */
+export interface EventBrowseFilters extends ListOptions {
   /** Multi-select provider filter — OR'd (`provider = ANY`). Empty/undefined = no filter. */
   readonly provider?: readonly string[];
   /** Inclusive lower bound on received_at (events at or after this instant). */
@@ -342,23 +342,68 @@ export interface ListEventsOptions extends ListOptions {
   readonly search?: string;
 }
 
+/** The endpoint-scoped browse. `endpointId` is REQUIRED — unchanged for every existing caller. */
+export interface ListEventsOptions extends EventBrowseFilters {
+  readonly endpointId: string;
+}
+
+/** The org-wide browse. `endpointId` OPTIONAL — absent = every endpoint in the RLS-pinned org. */
+export interface ListOrgEventsOptions extends EventBrowseFilters {
+  readonly endpointId?: string;
+}
+
+/**
+ * The endpoint-scoped events browse. Unchanged for every existing caller.
+ *
+ * Kept as its own DOOR onto the shared body rather than folding into an optional param: org-wide scope must be
+ * something you reach by naming a different (greppable) function, never by FORGETTING a field. `getEndpoint`'s
+ * existence gate and `headCursor` both hang off this required endpointId — neither has meaning org-wide.
+ */
 export async function listEvents(
   tx: TenantTx,
   opts: ListEventsOptions,
 ): Promise<Page<EventSummary>> {
+  return browseEvents(tx, opts);
+}
+
+/**
+ * The ORG-WIDE events browse — every endpoint in the RLS-pinned org (the consolidated /org/{slug}/events
+ * page, and `events.list` with no endpointId).
+ *
+ * Carries NO org_id predicate, exactly like `listDeliveries` and `listEndpoints`: `withTenant` pins
+ * `app.current_org` and the `events_select` RLS policy supplies `org_id = current_org_id()`. That is the
+ * tenant boundary — see the file header.
+ */
+export async function listOrgEvents(
+  tx: TenantTx,
+  opts: ListOrgEventsOptions = {},
+): Promise<Page<EventSummary>> {
+  return browseEvents(tx, opts);
+}
+
+/**
+ * The ONE body behind both doors, so the two browses can never drift on the projection, the µs cursor, the
+ * verification tri-state, or the soft-delete filter — the drift this file's header forbids.
+ *
+ * `deleted_at is null` is the non-optional anchor (0058: every reader that SURFACES event data filters it;
+ * metering must NOT). `endpoint_id` is just another optional equality filter, the same shape `destinationId`
+ * has on listDeliveries.
+ *
+ * Plans: WITH endpointId the equality leads events_tunnel_idx (endpoint_id, received_at, id) — the org-wide
+ * page filtered to one endpoint gets exactly the per-endpoint page's plan. WITHOUT it, RLS's
+ * `org_id = current_org_id()` leads events_org_ordered_idx (org_id, received_at, id) — a backward scan for the
+ * DESC browse, no Sort node. Both are pinned by packages/db/test/index-usage.test.ts.
+ */
+async function browseEvents(tx: TenantTx, opts: ListOrgEventsOptions): Promise<Page<EventSummary>> {
   const limit = clampLimit(opts.limit);
   const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState, search } =
     opts;
-  // The received-at range + keyset are bound on the RAW received_at (sargable against events_tunnel_idx,
-  // which leads with endpoint_id then received_at, id) — the range narrows the per-endpoint scan, the keyset
-  // seeks the page and orders it (backward scan for DESC), no Sort node. The sparse `failed` verification
-  // filter is backed by the events_failed_idx partial index (migration 0022).
   const rows = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
            ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
     from events
-    where endpoint_id = ${endpointId}
-    and deleted_at is null
+    where deleted_at is null
+    ${endpointId ? tx`and endpoint_id = ${endpointId}` : tx``}
     ${provider && provider.length > 0 ? tx`and provider in ${tx([...provider])}` : tx``}
     ${receivedAfter ? tx`and received_at >= ${receivedAfter}` : tx``}
     ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
