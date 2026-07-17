@@ -1,13 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveReceivedAfter } from "../src/read-handlers";
+import { resolveReceivedAfter, toInstantBound } from "../src/read-handlers";
 
 // `receivedAfter` accepts the `--since` grammar (relative dates), unlike the strict-instant `receivedBefore`.
 // Pure resolution — no DB — so it lives here rather than in the real-PG suite.
 describe("resolveReceivedAfter", () => {
-  it("undefined / empty → no lower bound", () => {
+  it("undefined / empty → no lower bound (and empty is symmetric with receivedBefore)", () => {
     expect(resolveReceivedAfter(undefined)).toBeUndefined();
+    // "" = "no filter". toInstantBound (receivedBefore) treats it the same, so the two bounds never disagree
+    // on an empty string — only MCP can send one (the HTTP route drops empties).
     expect(resolveReceivedAfter("")).toBeUndefined();
+    expect(toInstantBound("")).toBeUndefined();
+    expect(toInstantBound(undefined)).toBeUndefined();
+  });
+
+  it("resolves a plain instant via the SAME helper as receivedBefore (never diverges)", () => {
+    // A calendar-lenient value new Date rolls forward (Jun 31 -> Jul 1) resolves identically on both bounds —
+    // it is inherited new Date leniency, shared by construction, not a receivedAfter-only surprise.
+    for (const v of [
+      "2026-07-01",
+      "2026-07-01T00:00:00",
+      "2026-06-31T00:00:00Z",
+      "2026-06-01T00:00:00Z",
+    ]) {
+      expect(resolveReceivedAfter(v)).toEqual(toInstantBound(v));
+    }
   });
 
   it("`beginning` → no lower bound (from the oldest)", () => {

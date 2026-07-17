@@ -97,7 +97,8 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
       after: {
         kind: "parsed",
         parse: parseIsoDate,
-        brief: "only events received at/after this time (ISO-8601 / RFC3339)",
+        brief:
+          "only events received at/after this — an ISO-8601 / RFC3339 instant, or a relative duration like 7d / 30m",
         optional: true,
       },
       before: {

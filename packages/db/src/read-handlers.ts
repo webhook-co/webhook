@@ -90,27 +90,40 @@ export function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
   }
 }
 
-/** Coerce an optional RFC3339 received-at bound (string) to a Date; a malformed value → VALIDATION_ERROR. */
-function toInstantBound(value: string | undefined): Date | undefined {
-  if (value === undefined) return undefined;
+/**
+ * Coerce an optional received-at bound string to a Date via the lenient `new Date` parse — the ONE place
+ * both bounds resolve a plain instant, so receivedAfter and receivedBefore stay in lock-step by construction.
+ *
+ * "Lenient" is JS `Date`'s leniency, unchanged and shared: a date-only `2026-07-01`, a no-timezone
+ * `...T00:00:00`, and even a calendar overflow like `2026-06-31` (→ Jul 1) all resolve — exactly as
+ * receivedBefore has always done and receivedAfter did before durations were added. It is deliberately MORE
+ * lenient than events.tail's strict `since` grammar; these are fuzzy browse bounds, not a gapless cursor.
+ * Absent OR empty → no bound (undefined): empty means "no filter", and only MCP can send it (the HTTP route
+ * drops empties) — treating it symmetrically avoids a 400 on one bound but not the other.
+ */
+export function toInstantBound(
+  value: string | undefined,
+  label = "received-at bound",
+): Date | undefined {
+  if (value === undefined || value === "") return undefined;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) {
-    throw new CapabilityFault("VALIDATION_ERROR", "invalid received-at bound");
+    throw new CapabilityFault("VALIDATION_ERROR", `invalid ${label}`);
   }
   return d;
 }
 
 /**
- * Resolve the `receivedAfter` lower bound. It ADDS the `--since` relative grammar (`beginning` |
- * `<duration>` like `7d`/`30m`) on TOP of the plain-instant parsing `receivedBefore` already does — so the
- * "last N" vocabulary the CLI's `--after 7d` and the web presets use works on api/mcp too, one grammar shared
- * with events.tail's `since`.
+ * Resolve the `receivedAfter` lower bound. This capability ADDS the `--since` relative grammar (`beginning` |
+ * `<duration>` like `7d`/`30m`) on TOP of everything the plain instant bound (`toInstantBound`) accepts — the
+ * same "last N" vocabulary the web presets use, now on api/mcp/cli too. New here, not pre-existing prior art:
+ * before this change the server resolved receivedAfter via the strict instant parse, so `--after 7d` 400'd.
  *
- * A strict SUPERSET of the old toInstantBound, deliberately: parseSince's RFC3339 is stricter than
- * `new Date` (it requires a full timestamp + zone), so a value parseSince rejects — a date-only `2026-07-01`,
- * a no-timezone `...T00:00:00` — falls back to the SAME lenient `new Date` receivedBefore uses. Without that
- * fallback this would 400 instants that worked before AND that the symmetric receivedBefore still accepts —
- * a breaking, asymmetric regression. Only a value neither parseSince NOR new Date can read is a 400.
+ * A strict SUPERSET of `toInstantBound`, by construction: parseSince recognises the relative grammar; anything
+ * it doesn't (a plain instant, incl. the lenient forms parseSince rejects but `new Date` accepts — date-only,
+ * no-tz, even a calendar overflow) falls straight through to `toInstantBound`. So receivedAfter accepts every
+ * instant receivedBefore does, plus durations — never fewer, never asymmetric. Only a value neither can read
+ * is a 400.
  *
  * `now` is accepted (grammar parity with events.tail) but deliberately NOT advertised for receivedAfter: on a
  * newest-first browse `received_at >= now()` is a no-op (empty page). Relative durations resolve against the
@@ -118,8 +131,8 @@ function toInstantBound(value: string | undefined): Date | undefined {
  * `beginning` = no lower bound (undefined).
  */
 export function resolveReceivedAfter(value: string | undefined): Date | undefined {
-  if (value === undefined || value === "") return undefined;
-  const since = parseSince(value);
+  const since =
+    value === undefined || value === "" ? { kind: "beginning" as const } : parseSince(value);
   switch (since.kind) {
     case "beginning":
       return undefined;
@@ -129,18 +142,10 @@ export function resolveReceivedAfter(value: string | undefined): Date | undefine
       return new Date(Date.now() - since.ms);
     case "timestamp":
       return since.date;
-    case "invalid": {
-      // Not a hard error: parseSince is stricter than new Date. Fall back to the lenient instant parse so a
-      // previously-accepted date-only / no-tz value still works (and matches receivedBefore's behaviour).
-      const d = new Date(value);
-      if (Number.isNaN(d.getTime())) {
-        throw new CapabilityFault(
-          "VALIDATION_ERROR",
-          "invalid receivedAfter (expected an instant or a duration like 7d)",
-        );
-      }
-      return d;
-    }
+    case "invalid":
+      // Not the relative grammar — resolve it as a plain instant, exactly as (and via the same helper as)
+      // receivedBefore, so the two bounds can never diverge on a shared string. Same throw for true garbage.
+      return toInstantBound(value, "receivedAfter (expected an instant or a duration like 7d)");
   }
 }
 
@@ -213,7 +218,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     // inputSchema stays JSON-Schema-clean); validate + coerce them to Dates HERE — a malformed bound is
     // a VALIDATION_ERROR, never a raw string handed to SQL.
     const receivedAfter = resolveReceivedAfter(filter?.receivedAfter);
-    const receivedBefore = toInstantBound(filter?.receivedBefore);
+    const receivedBefore = toInstantBound(filter?.receivedBefore, "receivedBefore");
     const decoded = await decode(cursor);
     const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Distinguish "no such endpoint for this org" (NOT_FOUND) from "endpoint with no events".
