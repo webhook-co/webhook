@@ -47,11 +47,14 @@ export interface LiveEventsState {
  * How long a paused tail may resume from its cursor before it is treated as a NEW go-live.
  *
  * A pause is an interruption — a tab switch, a screen lock, a five-minute meeting — and resuming exactly is
- * right for those: the events arrived while Live was on, so they are not history. A shut laptop lid is a
- * different thing wearing the same clothes. Hiding a tab does not unmount the hook, so without a bound the ref
- * survives indefinitely and a Friday-evening Live toggle resumes on Monday by draining the whole weekend into
- * the list, oldest-first — the exact history-replay this feature exists to prevent, re-entering through the
- * resume path that prevents data loss.
+ * right for those: the events arrived while Live was on, so they are not history. A long absence is a
+ * different thing wearing the same clothes: without a bound the ref survives indefinitely and a Friday-evening
+ * Live toggle resumes on Monday by draining the whole weekend into the list — the exact history-replay this
+ * feature exists to prevent.
+ *
+ * This bound covers the VISIBILITY path (a hide/show re-runs the connect effect). A dead socket that never
+ * fired a visibilitychange — a laptop that suspended — does NOT re-run this effect; the transport enforces the
+ * same bound on its own reconnect path, which is why the constant is shared with it.
  *
  * 5 minutes is a judgement call, not a derivation: long enough that every real interruption resumes
  * losslessly, short enough that no plausible backlog is a flood. Tune it here if it reads wrong in practice.
@@ -177,6 +180,9 @@ export function useLiveEvents({
       // Read at connect time, so the effect deps stay unchanged and a visibility flip does not re-key it.
       seedFrom: lastCursorRef.current ?? undefined,
       onCursor: (c) => (lastCursorRef.current = c),
+      // The transport enforces the SAME bound on its own reconnect path (a dead socket that never fired a
+      // visibilitychange, so this effect never re-ran). One constant, both paths.
+      maxResumeGapMs: LIVE_RESUME_MAX_PAUSE_MS,
       WebSocketCtor,
     });
     return () => session.stop();
