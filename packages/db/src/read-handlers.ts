@@ -26,6 +26,7 @@ import {
   parseSince,
   verifyAuditChain,
   type Cursor,
+  type DedupStrategy,
   type Since,
   type VerificationState,
   type PayloadReaderRpc,
@@ -215,7 +216,10 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         receivedBefore,
         verificationState,
         search: filter?.search,
-        dedupStrategy: asArray(filter?.dedupStrategy) as never,
+        // A typed cast, NOT `as never`: the value is contract-validated to the DedupStrategy enum, and this
+        // keeps that contract legible instead of silencing the checker (which would also mask a real
+        // regression if the contract validation were ever dropped). The security review flagged the smell.
+        dedupStrategy: asArray(filter?.dedupStrategy) as DedupStrategy[] | undefined,
         method: asArray(filter?.method),
         eventType: filter?.eventType,
       });
