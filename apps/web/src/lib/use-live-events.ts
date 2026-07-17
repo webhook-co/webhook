@@ -43,6 +43,29 @@ export interface LiveEventsState {
   readonly error: string | null;
 }
 
+/**
+ * How long a paused tail may resume from its cursor before it is treated as a NEW go-live.
+ *
+ * A pause is an interruption — a tab switch, a screen lock, a five-minute meeting — and resuming exactly is
+ * right for those: the events arrived while Live was on, so they are not history. A long absence is a
+ * different thing wearing the same clothes: without a bound the ref survives indefinitely and a Friday-evening
+ * Live toggle resumes on Monday by draining the whole weekend into the list — the exact history-replay this
+ * feature exists to prevent.
+ *
+ * This bound covers the VISIBILITY path (a hide/show re-runs the connect effect) — the common sleep/lock,
+ * which fires visibilitychange. A suspend that does NOT fire it leaves the socket to die and reconnect with
+ * the sticky sessionId, and the DO then replays the gap from its durable cursor; bounding THAT needs a
+ * server-side liveness signal the protocol does not yet have (filed, with the ReadyFrame work).
+ *
+ * 5 minutes is a judgement call, not a derivation: long enough that every real interruption resumes
+ * losslessly, short enough that no plausible backlog is a flood. Tune it here if it reads wrong in practice.
+ *
+ * Measured with `Date.now()` deltas ON PURPOSE: it is a DURATION on one clock, so server skew cannot touch it,
+ * and unlike `performance.now()` the wall clock keeps advancing while the machine sleeps — which is precisely
+ * the case being bounded.
+ */
+export const LIVE_RESUME_MAX_PAUSE_MS = 5 * 60 * 1000;
+
 /** Read the document's current visibility (SSR-safe: treat a missing `document` as visible). */
 function isDocumentVisible(): boolean {
   if (typeof document === "undefined") return true;
@@ -83,6 +106,53 @@ export function useLiveEvents({
 
   const active = enabled && visible;
 
+  /**
+   * The last cursor this tail delivered — the resume position across a PAUSE.
+   *
+   * KNOWN GAP, filed not hidden: this is only populated once an event has been DELIVERED. The listen protocol
+   * deliberately keeps `headCursor` HTTP-only ("a streaming client tracks position from the event-frame
+   * cursors" — listen-protocol.ts), which was safe while the tail replayed from the oldest event and could
+   * not lose anything. It no longer is: if the tab hides BEFORE the first event arrives, there is no cursor,
+   * the resume falls back to `since=now`, and whatever landed while hidden is skipped.
+   *
+   * The honest fix is a protocol change — the ReadyFrame carrying the position the DO actually seeded at, so
+   * a client always has one from connect, server-resolved and immune to browser clock skew. Seeding from a
+   * client-side `new Date()` instead would close the gap and introduce a worse one: a laptop clock minutes
+   * off silently skips or replays minutes of events.
+   *
+   * A ref, not state: it must survive the effect teardown/re-run that a visibility change causes, and writing
+   * it must not re-render (every event would).
+   */
+  const lastCursorRef = React.useRef<string | null>(null);
+
+  /**
+   * Turning Live OFF ends the live intent, so the next ON is a FRESH one: `since=now`, no history. Dropping
+   * the cursor here is what encodes that — without it, toggling off, waiting an hour and toggling on would
+   * replay the hour, which is the history-replay the whole change removes.
+   *
+   * Hiding the TAB is deliberately not this. `enabled` stays true, the cursor survives, and coming back
+   * resumes exactly — those events arrived while Live was on, so they are not history.
+   */
+  React.useEffect(() => {
+    if (!enabled) lastCursorRef.current = null;
+  }, [enabled]);
+
+  /** When the tail last went inactive, so a resume can tell an interruption from an absence. */
+  const pausedAtRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (active) {
+      // Resuming: a pause older than the bound is not a pause. Drop the cursor so the connect below asks for
+      // `since=now` and the reader starts watching again rather than replaying however long they were away.
+      const pausedAt = pausedAtRef.current;
+      if (pausedAt !== null && Date.now() - pausedAt > LIVE_RESUME_MAX_PAUSE_MS) {
+        lastCursorRef.current = null;
+      }
+      pausedAtRef.current = null;
+    } else {
+      pausedAtRef.current = Date.now();
+    }
+  }, [active]);
+
   React.useEffect(() => {
     if (!active) {
       setConnection("disconnected");
@@ -107,6 +177,10 @@ export function useLiveEvents({
         if (c === "connected") setError(null);
       },
       onError: setError,
+      // Absent on a fresh go-live (⇒ `since=now`); set when resuming a paused tail (⇒ `sinceCursor=`).
+      // Read at connect time, so the effect deps stay unchanged and a visibility flip does not re-key it.
+      seedFrom: lastCursorRef.current ?? undefined,
+      onCursor: (c) => (lastCursorRef.current = c),
       WebSocketCtor,
     });
     return () => session.stop();

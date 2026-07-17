@@ -563,11 +563,12 @@ export async function tailEventsWithCursors(
 }
 
 /**
- * The cursor of the LATEST event at/below the gapless watermark for an endpoint, or null if there is
- * none — the "current position" a `?since=now` listen session starts from, so it tails only NEW events
- * and skips the backlog. (The cli-only seed can't get this: events.tail returns no cursor when caught
- * up.) Same watermark as tailEvents, ordered DESC on the raw received_at to take the max (received_at, id)
- * at exact µs. Backed by events_tunnel_idx (endpoint_id, received_at, id).
+ * The cursor of the LATEST event at/below the gapless watermark for an endpoint, or null if there is none —
+ * the head position for the connect-time STATUS frame and the browse `headCursor`. (NOT the `?since=now`
+ * seed any more: since 2026-07-17 that is wall-clock server-now, resolved in resolveSince; latestTailCursor
+ * would have replayed a young endpoint's whole burst via its null case.) Same watermark as tailEvents,
+ * ordered DESC on the raw received_at to take the max (received_at, id) at exact µs. Backed by
+ * events_tunnel_idx (endpoint_id, received_at, id).
  */
 export async function latestTailCursor(
   tx: TenantTx,
@@ -652,23 +653,46 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
  * yields everything (= beginning) and "T in the future / past the watermark" yields nothing (= resume
  * live) — the clamp emerges from the keyset + watermark, needing no extra query or index. `<RFC3339>` uses
  * the parsed instant (a ms Date → `.sss000Z` µs order key); `<duration>` resolves now() minus the duration
- * against the DB clock (skew-safe) as a µs order key. `beginning` → no cursor (oldest-inclusive). `now` is
- * the ONE mode that must skip the ENTIRE backlog (only NEW events), so it resolves to the actual watermark
- * head (`latestTailCursor`, µs-exact): exclusive of the head excludes every backlog row (no same-ms
- * re-surface — the µs head is exact), and it's gapless for live tailing (future events get monotonic
- * UUIDv7 ids > head). ZERO_UUID sorts below every UUIDv7, so `(T, ZERO_UUID)` with `>` includes every real
- * event at instant T. Resolve once at start, iterate by cursor.
+ * against the DB clock (skew-safe) as a µs order key. `beginning` → no cursor (oldest-inclusive). `now` →
+ * WALL-CLOCK server-now, so only events arriving after the connect instant are delivered ("live = from this
+ * point forward"); the WHY — the founder decision, the removed young-endpoint null case, the ZERO_UUID
+ * tiebreaker, and the shared `wbhk listen --since now` caveat — is at the `now` branch in the body, not
+ * restated here. Resolve once, iterate by cursor.
  */
 export async function resolveSince(
   tx: TenantTx,
+  // `endpointId` is still accepted (every caller is endpoint-scoped and passes it) but is no longer READ:
+  // once `now` became wall-clock, all four `since` kinds resolve without touching the endpoint. Dropping it
+  // from the signature ripples into the engine caller, so it rides with the resolveSince/backlogMeta dedupe
+  // (task #27) rather than widening this change.
   opts: { readonly endpointId: string; readonly since: Exclude<Since, { kind: "invalid" }> },
 ): Promise<Cursor | undefined> {
-  const { endpointId, since } = opts;
+  const { since } = opts;
   if (since.kind === "beginning") return undefined;
-  if (since.kind === "now") return (await latestTailCursor(tx, { endpointId })) ?? undefined;
+  // `now` = WALL-CLOCK server-now (founder decision 2026-07-17): "live = from this point forward, no
+  // history". A synthetic boundary cursor at the current server instant — the keyset `(received_at, id) >
+  // (now, ZERO_UUID)` then admits ONLY rows that arrive after this instant (delivered once they mature below
+  // the watermark; their received_at is still > the seed, so nothing future is lost).
+  //
+  // This deliberately differs from a watermark-head seed, and the founder chose the difference: an in-flight
+  // event whose received_at is a few seconds old but not yet visible arrived BEFORE the reader pressed, so it
+  // is history and is skipped. That is the point of "live", and it also removes the null case that a
+  // `latestTailCursor(...) ?? undefined` seed had — where a young endpoint (no row below the watermark)
+  // degraded to the oldest-inclusive sentinel and replayed its whole burst. Wall-clock has no null case.
+  //
+  // Resolved SERVER-side (here), never from a client `new Date()`, so a skewed browser/CLI clock can never
+  // shift the boundary. ZERO_UUID is the low tiebreaker so a row landing on the exact µs is admitted (at-
+  // least-once; the consumer dedups by id) — erring toward one duplicate, never a skip.
+  //
+  // NOTE: `wbhk listen --since now` shares this resolver and changed with it — it now starts strictly after
+  // the connect instant rather than at the watermark head. That was the accepted cost of the decision.
   if (since.kind === "timestamp") return { orderKey: msDateToOrderKey(since.date), id: ZERO_UUID };
+  // `now` and `<duration>` are the same boundary — server now() minus an offset (0 for `now`) — so they
+  // share one round trip rather than two near-identical to_char selects. Same format as orderKeyCol, so the
+  // seed is byte-compatible with the row order keys the keyset compares it against.
+  const offsetMs = since.kind === "now" ? 0 : since.ms;
   const [row] = await tx<{ t: string }[]>`
-    select to_char((now() - (${since.ms} * interval '1 millisecond')) at time zone 'UTC',
+    select to_char((now() - (${offsetMs} * interval '1 millisecond')) at time zone 'UTC',
                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as t`;
   return { orderKey: row!.t, id: ZERO_UUID };
 }

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { EventSummaryItem } from "@/server/events";
 
 import type { MintTicketResult } from "./live-events";
-import { useLiveEvents } from "./use-live-events";
+import { LIVE_RESUME_MAX_PAUSE_MS, useLiveEvents } from "./use-live-events";
 
 const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const ORG_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f50aa";
@@ -169,5 +169,130 @@ describe("useLiveEvents", () => {
     const ws = FakeWebSocket.instances[0];
     unmount();
     expect(ws.closed).toBe(true);
+  });
+});
+
+// LIVE MEANS LIVE — and a PAUSE is not a fresh start. These two rules pull in opposite directions, and the
+// bug was picking one of them. The seed is where they meet, so this is where they are pinned.
+describe("useLiveEvents — the seed distinguishes going live from carrying on", () => {
+  it("a fresh go-live asks for since=now: the reader gets no history", async () => {
+    renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    expect(FakeWebSocket.instances[0].url).toContain("since=now");
+    expect(FakeWebSocket.instances[0].url).not.toContain("sinceCursor");
+  });
+
+  // THE DATA-LOSS BUG. The hook stops the session when the tab hides, so coming back is a FIRST-BIND with no
+  // sticky sessionId. Re-seeding at `now` there silently drops everything that arrived while the tab was
+  // hidden — events that came in while Live was ON, i.e. not history at all. The `since=now` fix on its own
+  // traded a noisy replay for silent loss; the cursor is what makes the pause lossless.
+  it("resumes a hidden-tab pause from the last cursor seen, not from now", async () => {
+    const { result } = renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    act(() => FakeWebSocket.instances[0].ready());
+    // A real uuid: the frame is schema-parsed, and a junk id is dropped before onCursor ever fires.
+    const E1 = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5071";
+    act(() => FakeWebSocket.instances[0].event(E1, "cur-42"));
+    expect(result.current.items.map((i) => i.id)).toContain(E1);
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+
+    const resumed = FakeWebSocket.instances[1];
+    expect(resumed).toBeDefined();
+    expect(resumed.url).toContain("sinceCursor=cur-42");
+    expect(resumed.url).not.toContain("since=now");
+  });
+
+  // Toggling Live OFF ends the live intent, so ON is a NEW one. Without dropping the cursor, toggling off,
+  // going to lunch and toggling on would replay the whole lunch — the history replay this change removes,
+  // reintroduced through the resume path.
+  it("a Live off/on is a NEW go-live: back to since=now, not a resume", async () => {
+    const { rerender } = renderHook(({ on }: { on: boolean }) => useHarness({ enabled: on }), {
+      initialProps: { on: true },
+    });
+    await act(async () => {
+      await flush();
+    });
+    act(() => FakeWebSocket.instances[0].ready());
+    act(() => FakeWebSocket.instances[0].event("0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5072", "cur-42"));
+
+    await act(async () => {
+      rerender({ on: false });
+      await flush();
+    });
+    await act(async () => {
+      rerender({ on: true });
+      await flush();
+    });
+
+    const relit = FakeWebSocket.instances[1];
+    expect(relit).toBeDefined();
+    expect(relit.url).toContain("since=now");
+    expect(relit.url).not.toContain("sinceCursor");
+  });
+});
+
+// A PAUSE HAS A SHELF LIFE. Resuming from the last cursor is right for a tab switch and wrong for a weekend.
+//
+// The ref survives indefinitely: hiding a tab does not unmount the component, it only flips `visible`. So a
+// reader who turned Live on at 17:00 Friday and shut the lid would, on Monday, resume from Friday's cursor
+// and watch the DO drain the entire weekend into the live list, oldest-first. That is the history-replay the
+// whole change removes, re-entering through the resume path the change adds — and the ONE rule here is that
+// Live never shows history.
+describe("useLiveEvents — a stale pause restarts live rather than replaying the gap", () => {
+  const realNow = Date.now;
+  afterEach(() => {
+    Date.now = realNow;
+  });
+
+  async function hideThenShow(afterMs: number) {
+    const t0 = realNow();
+    Date.now = () => t0;
+    const { result } = renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    act(() => FakeWebSocket.instances[0].ready());
+    act(() =>
+      FakeWebSocket.instances[0].event("0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5081", "cur-friday"),
+    );
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    // The lid is shut. Wall-clock advances; Date.now() is the only thing that can see it.
+    Date.now = () => t0 + afterMs;
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    return { result, resumed: FakeWebSocket.instances[1] };
+  }
+
+  it("a BRIEF pause resumes from the cursor (no events lost)", async () => {
+    const { resumed } = await hideThenShow(30_000);
+    expect(resumed.url).toContain("sinceCursor=cur-friday");
+  });
+
+  it("a LONG pause starts live again instead of dumping the backlog", async () => {
+    const { resumed } = await hideThenShow(LIVE_RESUME_MAX_PAUSE_MS + 1);
+    expect(resumed.url).toContain("since=now");
+    expect(resumed.url).not.toContain("sinceCursor");
   });
 });

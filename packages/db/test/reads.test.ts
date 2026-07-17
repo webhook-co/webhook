@@ -940,7 +940,7 @@ describe("cursorBelowOldest (CURSOR_EXPIRED guard for future retention)", () => 
   });
 });
 
-describe("latestTailCursor (the ?since=now boundary)", () => {
+describe("latestTailCursor (the STATUS-frame + browse head; no longer the ?since=now seed)", () => {
   it("returns the latest event at/below the watermark (the newest of the tail set)", async () => {
     const c = await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epTail }));
     expect(c).not.toBeNull();
@@ -1055,27 +1055,57 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
     expect(await tailFrom(epTail, "beginning")).toEqual([eTail1, eTail2, eTail3]);
   });
 
-  it("now → empty (only NEW events past the watermark head; the old backlog is skipped)", async () => {
+  // `now` is WALL-CLOCK server-now (founder decision 2026-07-17): "live = from this point forward, no
+  // history". Everything already arrived has a received_at in the past, so it is excluded; only what lands
+  // AFTER the seed instant is delivered (once it matures below the watermark, its received_at is still > the
+  // seed, so the keyset admits it). The deliberate cost: an in-flight event whose received_at is a few
+  // seconds old but not yet visible is history to the reader, and is skipped — which is the point.
+  it("now → empty: the whole existing backlog is behind you", async () => {
     expect(await tailFrom(epTail, "now")).toEqual([]);
   });
 
-  it("now skips the ENTIRE backlog including same-millisecond events (uses the head, not a synthetic ms)", async () => {
-    const epNow = (await createEndpoint(app, { orgId: orgA, name: "ep-since-now" }, hasher)).id;
-    const a = await seedEvent(orgA, epNow, { provider: "stripe" });
-    const b = await seedEvent(orgA, epNow, { provider: "stripe" });
-    // both in the same ms, well below the watermark — `now` must skip BOTH (a synthetic watermark-ms
-    // boundary would re-surface them; the real head cursor excludes the whole same-ms backlog).
+  // THE YOUNG-ENDPOINT FIX, tested at the RESOLVER, not through tailEvents — because tailEvents applies its
+  // OWN watermark filter, so a young burst is excluded either way and a tail-level test would be a no-op that
+  // passes against the bug (the trap this lane already fell in once).
+  //
+  // The bug lived in resolveSince: `latestTailCursor(...) ?? undefined`. An endpoint whose ENTIRE history is
+  // younger than δ has no row below the watermark, so latestTailCursor returns null → undefined → the DO's
+  // oldest-inclusive sentinel → it replays the whole young burst once those rows mature. Wall-clock `now` has
+  // no null case, so this cannot happen. `toBeDefined` is meaningful here precisely because undefined WAS the
+  // bug, and the age bound proves the cursor is "now", not the oldest event.
+  it("now resolves to a recent cursor even for a young endpoint (never undefined = never oldest)", async () => {
+    const epNow = (await createEndpoint(app, { orgId: orgA, name: "ep-since-now-young" }, hasher))
+      .id;
+    await seedEvent(orgA, epNow, { provider: "stripe" }); // young: above the watermark, the null case
+    await seedEvent(orgA, epNow, { provider: "stripe" });
+
+    const { cursor, dbNow } = await withTenant(app, orgA, async (tx) => {
+      const cursor = await resolveSince(tx, { endpointId: epNow, since: { kind: "now" } });
+      // The reference clock is the DB's, NOT the test runner's — the cursor is now()-derived, and on the
+      // remote nightly the runner and Neon are different hosts, so a runner Date.now() comparison could go
+      // negative from clock skew (a red nightly that is not a regression — the trap this lane has hit).
+      const [row] = await tx<{ t: number }[]>`select extract(epoch from now()) * 1000 as t`;
+      return { cursor, dbNow: row!.t };
+    });
+    expect(cursor).toBeDefined(); // old code returned undefined here → oldest-inclusive replay
+    const ageMs = dbNow - new Date(cursor!.orderKey).getTime();
+    expect(ageMs).toBeGreaterThanOrEqual(0); // the seed is at/before the DB clock read just after it
+    expect(ageMs).toBeLessThan(60_000); // it is "now", not the dawn of the endpoint
+  });
+
+  // A matured PAST event stays excluded: `now` must never regress into `beginning`. This holds under both the
+  // old head-cursor and the new wall-clock seed (both exclude a below-watermark past row), so it is a
+  // guard against a future regression, not a proof of THIS change — the young-endpoint test above is that.
+  it("now excludes an event that arrived (and matured) before the seed instant", async () => {
+    const epPast = (await createEndpoint(app, { orgId: orgA, name: "ep-since-now-past" }, hasher))
+      .id;
+    const older = await seedEvent(orgA, epPast, { provider: "stripe" });
     await withTenant(
       app,
       orgA,
-      (tx) => tx`update events set received_at = '2026-06-04T00:00:00.003100+00' where id = ${a}`,
+      (tx) => tx`update events set received_at = now() - interval '1 hour' where id = ${older}`,
     );
-    await withTenant(
-      app,
-      orgA,
-      (tx) => tx`update events set received_at = '2026-06-04T00:00:00.003900+00' where id = ${b}`,
-    );
-    expect(await tailFrom(epNow, "now")).toEqual([]);
+    expect(await tailFrom(epPast, "now")).toEqual([]);
   });
 
   it("a timestamp before the earliest event clamps to beginning ('whichever is greater')", async () => {

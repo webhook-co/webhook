@@ -455,7 +455,8 @@ export class ListenSession extends DurableObject<ListenEnv> {
 
   /**
    * Resolve a validated `--since` spec to a boundary cursor for a fresh session's seed — the server-side
-   * generalization of the old `?since=now` (now just `parseSince("now")` → the watermark head). One
+   * generalization of the old `?since=now` (now `parseSince("now")` → WALL-CLOCK server-now, so a fresh
+   * go-live sees only events after the connect instant; it was the watermark head before 2026-07-17). One
    * short-lived RLS-scoped client under the bound org's RLS; `resolveSince` returns undefined for
    * `beginning`/clamp-to-beginning (seed unset = oldest-inclusive). Overridable in tests (inject a
    * canned cursor; no live Postgres).
