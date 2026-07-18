@@ -29,6 +29,12 @@ import { S8 } from "./scenes/S8";
 import { S9 } from "./scenes/S9";
 import { S10 } from "./scenes/S10";
 import { S11 } from "./scenes/S11";
+import { S12 } from "./scenes/S12";
+import { S13 } from "./scenes/S13";
+import { S14 } from "./scenes/S14";
+import { S15 } from "./scenes/S15";
+import { S16 } from "./scenes/S16";
+import { S17 } from "./scenes/S17";
 import { colors } from "./tokens";
 import type { Format } from "./tokens";
 
@@ -77,9 +83,33 @@ export function PromoMaster({ format = "16x9" }: PromoMasterProps) {
         <S11 format={format} />
       </Sequence>
 
-      {/* TODO: ACT III–IV — S12–S20 (frames 900–1800) to be added in later acts.
-          Act III returns to dark (surfaces → the wake); Act IV closes on light.
-          The master composition already reserves the full 1800-frame duration. */}
+      {/* ACT III — SURFACES → AGENT ERA (frames 900–1560). Dark throughout: the
+          same event across four surfaces (S12), the turn (S13), the agent
+          subscribes + parks (S14–S15), the wake / money-frame #3 (S16), and the
+          forged-event stop + scoped-read-vs-reroute close (S17). */}
+      <Sequence from={900} durationInFrames={120}>
+        <S12 format={format} />
+      </Sequence>
+      <Sequence from={1020} durationInFrames={90}>
+        <S13 format={format} />
+      </Sequence>
+      <Sequence from={1110} durationInFrames={120}>
+        <S14 format={format} />
+      </Sequence>
+      <Sequence from={1230} durationInFrames={120}>
+        <S15 format={format} />
+      </Sequence>
+      <Sequence from={1350} durationInFrames={120}>
+        <S16 format={format} />
+      </Sequence>
+      <Sequence from={1470} durationInFrames={90}>
+        <S17 format={format} />
+      </Sequence>
+
+      {/* TODO: ACT IV — CLOSE, S18–S20 (frames 1560–1800) to be added next.
+          Act IV closes on the light page (hero + signature line + wordmark +
+          trust band). The master composition already reserves the full
+          1800-frame duration. */}
     </AbsoluteFill>
   );
 }
