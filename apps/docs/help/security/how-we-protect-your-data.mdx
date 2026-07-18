@@ -10,8 +10,8 @@ Here's how webhook.co protects your data day to day. For the engineering detail 
 
 <CardGroup cols={2}>
   <Card title="Encrypted in transit and at rest" icon="lock">
-    Everything travels over TLS — the API and SDKs refuse plaintext — and your data is encrypted
-    where it's stored.
+    Everything travels over TLS, and your data is encrypted where it's stored. The API and SDKs are
+    HTTPS-only — the one exception is loopback, for local development.
   </Card>
   <Card title="Secrets are sealed" icon="key">
     Your provider signing secrets, outbound signing keys, and ingest tokens are **sealed with a key
