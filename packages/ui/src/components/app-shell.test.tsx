@@ -241,6 +241,40 @@ describe("AppNavItem subNav", () => {
   });
 });
 
+// The nested sub-item (Events under Endpoints) draws a decorative "└" tree connector in its left gutter, so
+// the parent→child relationship is VISIBLE, not only structural. The nesting is already announced through the
+// DOM (see `subNav`), so the connector is pure ornament: it is `aria-hidden` and must never leak into the
+// link's accessible name. Only nested items get one — a top-level item keeps its icon gutter untouched.
+describe("AppNavItem nested tree connector", () => {
+  it("draws a decorative connector in a nested sub-item's gutter", () => {
+    render(
+      <ul>
+        <AppNavItem href="/events" nested>
+          Events
+        </AppNavItem>
+      </ul>,
+    );
+    const link = screen.getByRole("link", { name: "Events" });
+    const connector = link.querySelector("[data-nav-connector]");
+    expect(connector).not.toBeNull();
+    // Pure ornament: hidden from assistive tech, and it leaves the link's accessible name alone.
+    expect(connector).toHaveAttribute("aria-hidden", "true");
+    expect(link).toHaveAccessibleName("Events");
+  });
+
+  it("draws NO connector on a top-level item", () => {
+    render(
+      <ul>
+        <AppNavItem href="/endpoints" icon={<svg data-testid="ic" />}>
+          Endpoints
+        </AppNavItem>
+      </ul>,
+    );
+    const link = screen.getByRole("link", { name: "Endpoints" });
+    expect(link.querySelector("[data-nav-connector]")).toBeNull();
+  });
+});
+
 describe("AppNavSection", () => {
   it("renders a labeled group whose name is associated with its items", () => {
     render(

@@ -208,8 +208,10 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
   ) => {
     const navClass = cn(
       "relative flex h-9 items-center gap-2.5 rounded-control px-2.5 text-base text-fg-secondary",
-      // Line the label up with a top-level item's label: 18px icon + the 10px gap.
-      nested && "pl-[2.375rem]",
+      // Sub-items sit a step deeper than a top-level label — indented past the "└" tree connector drawn in
+      // their gutter (see `contents`) so the parent→child relationship reads at a glance. The extra ~6px over
+      // a bare label-alignment (2.375rem) is what makes the item look tucked UNDER its parent, not beside it.
+      nested && "pl-[2.75rem]",
       "transition-colors hover:bg-surface-sunken hover:text-fg",
       "outline-none focus-visible:shadow-[var(--wh-focus-ring)]",
       "[&_svg]:size-[1.125rem] [&_svg]:shrink-0",
@@ -218,9 +220,22 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
       className,
     );
 
-    /** The item's contents: leading icon, the label, then the trailing count pill. */
+    /** The item's contents: an optional sub-item connector, leading icon, the label, then the count pill. */
     const contents = (label: React.ReactNode) => (
       <>
+        {/* A decorative "└" tree connector for a sub-item: a short left+bottom border with a rounded elbow,
+            drawn in the gutter beneath the parent's icon so the nesting is SHOWN, not merely announced. It is
+            aria-hidden and pointer-events-none — pure ornament, since the DOM already carries the parent→child
+            relationship (see `subNav`). Absolutely positioned, so it never disturbs the flex row; the anchor's
+            `nested` left-padding leaves room for it. `border-strong` is the one separator step above the faint
+            hairline, so the line is visible without competing with the label. */}
+        {nested ? (
+          <span
+            aria-hidden="true"
+            data-nav-connector=""
+            className="pointer-events-none absolute left-5 top-0 h-1/2 w-2.5 rounded-bl-[6px] border-b border-l border-strong"
+          />
+        ) : null}
         {icon}
         <span className="flex-1 truncate">{label}</span>
         {count != null ? (
