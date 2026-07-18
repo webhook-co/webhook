@@ -1,0 +1,42 @@
+---
+title: "Duplicates, ordering & retries"
+sidebarTitle: "Duplicates & ordering"
+description: "Why you might see the same event twice, why order isn't guaranteed, and how to build a receiver that handles both."
+icon: "clone"
+---
+
+Three facts about how events flow that save a lot of debugging.
+
+## Duplicates: design for at-least-once
+
+A provider that doesn't get a fast success from you will **resend** — so the same logical event can
+arrive more than once. Two tools:
+
+- **Deduplication.** Turn on a [dedup mode](/deduplication) for an endpoint and webhook.co collapses
+  repeats into the event you already have (and dedup-collapsed duplicates never count as usage).
+- **Idempotency in your receiver.** Log each event's id and, if you see one you've already processed,
+  **return `200` and stop** — acknowledging a duplicate you discard is correct and keeps the sender
+  from retrying.
+
+## Ordering isn't guaranteed
+
+Events are delivered **at least once**, not strictly in order. Don't rely on receiving events in the
+exact sequence they occurred — use timestamps or sequence numbers in the payload if order matters to
+your logic.
+
+## Retries: a receiver blip is never your loss
+
+Outbound deliveries retry automatically on a fixed schedule (up to 8 attempts over ~32h) before
+dead-lettering, and inbound capture is durable before anything else runs. A brief outage on either
+side doesn't drop events — see [delivery failures](/help/troubleshooting/delivery-failures).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Deduplication" icon="clone" href="/deduplication">
+    Configure how repeats are collapsed.
+  </Card>
+  <Card title="An idempotent consumer" icon="rotate" href="/recipes/idempotent-consumer">
+    A worked example.
+  </Card>
+</CardGroup>

@@ -1,0 +1,49 @@
+---
+title: "My webhooks aren't arriving"
+sidebarTitle: "Webhooks not arriving"
+description: "A checklist for when events aren't showing up in webhook.co — endpoint state, provider configuration, verification, and your usage cap."
+icon: "inbox"
+---
+
+Nothing showing up? Work through these in order — most "missing webhook" cases are one of them.
+
+<Steps>
+  <Step title="Is the provider pointed at the right URL?">
+    Check that the provider is sending to your endpoint's exact ingest URL (`https://wbhk.my/…`). A
+    trailing slash or an extra query parameter can matter for providers that sign the URL. Find the
+    URL on the endpoint's page.
+  </Step>
+  <Step title="Is the endpoint paused?">
+    A paused endpoint answers new requests with a `429` so the provider holds and retries rather
+    than dropping the event. If you see a **"Capture is paused"** banner, you've either paused the
+    endpoint or hit your [usage cap](/help/usage/alerts-and-caps) — resume or raise your limit, and
+    held events redeliver.
+  </Step>
+  <Step title="Did the provider actually send it?">
+    Check the provider's own webhook/delivery logs. If the provider shows a delivery to your URL,
+    the event should appear in webhook.co almost immediately — capture happens before anything else.
+    If the provider shows nothing, the issue is on their side or in their configuration.
+  </Step>
+  <Step title="Are events arriving but looking wrong?">
+    If events **are** arriving but show `unattempted` or `failed`
+    [verification](/help/troubleshooting/signature-verification), they were still captured — capture
+    never depends on a valid signature. That's a verification issue, not a delivery one.
+  </Step>
+</Steps>
+
+<Note>
+  Remember capture is durable-first: a request that reaches your ingest URL is stored **before**
+  it's verified or processed, so a bad signature or unknown provider labels an event rather than
+  losing it. If a request truly reached `wbhk.my`, it's captured.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="A delivery failed" icon="paper-plane" href="/help/troubleshooting/delivery-failures">
+    If it's the outbound side that's failing.
+  </Card>
+  <Card title="Usage alerts & caps" icon="gauge" href="/help/usage/alerts-and-caps">
+    If capture is paused.
+  </Card>
+</CardGroup>
