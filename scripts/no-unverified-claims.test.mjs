@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { scanSource } from "./no-unverified-claims.mjs";
+import { scanSource, scanMdx } from "./no-unverified-claims.mjs";
 
 /**
  * These call `scanSource` — the function the scanner actually runs on every file.
@@ -228,4 +228,97 @@ test("never flags a multi-line comment that quotes the banned claims", () => {
       const Footer = () => null;`),
     [],
   );
+});
+
+// ── MDX (apps/docs) — the knowledge base is a new user-facing surface ──────────
+// The KB publishes exactly the shape of claim this guard exists to stop (SLA, certs, SSO, BAA), but
+// in MDX, not TSX. MDX is NOT JavaScript: prose is full of apostrophes and quotes that the JS
+// comment-stripper would mis-read as string literals, and code fences hold example payloads whose
+// numbers must never be mistaken for a boast. `scanMdx` strips MDX code + comments (not JS strings)
+// and then runs the SAME claim rules and clause-scoped denial as production.
+const mdxIds = (src) => scanMdx(src).map((h) => h.id);
+
+test("scanMdx catches a prose claim in a KB article", () => {
+  assert.deepEqual(mdxIds("We are SOC 2 Type II certified."), ["certification-claim"]);
+  assert.deepEqual(mdxIds("webhook.co offers a 99.9% uptime SLA."), ["uptime-sla"]);
+});
+
+test("scanMdx catches a claim inside a Mintlify component", () => {
+  assert.deepEqual(mdxIds('<Stat n="99.99%" k="delivery SLA" />'), ["uptime-sla"]);
+  // Order follows CLAIM_RULES: baa-offer precedes sso-offer.
+  assert.deepEqual(mdxIds('<Card title="SAML SSO and a BAA" />'), ["baa-offer", "sso-offer"]);
+});
+
+// THE REASON scanMdx exists and scanSource is not reused: an apostrophe in prose ("We're", "they'd")
+// must not swallow the rest of the line as a JS string literal and hide the claim behind it — and a
+// double-quoted phrase in prose must not either.
+test("scanMdx is not fooled by prose apostrophes and quotes", () => {
+  assert.deepEqual(mdxIds("We're SOC 2 certified. Don't worry."), ["certification-claim"]);
+  assert.deepEqual(mdxIds(`They call it "enterprise-grade" — we are HIPAA certified.`), [
+    "certification-claim",
+  ]);
+});
+
+// Code samples are examples, not claims. A fenced block showing a log line or a JSON body must never
+// trip a rule, or every realistic troubleshooting article fails the gate.
+test("scanMdx ignores claims inside a fenced code block", () => {
+  assert.deepEqual(
+    mdxIds(
+      ["Here is an example log line:", "```", "p99 latency 38ms — median latency high", "```"].join(
+        "\n",
+      ),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    mdxIds(["```json", '{ "throughput": "3.4M events / day" }', "```"].join("\n")),
+    [],
+  );
+  // A tilde fence with an info string, too.
+  assert.deepEqual(mdxIds(["~~~text", "All systems operational", "~~~"].join("\n")), []);
+});
+
+test("scanMdx ignores claims inside inline code", () => {
+  assert.deepEqual(mdxIds("The `99.9% uptime SLA` header is illustrative only."), []);
+});
+
+test("scanMdx ignores claims inside an MDX expression comment", () => {
+  assert.deepEqual(
+    mdxIds("{/* TODO: we are NOT SOC 2 certified — do not add a badge */}\nInspect your events."),
+    [],
+  );
+});
+
+// A claim after a closed code fence must still be caught — the fence stripper must not run away.
+test("scanMdx still catches a claim that follows a code fence", () => {
+  assert.deepEqual(
+    mdxIds(
+      ["```", "curl https://api.webhook.co/v1/events", "```", "", "We are SOC 2 certified."].join(
+        "\n",
+      ),
+    ),
+    ["certification-claim"],
+  );
+});
+
+// The KB's honest security page MUST be able to say, in prose, exactly which certifications we do
+// NOT hold — same load-bearing invariant as the legal pages, now in MDX. (We do NOT publish articles
+// enumerating other absent features like SSO/2FA — the gap policy sends those to the backlog, not the
+// docs — so the intentionally strict `sso-offer` rule stays strict; scanMdx still catches a positive
+// SSO offer, proven above.)
+test("scanMdx never flags the honest 'we hold none of these' certification statement", () => {
+  assert.deepEqual(
+    mdxIds("We hold no SOC 2, ISO 27001, HIPAA, or PCI certification, and we'd rather say so."),
+    [],
+  );
+  assert.deepEqual(
+    mdxIds("This page describes engineering practices, not a certification of any kind."),
+    [],
+  );
+});
+
+// A plan quota is the billed contract, true and provable — it must survive in KB prose too.
+test("scanMdx never flags a plan quota in KB prose", () => {
+  assert.deepEqual(mdxIds("Your Pro plan includes up to 500,000 events per month."), []);
+  assert.deepEqual(mdxIds("across 142 providers, from HMAC to Ed25519"), []);
 });
