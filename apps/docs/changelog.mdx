@@ -8,6 +8,22 @@ rss: true
 
 This changelog covers notable user-facing changes to webhook.co — the API, SDKs, CLI, and product. The API is versioned in its path (`/v1`), and any breaking change ships under a new version.
 
+<Update label="July 18, 2026" description="Org-wide events">
+## every endpoint's events on one page
+
+Events used to be reachable only through an endpoint. Now you can browse, filter, search, and tail your **whole org's** events at once.
+
+**Added**
+
+- **Consolidated events page.** A new Events page in the dashboard (under Endpoints) lists events from every endpoint together, newest-first — with an Endpoint column and one-click drill-down to any event's detail. Row clicks still land on the existing per-endpoint detail path.
+- **Org-wide `events.list`.** `endpointId` is now optional across the API, CLI, SDKs, and MCP: pass it for one endpoint, omit it for the whole org. The canonical route is `GET /v1/events?endpointId=…`; the nested `GET /v1/endpoints/{endpointId}/events` remains as a deprecated alias, so existing code keeps working.
+- **New filters everywhere.** Filter events by HTTP **method**, parsed **event type**, and **dedup strategy** — on all four surfaces. `--after` (and `receivedAfter`) now also accepts a relative duration: `7d`, `24h`, `30m`, or `now`.
+- **Org-wide live tail.** The dashboard's Live toggle on the consolidated page streams new events across every endpoint at once.
+
+**SDKs.** Update to pick up the new signature: `@webhook-co/sdk` 0.4.0, `webhook-co` (PyPI) 0.4.0, `webhook-go` v0.5.0, and the `wbhk` CLI 0.5.0. In the TypeScript SDK `events.list` now takes an options object (`events.list({ endpointId })`); Python uses the `endpoint_id=` keyword; Go takes `&EventsListParams{EndpointID: …}`. The previous by-endpoint methods remain as deprecated aliases.
+
+</Update>
+
 <Update label="July 10, 2026" description="Agents & account controls">
 ## webhook→agent triggers, and account controls
 

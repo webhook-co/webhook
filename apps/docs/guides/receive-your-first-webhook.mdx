@@ -86,23 +86,23 @@ wbhk events list <endpoint-id>
 ```
 
 ```sh API
-curl "https://api.webhook.co/v1/endpoints/<endpoint-id>/events" \
+curl "https://api.webhook.co/v1/events?endpointId=<endpoint-id>" \
   -H "Authorization: Bearer $WEBHOOK_API_KEY"
 ```
 
 ```ts TypeScript
-for await (const event of webhook.events.list(endpointId)) {
+for await (const event of webhook.events.list({ endpointId })) {
   console.log(event.id, event.verificationState, event.receivedAt);
 }
 ```
 
 ```python Python
-for event in client.events.list(endpoint_id):
+for event in client.events.list(endpoint_id=endpoint_id):
     print(event.id, event.verification_state, event.received_at)
 ```
 
 ```go Go
-it := client.Events.List(endpointID, &webhook.EventsListParams{})
+it := client.Events.List(&webhook.EventsListParams{EndpointID: &endpointID})
 for it.Next(ctx) {
     e := it.Value()
     fmt.Println(e.ID, e.VerificationState, e.ReceivedAt)

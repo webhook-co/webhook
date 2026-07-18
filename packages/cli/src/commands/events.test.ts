@@ -204,6 +204,19 @@ describe("wbhk events list", () => {
     expect(u.searchParams.get("receivedBefore")).toBe("2026-06-02T00:00:00.000Z");
   });
 
+  it("forwards a relative --after token unchanged (the server resolves it)", async () => {
+    // `--after` accepts the same relative grammar the API's receivedAfter does (7d/24h/30m/now/beginning) —
+    // the CLI must NOT try to parse those as an instant (new Date("7d") is Invalid Date); it forwards them
+    // raw and lets the server resolve. An ISO instant is still normalized (the case above).
+    for (const tok of ["7d", "24h", "30m", "now", "beginning"]) {
+      const cap = capturingFetch({ items: [], nextCursor: null });
+      const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+      await run(app, ["events", "list", EP, "--after", tok], t.ctx);
+      expect(normalizeStricliExitCode(t.ctx.process.exitCode ?? 0)).toBe(0);
+      expect(new URL(cap.urls[0]).searchParams.get("receivedAfter")).toBe(tok);
+    }
+  });
+
   it("rejects an unparseable --after as a usage error", async () => {
     const t = makeTestContext({
       store: loggedInStore(),

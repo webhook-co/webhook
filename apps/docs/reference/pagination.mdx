@@ -21,7 +21,7 @@ The cursor is a **keyset** cursor, not an offset. Paging stays stable while new 
 A paginated method returns an iterator. In the common case, just `for await` over it — it follows the cursor for you, one page at a time, lazily:
 
 ```ts
-for await (const event of client.events.list(endpointId, { limit: 100 })) {
+for await (const event of client.events.list({ endpointId, limit: 100 })) {
   console.log(event.id, event.verificationState);
 }
 ```
@@ -30,15 +30,15 @@ When you need more control:
 
 ```ts
 // Page at a time.
-for await (const page of client.events.list(endpointId).pages()) {
+for await (const page of client.events.list({ endpointId }).pages()) {
   console.log(page.items.length, page.nextCursor);
 }
 
 // Manual cursor control — one page per call.
-const page = await client.events.listPage(endpointId, { cursor, limit: 50 });
+const page = await client.events.listPage({ endpointId, cursor, limit: 50 });
 
 // Materialize everything (mind unbounded result sets).
-const all = await client.events.list(endpointId).collect();
+const all = await client.events.list({ endpointId }).collect();
 ```
 
 The iterator guards against a server that hands back a non-advancing cursor — following one would loop forever, so the SDK surfaces it as an error instead.

@@ -25,6 +25,7 @@ import {
   collectPages,
   emitList,
   parseIsoDate,
+  parseReceivedAfter,
   parseLimit,
   resolveAuthedContext,
 } from "./shared.js";
@@ -124,9 +125,9 @@ export const eventsListCommand = buildCommand<ListFlags, [string | undefined], A
       },
       after: {
         kind: "parsed",
-        parse: parseIsoDate,
+        parse: parseReceivedAfter,
         brief:
-          "only events received at/after this — an ISO-8601 / RFC3339 instant, or a relative duration like 7d / 30m",
+          "only events received at/after this — an ISO-8601 / RFC3339 instant, or a relative duration like 7d / 30m / now",
         optional: true,
       },
       before: {

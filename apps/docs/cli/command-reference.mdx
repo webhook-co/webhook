@@ -41,25 +41,28 @@ An endpoint is a webhook.co URL that captures inbound requests. `create` and `ro
 
 ## Events
 
-| Command                         | Key flags                                                                                   | Description                                                                                                                                                                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `wbhk events list <endpointId>` | `--provider`, `--status`, `--after`, `--before`, `--search`, `--limit`, `--cursor`, `--all` | List captured events for an endpoint.                                                                                                                                                                                          |
-| `wbhk events get <eventId>`     |                                                                                             | Show a single event in full.                                                                                                                                                                                                   |
-| `wbhk events open <eventId>`    | `--print`                                                                                   | Open the event in the web dashboard. `--print` writes the URL instead of launching a browser; `--output json` emits a `{ "url": … }` envelope (and also skips the browser).                                                    |
-| `wbhk events payload <eventId>` |                                                                                             | Print the event's raw body. The default prints the decoded body readably (like the dashboard); `--output json` emits the lossless `{contentType, bytes, bodyBase64}` envelope (matches the API/SDK; the safe view for binary). |
+| Command                         | Key flags                                                                                                                                   | Description                                                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `wbhk events list [endpointId]` | `--provider`, `--status`, `--method`, `--dedup-strategy`, `--event-type`, `--after`, `--before`, `--search`, `--limit`, `--cursor`, `--all` | List captured events. Pass an endpointId for one endpoint; omit it to list your whole org's events.                                                                                                                            |
+| `wbhk events get <eventId>`     |                                                                                                                                             | Show a single event in full.                                                                                                                                                                                                   |
+| `wbhk events open <eventId>`    | `--print`                                                                                                                                   | Open the event in the web dashboard. `--print` writes the URL instead of launching a browser; `--output json` emits a `{ "url": … }` envelope (and also skips the browser).                                                    |
+| `wbhk events payload <eventId>` |                                                                                                                                             | Print the event's raw body. The default prints the decoded body readably (like the dashboard); `--output json` emits the lossless `{contentType, bytes, bodyBase64}` envelope (matches the API/SDK; the safe view for binary). |
 
 List filters:
 
-| Flag               | Description                                                                                                          |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `--provider <p>`   | Filter by provider. Repeatable or comma-separated for multi-select.                                                  |
-| `--status <state>` | Filter by verification state: `verified`, `authenticated`, `failed`, or `unattempted`. Repeatable / comma-separated. |
-| `--after <ts>`     | Events received at or after this time (ISO-8601 / RFC3339).                                                          |
-| `--before <ts>`    | Events received strictly before this time.                                                                           |
-| `--search <term>`  | Substring (min 3 chars) over the provider event id + dedup key, or an exact event id.                                |
-| `--limit <n>`      | Max results per page (1–200).                                                                                        |
-| `--cursor <token>` | Resume from a `nextCursor` (advanced).                                                                               |
-| `--all`            | Follow the cursor to the end and return every page.                                                                  |
+| Flag                   | Description                                                                                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--provider <p>`       | Filter by provider. Repeatable or comma-separated for multi-select.                                                  |
+| `--status <state>`     | Filter by verification state: `verified`, `authenticated`, `failed`, or `unattempted`. Repeatable / comma-separated. |
+| `--method <m>`         | Filter by HTTP method (`GET`, `POST`, …). Repeatable / comma-separated.                                              |
+| `--dedup-strategy <s>` | Filter by dedup strategy (`content_hash`, `sw_webhook_id`, `provider_event_id`, `fields`, `unique`). Repeatable.     |
+| `--event-type <t>`     | Filter by parsed event type (e.g. `charge.succeeded`). Only stripe/github/shopify populate it — others are null.     |
+| `--after <ts>`         | Events received at or after this time. Accepts RFC3339 or a relative duration (`7d`, `24h`, `30m`, `now`).           |
+| `--before <ts>`        | Events received strictly before this time.                                                                           |
+| `--search <term>`      | Substring (min 3 chars) over the provider event id + dedup key, or an exact event id.                                |
+| `--limit <n>`          | Max results per page (1–200).                                                                                        |
+| `--cursor <token>`     | Resume from a `nextCursor` (advanced).                                                                               |
+| `--all`                | Follow the cursor to the end and return every page.                                                                  |
 
 ## Deliveries
 

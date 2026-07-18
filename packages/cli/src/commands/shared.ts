@@ -1,4 +1,4 @@
-import { MAX_INLINE_BODY_BYTES } from "@webhook-co/shared";
+import { MAX_INLINE_BODY_BYTES, parseSince } from "@webhook-co/shared";
 
 import {
   createApiClient,
@@ -135,6 +135,22 @@ export function parseIsoDate(value: string): string {
     throw new Error(`invalid date: ${value} (use an ISO-8601 / RFC3339 timestamp)`);
   }
   return d.toISOString();
+}
+
+/**
+ * Parse `--after`, which — unlike `--before` — also accepts the API's relative received-after grammar
+ * (`7d` / `24h` / `30m` / `now` / `beginning`). A relative token is FORWARDED UNCHANGED: `receivedAfter`
+ * resolves it server-side (the same `parseSince` grammar the CLI shares), and trying to parse it as an
+ * instant here would reject it (`new Date("7d")` is `Invalid Date`). Anything else is treated as an instant
+ * and normalized to ISO via `parseIsoDate` — preserving the lenient date parsing (`2026-07-09`) the strict
+ * RFC3339 grammar would otherwise refuse. True garbage still throws a usage error.
+ */
+export function parseReceivedAfter(value: string): string {
+  const parsed = parseSince(value);
+  if (parsed.kind === "now" || parsed.kind === "beginning" || parsed.kind === "relative") {
+    return value;
+  }
+  return parseIsoDate(value);
 }
 
 /**
