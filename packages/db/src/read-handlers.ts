@@ -211,6 +211,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         dedupStrategy?: string | string[];
         method?: string | string[];
         eventType?: string;
+        headerSearch?: string;
       };
     };
     const provider = asArray(filter?.provider);
@@ -237,6 +238,9 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       dedupStrategy: asArray(filter?.dedupStrategy) as DedupStrategy[] | undefined,
       method: asArray(filter?.method),
       eventType: filter?.eventType,
+      // #24: a SEPARATE, deliberately-unindexed header substring residual — AND-composes with `search`,
+      // never OR'd into it (the fast trigram search stays un-poisoned). Contract-validated (min 1, max 256).
+      headerSearch: filter?.headerSearch,
     };
     const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       if (endpointId === undefined) {

@@ -298,3 +298,56 @@ test("the method + event-type facets filter the org list (and NULL-method rows d
   await expect(page.getByRole("cell", { name: postId })).toBeVisible();
   await expect(page.getByRole("cell", { name: getId })).toHaveCount(0);
 });
+
+// #24: the header-search facet, end-to-end in a real browser. The unit + jsdom tests "cannot see the cascade"
+// — they can't prove the input actually renders in the RSC page, commits on Enter, threads through to the DB
+// read, and that Clear resets it. Seeds its own endpoint + events with distinct HEADERS (the shared seed
+// doesn't) so the assertions are about rows this test controls. Header search is UNINDEXED + commits on
+// Enter/blur (not as-you-type), and matches header names/values — here we match a header NAME substring.
+test("the header-search facet filters the org list and Clear resets it", async ({ page }) => {
+  const { orgs, users, appConnectionString } = world();
+  const db = createClient(appConnectionString, { max: 1 });
+  let shopifyId: string;
+  let otherId: string;
+  try {
+    const ep = (await createEndpoint(db, { orgId: orgs.alpha.id, name: "hdr-ep" }, hasher)).id;
+    const mk = async (headers: [string, string][]) => {
+      const id = newId();
+      await withTenant(
+        db,
+        orgs.alpha.id,
+        (tx) => tx`
+          insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, headers,
+                              dedup_key, dedup_strategy, method, provider, verified)
+          values (${id}, ${orgs.alpha.id}, ${ep}, ${`k/${id}`}, 10, ${tx.json(headers)}::jsonb,
+                  ${`unique:${id}`}, 'unique', 'POST', 'stripe', true)`,
+      );
+      return id;
+    };
+    shopifyId = await mk([["x-shopify-topic", "orders/create"]]);
+    otherId = await mk([["content-type", "application/json"]]);
+  } finally {
+    await db.end();
+  }
+
+  await signIn(page, users.dana.id, orgs.alpha.id);
+  await page.goto(`/org/${orgs.alpha.slug}/events`);
+  // Both seeded rows are present before filtering (the org page defaults to the last 7 days; these are fresh).
+  await expect(page.getByRole("cell", { name: shopifyId })).toBeVisible();
+  await expect(page.getByRole("cell", { name: otherId })).toBeVisible();
+
+  // Type a header NAME substring and commit on Enter (NOT as-you-type). The URL carries ?headerSearch=, the
+  // matching row stays, the other drops.
+  const headerInput = page.getByLabel("Search request headers");
+  await headerInput.fill("x-shopify-topic");
+  await headerInput.press("Enter");
+  await expect(page).toHaveURL(/[?&]headerSearch=x-shopify-topic\b/);
+  await expect(page.getByRole("cell", { name: shopifyId })).toBeVisible();
+  await expect(page.getByRole("cell", { name: otherId })).toHaveCount(0);
+
+  // Clear wipes it: ?headerSearch drops from the URL and both rows return.
+  await page.getByRole("button", { name: /Clear filters/ }).click();
+  await expect(page).not.toHaveURL(/[?&]headerSearch=/);
+  await expect(page.getByRole("cell", { name: shopifyId })).toBeVisible();
+  await expect(page.getByRole("cell", { name: otherId })).toBeVisible();
+});

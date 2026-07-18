@@ -78,7 +78,15 @@ export type EventsResult =
       readonly nextCursor: Cursor | null;
     }
   | { readonly status: "not_found" }
-  | { readonly status: "error" };
+  /**
+   * `reason` mirrors {@link OrgEventsResult} so the per-endpoint page can advise something the reader can ACT
+   * on. This page browses ALL-TIME (no 7d default, unlike the org-wide page), so an unindexed residual — the
+   * headerSearch scan (#24) over `headers::text` — can DETERMINISTICALLY blow the 5s browse statement_timeout
+   * (Postgres 57014). "Refresh to try again" then cannot work (the query is deterministic); narrowing the date
+   * range is the only thing that helps. `unknown` keeps the generic message for a real blip, where refreshing
+   * IS the right advice.
+   */
+  | { readonly status: "error"; readonly reason: "timeout" | "unknown" };
 
 /**
  * The ORG-WIDE events browse result.
@@ -361,7 +369,9 @@ async function readEvents(
     };
   } catch (error) {
     logActionError("events.list_failed", error);
-    return { status: "error" };
+    // Preserve the 57014/timeout signal exactly as readOrgEvents does — the per-endpoint page browses all-time,
+    // so a deterministic timeout here needs the actionable "narrow the range" banner, not a useless "refresh".
+    return { status: "error", reason: browseErrorReason(error) };
   }
 }
 

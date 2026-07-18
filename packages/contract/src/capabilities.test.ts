@@ -17,6 +17,7 @@ import {
   replayDestinationsCreate,
   replayDestinationsDelete,
   replayDestinationsList,
+  SEARCH_MAX_LENGTH,
 } from "./capabilities";
 import {
   CAPABILITY_ERRORS,
@@ -324,6 +325,51 @@ describe("events.list filter (provider + received-at range)", () => {
       filter: { search: "   " },
     });
     expect(blank.success).toBe(false); // min(1) after trim
+  });
+
+  it("accepts a headerSearch term at min(1) — deliberately NOT the search min(3) trigram floor", () => {
+    // headerSearch is an UNINDEXED substring over headers::text, so pg_trgm's 3-char floor does not apply —
+    // a 1-char term is valid (unlike `search`, which the same file rejects below 3). It trims like search.
+    const one = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { headerSearch: "x" },
+    });
+    expect(one.filter?.headerSearch).toBe("x");
+    const trimmed = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { headerSearch: "  x-shopify-topic  " },
+    });
+    expect(trimmed.filter?.headerSearch).toBe("x-shopify-topic"); // trimmed
+    // Blank/whitespace-only is rejected (min(1) after trim) — the surfaces omit the field for "no filter".
+    expect(
+      eventsList.input.safeParse({
+        endpointId: "11111111-1111-4111-8111-111111111111",
+        filter: { headerSearch: "   " },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("caps headerSearch at SEARCH_MAX_LENGTH (reused) and rejects an over-max term", () => {
+    const ok = eventsList.input.safeParse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { headerSearch: "x".repeat(SEARCH_MAX_LENGTH) },
+    });
+    expect(ok.success).toBe(true);
+    const tooLong = eventsList.input.safeParse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { headerSearch: "x".repeat(SEARCH_MAX_LENGTH + 1) },
+    });
+    expect(tooLong.success).toBe(false);
+  });
+
+  it("AND-composes headerSearch alongside search (two independent, separate facets)", () => {
+    const parsed = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { search: "evt_abc", headerSearch: "x-shopify-topic" },
+    });
+    // Both are present + distinct — headerSearch is its OWN facet, never folded into `search`.
+    expect(parsed.filter?.search).toBe("evt_abc");
+    expect(parsed.filter?.headerSearch).toBe("x-shopify-topic");
   });
 
   it("produces a JSON-Schema-serializable input (no ZodDate) — MCP tools/list must not throw", () => {

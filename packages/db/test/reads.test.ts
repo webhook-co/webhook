@@ -449,6 +449,61 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect((await search("evt_h1")).items).toHaveLength(1);
   });
 
+  // #24: headerSearch RESTORES header search as its OWN opt-in facet — an UNINDEXED `headers::text ilike`
+  // residual (the GIN was refused at ~88x ingest write-amp, above). It is SEPARATE from `search`: the fast
+  // trigram search stays un-poisoned, and this AND-composes with it rather than OR'ing in.
+  it("headerSearch matches a substring of the raw headers, case-insensitively; a non-match is excluded", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-hdrsearch" }, hasher)).id;
+    const shopify = await seedEvent(orgA, ep, {
+      providerEventId: "evt_shop",
+      headers: [
+        ["content-type", "application/json"],
+        ["x-shopify-topic", "orders/create"],
+      ],
+    });
+    await seedEvent(orgA, ep, {
+      providerEventId: "evt_other",
+      headers: [["content-type", "application/json"]],
+    });
+    const headerSearch = (term: string) =>
+      withTenant(app, orgA, (tx) =>
+        listEvents(tx, { endpointId: ep, limit: 50, headerSearch: term }),
+      );
+
+    // a header NAME
+    expect((await headerSearch("x-shopify-topic")).items.map((e) => e.id)).toEqual([shopify]);
+    // a header VALUE
+    expect((await headerSearch("orders/create")).items.map((e) => e.id)).toEqual([shopify]);
+    // case-insensitive (ilike)
+    expect((await headerSearch("X-SHOPIFY-TOPIC")).items.map((e) => e.id)).toEqual([shopify]);
+    // a term in no row's headers → empty
+    expect((await headerSearch("stripe-signature")).items).toEqual([]);
+    // HONESTY PIN (#24, review): headers are stored as a jsonb ARRAY of [name, value] pairs, so `headers::text`
+    // serializes to `[["x-shopify-topic", "orders/create"]]` — NOT wire form. A user pasting a wire-form header
+    // LINE (`name: value`) matches NOTHING, because that `: ` separator isn't in the serialized text. The copy
+    // everywhere says "names and values", never "paste a header line" — this asserts the residual is honest.
+    expect((await headerSearch("x-shopify-topic: orders/create")).items).toEqual([]);
+  });
+
+  it("headerSearch AND-composes with search — an event matching search but NOT headerSearch is excluded", async () => {
+    // Proves the two are SEPARATE AND'd filters, not OR'd. A row matching `search` (its provider_event_id)
+    // but NOT `headerSearch` (its headers) must be excluded — an OR would have kept it.
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-hdr-and" }, hasher)).id;
+    const both = await seedEvent(orgA, ep, {
+      providerEventId: "evt_match",
+      headers: [["x-shopify-topic", "orders/create"]],
+    });
+    // Matches `search` (evt_match) but its headers do NOT contain "shopify" → excluded by the AND.
+    await seedEvent(orgA, ep, {
+      providerEventId: "evt_match_2",
+      headers: [["content-type", "application/json"]],
+    });
+    const got = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, search: "evt_match", headerSearch: "shopify" }),
+    );
+    expect(got.items.map((e) => e.id)).toEqual([both]);
+  });
+
   it("listEvents multi-selects provider (OR) and verificationState (OR)", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-multi" }, hasher)).id;
     const s = await seedEvent(orgA, ep, { provider: "stripe", verified: true });
@@ -682,6 +737,22 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     })) as { items: { provider: string | null }[] };
     expect(page.items.length).toBeGreaterThanOrEqual(2);
     expect(page.items.every((e) => e.provider === "github")).toBe(true);
+  });
+
+  it("events.list threads headerSearch through the shared handler (api + mcp path)", async () => {
+    // The handler is what api + mcp both dispatch to, so this proves the facet actually reaches browseEvents
+    // there (not just via a direct listEvents call). Seed a row whose headers carry a unique marker.
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-hdr-handler" }, hasher)).id;
+    const marked = await seedEvent(orgA, ep, {
+      headers: [["x-uniquehdr-24", "present"]],
+    });
+    await seedEvent(orgA, ep, { headers: [["content-type", "application/json"]] });
+    const page = (await handlers.get("events.list")!(ctxA, {
+      endpointId: ep,
+      limit: 50,
+      filter: { headerSearch: "x-uniquehdr-24" },
+    })) as { items: { id: string }[] };
+    expect(page.items.map((e) => e.id)).toEqual([marked]);
   });
 
   it("events.list org-wide omits headCursor (the endpoint-scoped resume position doesn't apply)", async () => {

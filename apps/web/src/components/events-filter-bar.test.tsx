@@ -233,6 +233,65 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     expect(input.value).toBe("");
   });
 
+  it("header search is a free text input; the slower-scan hint stays silent until a filter is set", () => {
+    // #24: no header-search filter yet → the perf caveat is silent and the box doesn't point at it (so a
+    // screen reader doesn't announce "slower scan" on every focus of an empty box). Mirrors eventType.
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText("Search request headers");
+    expect(input).not.toHaveAttribute("aria-describedby");
+    expect(
+      screen.queryByText(/Matches a substring of request header names and values/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("the slower-scan hint is announced once a header search is applied", () => {
+    mockSearch = "headerSearch=x-shopify-topic";
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText("Search request headers");
+    expect(input).toHaveAttribute("aria-describedby", "events-headersearch-hint");
+    expect(
+      screen.getByText(/Matches a substring of request header names and values/),
+    ).toBeInTheDocument();
+  });
+
+  it("commits a header search on blur (NOT debounced-as-you-type), as its own ?headerSearch= facet", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Search request headers");
+    await user.type(input, "  x-shopify-topic  ");
+    // Typing alone must NOT push (unlike the debounced search box) — it commits only on Enter/blur.
+    expect(replace).not.toHaveBeenCalled();
+    await user.tab(); // blur → commit
+    expect(replace).toHaveBeenCalled();
+    const url = String(replace.mock.calls.at(-1)?.[0]);
+    // Its OWN query param — never folded into ?search=; trimmed.
+    expect(url).toContain("headerSearch=x-shopify-topic");
+    expect(url).not.toContain("search=x-shopify"); // not merged into the fast search
+    expect(input.value).toBe("x-shopify-topic");
+  });
+
+  it("accepts a 1-2 char header search (no trigram floor — the scan is unindexed)", async () => {
+    // Unlike --search / the search box (min 3), header search has no floor: it's unindexed, so a short term
+    // is valid (it just runs a slower scan). Committing "ab" must reach the URL.
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Search request headers");
+    await user.type(input, "ab");
+    await user.tab();
+    expect(String(replace.mock.calls.at(-1)?.[0])).toContain("headerSearch=ab");
+  });
+
+  it("Clear filters wipes typed-but-uncommitted header-search text", async () => {
+    mockSearch = "provider=stripe";
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Search request headers");
+    await user.type(input, "x-shopify-topic");
+    expect(input.value).toBe("x-shopify-topic");
+    await user.click(screen.getByRole("button", { name: /Clear filters/ }));
+    expect(input.value).toBe("");
+  });
+
   it("Clear filters wipes typed-but-uncommitted event-type text", async () => {
     // With a filter already applied, Clear is enabled. An event type typed but not yet committed (no
     // Enter/blur) has no URL value to sync from, so it would linger after Clear unless reset explicitly.
