@@ -48,6 +48,7 @@ export * from "./secret-store";
 export * from "./redaction";
 export * from "./telemetry-safety";
 export * from "./telemetry-catalog";
+export * from "./telemetry-emit";
 export * from "./metering";
 export * from "./secrets";
 export * from "./ssrf";

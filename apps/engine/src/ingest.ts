@@ -25,6 +25,7 @@ import {
   utf8Decoder,
   type DedupConfig,
   type DedupStrategy,
+  type MetricName,
   type Provider,
   type VerificationResult,
 } from "@webhook-co/shared";
@@ -160,6 +161,13 @@ export interface IngestDeps {
   now(): Date;
   /** Structured log sink. Headers passed here MUST already be scrubbed. */
   log(event: string, fields: Record<string, unknown>): void;
+  /**
+   * Bounded RED-metric sink (Analytics Engine, ADR-0124). Best-effort + optional: production wires it to
+   * the METRICS AE binding; tests/handshake paths may omit it. Labels MUST be bounded enums — the emit
+   * boundary (assertBoundedMetricLabels) rejects an id/PII-shaped or undeclared label. NEVER pass a
+   * tenant/endpoint/event id or a URL.
+   */
+  metric?(name: MetricName, labels: Record<string, string>, value?: number): void;
   /** Max captured body bytes (default MAX_VERIFIABLE_BODY_BYTES). Oversized -> 413. */
   maxBodyBytes: number;
 }
@@ -323,6 +331,12 @@ export function slackUrlVerificationChallenge(raw: Uint8Array): string | null {
 }
 
 export async function handleIngest(request: Request, deps: IngestDeps): Promise<Response> {
+  const tStart = performance.now();
+  // ingest.requests counter (RED rate + errors) — bounded {outcome, method, verified}. Best-effort; the
+  // emit boundary rejects an unbounded/id-shaped label, and `metric` is optional (no-op when unwired).
+  const count = (outcome: string, verified = "unattempted"): void =>
+    deps.metric?.("ingest.requests", { outcome, method: request.method, verified });
+
   // Accept-all-verbs (ADR-0085): capture every standard method (the inspector model). The supported-set
   // gate stays BEFORE token resolution so a rejected (non-standard) verb is answered uniformly and leaks
   // no token validity.
@@ -337,7 +351,10 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   const tResolve = performance.now();
   const endpoint = await deps.resolve(token);
   const resolveMs = performance.now() - tResolve; // I/O step timing (KV hot / cold Hyperdrive) — Slice 2
-  if (endpoint === null) return plain(404, "not found"); // unknown token — no hints, no breadcrumbs
+  if (endpoint === null) {
+    count("unknown"); // unknown token — no hints, no breadcrumbs
+    return plain(404, "not found");
+  }
 
   // GET verification-handshake (ADR-0086): if a GET carries a known challenge protocol (Dropbox/Adobe
   // `?challenge=`, Adobe Sign `X-AdobeSign-ClientId`, X CRC `crc_token`; Meta/eBay in a follow-up PR),
@@ -369,6 +386,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // to an active endpoint's) but captures NOTHING: a paused endpoint stores and bills nothing.
   if (endpoint.paused) {
     if (isLivenessVerb(request.method)) return livenessAck(request.method);
+    count("paused");
     return plain(429, "endpoint paused", { "retry-after": String(PAUSED_RETRY_AFTER_SECONDS) });
   }
 
@@ -376,10 +394,15 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // a lying/absent Content-Length can't smuggle an oversized body in (readCappedBody aborts the read
   // the moment the running total breaches the cap, never buffering the whole body first).
   const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > deps.maxBodyBytes)
+  if (Number.isFinite(declared) && declared > deps.maxBodyBytes) {
+    count("too_large");
     return plain(413, "payload too large");
+  }
   const raw = await readCappedBody(request.body, deps.maxBodyBytes);
-  if (raw === null) return plain(413, "payload too large");
+  if (raw === null) {
+    count("too_large");
+    return plain(413, "payload too large");
+  }
 
   // Capture: exact body bytes + normalized headers (see the header-fidelity note above).
   const headers: [string, string][] = [...request.headers];
@@ -480,6 +503,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     r2PutMs = performance.now() - tPut; // I/O step timing (R2 PUT) — Slice 2
   } catch (err) {
     deps.log("ingest.r2_put_failed", { endpointId: endpoint.endpointId, error: String(err) });
+    count("error");
     return plain(500, "internal error");
   }
 
@@ -541,6 +565,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     insertMs = performance.now() - tInsert; // I/O step timing (ingest_event over Hyperdrive) — Slice 2
   } catch (err) {
     deps.log("ingest.insert_failed", { endpointId: endpoint.endpointId, error: String(err) });
+    count("error");
     return plain(500, "internal error");
   }
 
@@ -607,6 +632,11 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     insertMs,
     headers: redactHeadersForLog(headers), // signature/auth headers never logged verbatim
   });
+  // RED metrics (ADR-0124): the captured/duplicate outcome (rate) + the full-orchestration ACK duration.
+  const captureOutcome = inserted ? "captured" : "duplicate";
+  count(captureOutcome, String(outcome.verified));
+  deps.metric?.("ingest.duration_ms", { outcome: captureOutcome }, performance.now() - tStart);
+
   // ACK. Capture already happened above for every verb; this only varies the success body: write verbs
   // get the terse "ok", while GET/HEAD/OPTIONS get a browser-facing liveness response (constant, nothing
   // resolved reflected). A paused endpoint / unknown token never reaches here (liveness / 429 / 404 above).

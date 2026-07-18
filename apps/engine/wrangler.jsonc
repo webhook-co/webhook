@@ -185,6 +185,9 @@
       "bucket_name": "webhook-payloads-dev",
     },
   ],
+  // Analytics Engine — bounded RED metrics (S6, ADR-0124). No PII/id labels (ADR-0125); in-CF,
+  // cardinality-free, auto-created — no secret, no id, so gen-wrangler-prod passes it through untouched.
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "wbhk_engine_metrics" }],
   // KV_CONFIG caches endpoint resolution on the ingest hot path (keyed by ingest-token hash).
   // KV is the ONLY ingest cache because it can be invalidated on pause/rotate/delete; the cold
   // path (webhook_authn) runs through the cache-disabled Hyperdrive binding. `id` is the
