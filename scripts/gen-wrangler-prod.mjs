@@ -147,6 +147,10 @@ const APPS = {
       // strips the @gen-optional block and the engine deploys dark until the role + Hyperdrive are
       // provisioned (which also clamps the meter-reconcile lookback — they activate together).
       "HYPERDRIVE_RETENTION_ID",
+      // #665: the async org-deletion reaper's cross-org role. Unset for now, so the overlay strips the
+      // @gen-optional block and the engine deploys dark until the role + Hyperdrive are provisioned; the
+      // reaper cron then skips.
+      "HYPERDRIVE_REAPER_ID",
       // PR2b: the free-org-cap reconciler's cross-USER role. Unset for now, so the overlay strips the
       // @gen-optional block and the engine deploys dark until the role + Hyperdrive are provisioned; the
       // reconcile cron then skips.
