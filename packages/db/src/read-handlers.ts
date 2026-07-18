@@ -362,10 +362,10 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     ensureScope(ctx, auditVerify);
     parse(auditVerify, input); // input is {} — validate it's shaped right
     // Stream the chain page-by-page (#636) — the whole chain in memory is a Worker OOM risk that grows with
-    // org age. verifyAuditChainPaged carries the prior page's tail so every hash-chain check still holds.
-    return withTenant(deps.tenant, ctx.orgId, (tx) =>
-      verifyAuditChainPaged(tx, ctx.orgId, deps.auditKey),
-    );
+    // org age. verifyAuditChainPaged carries the prior page's tail so every hash-chain check still holds, and
+    // opens its OWN short transaction per page (so it takes the pool, not a tx) rather than pinning one
+    // connection across the whole verification.
+    return verifyAuditChainPaged(deps.tenant, ctx.orgId, deps.auditKey);
   });
 
   // usage.get (S4.2): the metering usage surface for the caller's org + current billing period. Empty
