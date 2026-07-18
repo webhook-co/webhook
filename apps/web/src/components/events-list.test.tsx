@@ -303,7 +303,7 @@ describe("EventsList live tail", () => {
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
   });
 
-  function renderLive(mintTicket: (id: string) => Promise<MintTicketResult> = mintOk) {
+  function renderLive(mintTicket: () => Promise<MintTicketResult> = mintOk) {
     return render(
       <EventsList
         endpointId={ENDPOINT_ID}

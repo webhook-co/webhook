@@ -96,6 +96,20 @@ test("lists events from EVERY endpoint in the org, and links each row to ITS OWN
     "href",
     `/org/${orgs.alpha.slug}/endpoints/${seeded.alphaTwo}/events/${seeded.alphaEventOnTwo}`,
   );
+
+  // The org-wide live-tail toggle must actually render AND be interactive — a unit test can't see whether the
+  // RSC page WIRED the live props (liveWsUrl + the org mint action) into OrgEventsList; if it forgot,
+  // `liveAvailable` is false and the button never appears. Assert it renders, then click it and check
+  // aria-pressed flips, so a render-but-dead button (regressed onClick) can't pass. (The socket itself fails
+  // to connect in the e2e env — no engine — which is fine; we only prove the toggle wiring, not the stream.)
+  const goLive = page.getByRole("button", { name: /go live/i });
+  await expect(goLive).toBeVisible();
+  await expect(goLive).toHaveAttribute("aria-pressed", "false");
+  await goLive.click();
+  await expect(page.getByRole("button", { name: /stop live/i })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });
 
 test("a row's link actually resolves to the event detail page (it is not a 404)", async ({

@@ -46,9 +46,19 @@ export type WebSocketCtor = new (url: string, protocols?: string | string[]) => 
 export interface LiveEventsSessionOptions {
   /** The `wss://…/listen` base URL (derived server-side from the ingest apex; never hardcoded here). */
   readonly wsUrl: string;
-  readonly endpointId: string;
-  /** Mint a fresh listen ticket (the session-authed web action); called before every (re)connect. */
-  readonly mintTicket: (endpointId: string) => Promise<MintTicketResult>;
+  /**
+   * The endpoint to tail, or OMITTED for an ORG-WIDE tail (the consolidated events page). When present the
+   * connect query carries `endpointId=`; when absent it does not. The engine derives scope from the verified
+   * TICKET (`mintTicket`), not this param — this only shapes the query string, so omitting it plus an
+   * org-scoped mint is what makes the tail org-wide.
+   */
+  readonly endpointId?: string;
+  /**
+   * Mint a fresh listen ticket (the session-authed web action); called before every (re)connect. Scope-
+   * agnostic and pre-bound by the caller — an endpoint page binds `(slug, endpointId)`, the org page binds
+   * `(slug)` — so the session never needs to know which scope it is.
+   */
+  readonly mintTicket: () => Promise<MintTicketResult>;
   /** Each arrived, already-mapped event item (the consumer prepends + dedups). */
   readonly onEvent: (item: EventSummaryItem) => void;
   /** The latest cursor-contract status (caught-up + capped backlog lag). */
@@ -205,7 +215,7 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     onConnectionChange("connecting");
     let minted: MintTicketResult;
     try {
-      minted = await mintTicket(endpointId);
+      minted = await mintTicket();
     } catch {
       if (stopped) return;
       onError?.("We couldn't reach the live stream. Retrying…");
@@ -249,7 +259,9 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     // already holds a binding, and listen-session's `existing` branch leaves the durable cursor untouched
     // without reading either header. The seed is what makes the NO-sessionId paths (remount, tab show, a
     // cold DO) correct — and those are the common ones, not the exotic ones.
-    const params = new URLSearchParams({ endpointId });
+    // endpointId only for an endpoint tail; an org tail omits it (scope comes from the verified ticket).
+    const params = new URLSearchParams();
+    if (endpointId) params.set("endpointId", endpointId);
     if (seedFrom) params.set("sinceCursor", seedFrom);
     else params.set("since", "now");
     if (sessionId) params.set("sessionId", sessionId);

@@ -10,11 +10,14 @@ import {
   filterListKey,
   firstParam,
   hasAppliedFilters,
+  hasLiveIncompatibleFilters,
   parseEventFilters,
 } from "@/lib/event-filters";
 import { queryString } from "@/lib/org-url";
 import { loadMoreOrgEventsAction } from "@/server/event-actions";
+import { getListenWsUrl } from "@/server/env";
 import { loadOrgEvents } from "@/server/events";
+import { mintOrgListenTicketAction } from "@/server/listen-ticket-actions";
 import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
@@ -166,6 +169,9 @@ export default async function OrgEventsPage({
           isFiltered={hasAppliedFilters(filters)}
           endpointNames={result.endpointNames}
           loadMore={loadMoreOrgEventsAction.bind(null, session.slug)}
+          liveWsUrl={getListenWsUrl()}
+          mintTicket={mintOrgListenTicketAction.bind(null, session.slug)}
+          filtersBlockLive={hasLiveIncompatibleFilters(filters)}
         />
       )}
     </PageContainer>

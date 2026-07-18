@@ -116,6 +116,31 @@ describe("useLiveEvents", () => {
     expect(result.current.items.map((e) => e.id)).toEqual([NEW, EXISTING]);
   });
 
+  it("dedups a live event against a row already in the list even after many events (no head-cap eviction)", async () => {
+    // Guards the removed-cap decision: prepend must dedup against the FULL list (incl. paginated rows at the
+    // tail), and must never evict rows by slicing. Seed a row, pump many live events, then re-deliver the seed
+    // — it must NOT double, and the seed must still be present (not sliced off the tail).
+    const SEED = "0190a1b2-c3d4-7e5f-8a0b-0000dead0001";
+    const { result } = renderHook(() => useHarness({ enabled: true, initial: [existing(SEED)] }));
+    await act(async () => {
+      await flush();
+    });
+    const ws = FakeWebSocket.instances[0];
+    act(() => ws.ready());
+    act(() => {
+      for (let i = 0; i < 200; i++) {
+        ws.event(`0190a1b2-c3d4-7e5f-8a0b-${String(i).padStart(12, "0")}`);
+      }
+    });
+    // The seed (an anchored/paginated-style row) is still present at the tail — never evicted.
+    expect(result.current.items.some((e) => e.id === SEED)).toBe(true);
+    const before = result.current.items.length;
+    // Re-delivering the seed does not double it (dedup scans the full list, not a capped window).
+    act(() => ws.event(SEED));
+    expect(result.current.items.filter((e) => e.id === SEED)).toHaveLength(1);
+    expect(result.current.items).toHaveLength(before);
+  });
+
   it("reflects caughtUp / lag from status frames", async () => {
     const { result } = renderHook(() => useHarness({ enabled: true }));
     await act(async () => {

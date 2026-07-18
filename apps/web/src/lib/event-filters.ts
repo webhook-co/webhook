@@ -260,6 +260,28 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
 }
 
 /**
+ * True when a filter is active that a `since=now` LIVE tail cannot honour — so the Live toggle is disabled
+ * rather than stream events that contradict the active chips. This is a STRICT SUBSET of hasAppliedFilters:
+ * a lower date bound (`receivedAfter`, INCLUDING the page's default 7-day range) is deliberately EXCLUDED,
+ * because live events always arrive "now" — after any past lower bound — so they never violate it. An UPPER
+ * bound (`receivedBefore`) in the past DOES exclude "now", and every content facet narrows what a live event
+ * may be, so those all block live. The wire summary can't carry method/eventType/search fields to re-apply
+ * them client-side, so blocking (not partial client-filtering) is the honest choice.
+ */
+export function hasLiveIncompatibleFilters(filters: EventFilters): boolean {
+  return (
+    filters.provider !== undefined ||
+    filters.receivedBefore !== undefined ||
+    filters.verificationState !== undefined ||
+    filters.search !== undefined ||
+    filters.endpointId !== undefined ||
+    filters.method !== undefined ||
+    filters.dedupStrategy !== undefined ||
+    filters.eventType !== undefined
+  );
+}
+
+/**
  * The search bounds, mirroring the contract's `.trim().min().max()`.
  *
  * DECLARED here rather than imported, deliberately. This module is imported by the CLIENT filter bar, and the

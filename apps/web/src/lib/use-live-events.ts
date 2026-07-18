@@ -23,9 +23,10 @@ export interface UseLiveEventsOptions {
   readonly enabled: boolean;
   /** The `wss://…/listen` URL (derived server-side; passed through as a prop). */
   readonly wsUrl: string;
-  readonly endpointId: string;
-  /** The session-authed mint action (a stable server-action reference). */
-  readonly mintTicket: (endpointId: string) => Promise<MintTicketResult>;
+  /** The endpoint to tail, or OMITTED for an org-wide tail (the consolidated events page). */
+  readonly endpointId?: string;
+  /** The session-authed mint action, scope-agnostic + pre-bound (a stable RSC-passed server-action ref). */
+  readonly mintTicket: () => Promise<MintTicketResult>;
   /** The list-state setter the live tail prepends into (dedup happens here). */
   readonly setItems: React.Dispatch<React.SetStateAction<readonly EventSummaryItem[]>>;
   /** Injected for tests (a FakeWebSocket); defaults to the browser `WebSocket`. */
@@ -97,6 +98,15 @@ export function useLiveEvents({
 
   // Prepend + dedup by id: a live event already present in the list (e.g. it also arrived via a page load)
   // is not re-added; a genuinely new one goes to the top.
+  //
+  // Deliberately NOT capped by slicing the array. `items` is SHARED with pagination — "Load older" APPENDS
+  // rows at the tail — so a head-keeping `slice(0, N)` would silently evict the rows the user deliberately
+  // paged in, leaving a non-refetchable gap (the pager's cursor already sits past them). A Set-based O(1)
+  // dedup can't replace `.some(prev)` either: the Set the hook owns is blind to those paginated rows, so it
+  // would re-prepend a live duplicate of one. The dedup MUST scan the full `prev` (all sources), and that is
+  // the only correct bound available here. Growth is bounded in practice by the hidden-tab auto-pause + the
+  // realistic org event rate; if a true blowup is ever measured, a correct cap must track live-vs-anchored
+  // rows rather than slice the shared array.
   const handleEvent = React.useCallback(
     (item: EventSummaryItem) => {
       setItems((prev) => (prev.some((e) => e.id === item.id) ? prev : [item, ...prev]));
