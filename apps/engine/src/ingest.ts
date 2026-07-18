@@ -334,7 +334,9 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   const token = ingestPathToken(url);
   if (!token) return plain(404, "not found");
 
+  const tResolve = performance.now();
   const endpoint = await deps.resolve(token);
+  const resolveMs = performance.now() - tResolve; // I/O step timing (KV hot / cold Hyperdrive) — Slice 2
   if (endpoint === null) return plain(404, "not found"); // unknown token — no hints, no breadcrumbs
 
   // GET verification-handshake (ADR-0086): if a GET carries a known challenge protocol (Dropbox/Adobe
@@ -471,8 +473,11 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     derived.dedupKey,
     derived.contentHash,
   );
+  let r2PutMs: number;
   try {
+    const tPut = performance.now();
     await deps.putPayload(key, raw, contentType);
+    r2PutMs = performance.now() - tPut; // I/O step timing (R2 PUT) — Slice 2
   } catch (err) {
     deps.log("ingest.r2_put_failed", { endpointId: endpoint.endpointId, error: String(err) });
     return plain(500, "internal error");
@@ -511,7 +516,9 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // once so the durable row and the auto-delivery routing agree on the event's type.
   const eventType = extractEventType(provider, raw, headers);
   let inserted: boolean;
+  let insertMs: number;
   try {
+    const tInsert = performance.now();
     ({ inserted } = await deps.ingestEvent({
       id: eventId,
       orgId: endpoint.orgId,
@@ -531,6 +538,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       verified: outcome.verified,
       verification: outcome.verification,
     }));
+    insertMs = performance.now() - tInsert; // I/O step timing (ingest_event over Hyperdrive) — Slice 2
   } catch (err) {
     deps.log("ingest.insert_failed", { endpointId: endpoint.endpointId, error: String(err) });
     return plain(500, "internal error");
@@ -591,6 +599,12 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     verified: outcome.verified,
     method: request.method,
     bytes: raw.byteLength,
+    // I/O-step timings (ms) — the p99 decomposition of the ACK budget, so a paging "insert p99 up" alert
+    // says WHICH cross-cloud step moved. I/O-ONLY: pure-compute steps (verify / deriveDedup) are omitted
+    // because workerd freezes the clock across compute (Spectre), so a compute "span" reads ~0 and misleads.
+    resolveMs,
+    r2PutMs,
+    insertMs,
     headers: redactHeadersForLog(headers), // signature/auth headers never logged verbatim
   });
   // ACK. Capture already happened above for every verb; this only varies the success body: write verbs
