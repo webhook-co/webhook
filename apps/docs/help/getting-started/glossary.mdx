@@ -1,0 +1,61 @@
+---
+title: "Glossary"
+sidebarTitle: "Glossary"
+description: "Plain-English definitions of the words webhook.co uses — endpoint, ingest URL, event, destination, delivery, and more."
+icon: "book-open"
+---
+
+The words that come up most, defined. Each links to a deeper explanation where there is one.
+
+<AccordionGroup>
+  <Accordion title="Organization">
+    Your workspace — the tenant that owns everything: endpoints, events, team members, and billing.
+    You can belong to more than one. "Team" refers to the people in an organization, not a separate
+    thing.
+  </Accordion>
+  <Accordion title="Endpoint">
+    A single ingest URL and its settings. You point a provider at an endpoint's URL, and every
+    request to it becomes an event. An endpoint can be paused, resumed, and configured for
+    verification and deduplication.
+  </Accordion>
+  <Accordion title="Ingest URL">
+    The permanent web address that receives requests, on the dedicated `wbhk.my` domain
+    (`https://wbhk.my/…`). It's [signed and re-viewable](/concepts/ingest-urls), and unknown
+    addresses return a 404.
+  </Accordion>
+  <Accordion title="Event">
+    One captured request. The raw bytes are written down the moment a request arrives, so you always
+    have a durable copy to inspect, replay, and deliver. See [events and usage](/events-and-usage).
+  </Accordion>
+  <Accordion title="Verification">
+    Checking that a request genuinely came from the provider it claims to. Register the provider's
+    signing secret and each event gets a [verification state](/concepts/inbound-verification):
+    `verified`, `authenticated`, `failed`, or `unattempted`.
+  </Accordion>
+  <Accordion title="Provider">
+    The service sending you webhooks — Stripe, GitHub, Shopify, and [139
+    others](/providers/directory). Each has a known way of signing its requests that webhook.co
+    checks for you.
+  </Accordion>
+  <Accordion title="Destination">
+    A service you forward events to. Destinations are an HTTPS allowlist; webhook.co delivers events
+    to them with retries and dead-lettering.
+  </Accordion>
+  <Accordion title="Delivery">
+    One attempt to send an event to a destination. Deliveries retry on failure and are
+    [dead-lettered](/concepts/delivery-retry-signing) once the schedule is exhausted.
+  </Accordion>
+  <Accordion title="Replay">
+    Re-sending an event you've already captured — to your laptop with `wbhk listen`, or to a
+    destination — instead of asking the provider to send it again. See [replay to
+    localhost](/guides/replay-to-localhost).
+  </Accordion>
+  <Accordion title="Deduplication">
+    Optionally collapsing repeated requests that mean the same thing, so a provider retrying doesn't
+    create duplicate events. Configured per endpoint — see [deduplication](/deduplication).
+  </Accordion>
+  <Accordion title="API key">
+    A `whk_` secret that authenticates the API, CLI, and scripts to your organization. Managed under
+    Credentials — see [authentication](/authentication).
+  </Accordion>
+</AccordionGroup>

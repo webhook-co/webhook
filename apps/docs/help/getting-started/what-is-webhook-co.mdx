@@ -1,0 +1,57 @@
+---
+title: "What webhook.co is"
+sidebarTitle: "What it is"
+description: "A plain-English introduction to webhook.co — a permanent, signed URL that captures, inspects, replays, and delivers your webhooks."
+icon: "circle-info"
+---
+
+**webhook.co gives you a permanent web address that catches webhooks and keeps them safe.** Point any
+service at it, and every request that service sends is captured the instant it arrives — so you can
+look at it, prove it's genuine, replay it, and forward it wherever you need.
+
+## What's a webhook, quickly
+
+A webhook is a message one service sends to another when something happens — a payment succeeded, a
+pull request opened, an order shipped. The sending service (Stripe, GitHub, Shopify, and so on) makes
+an HTTP request to a URL you gave it. The catch: you have to run something at that URL, all the time,
+that receives the message correctly. That's the part webhook.co handles for you.
+
+## What it does
+
+<CardGroup cols={2}>
+  <Card title="Captures every request" icon="inbox-in">
+    You get a permanent URL (`https://wbhk.my/…`). Every request sent to it is written down
+    immediately — before anything else happens — so a bad signature or a downstream outage never
+    costs you the message.
+  </Card>
+  <Card title="Verifies it's genuine" icon="shield-check">
+    Register a provider's signing secret once and each incoming request is checked automatically
+    across [142 providers](/providers/directory) — no verification code for you to write or get
+    wrong.
+  </Card>
+  <Card title="Lets you inspect and replay" icon="magnifying-glass">
+    See the full payload of any captured request in the dashboard, and replay it — to your laptop,
+    or to your live service — instead of asking the sender to try again.
+  </Card>
+  <Card title="Delivers it onward" icon="paper-plane">
+    Forward events to your own service with automatic retries and dead-lettering, so a brief blip on
+    your side doesn't drop messages.
+  </Card>
+</CardGroup>
+
+## Who it's for
+
+- **Developers** integrating a provider's webhooks who want inspection, local replay, and reliable
+  delivery without building the plumbing themselves.
+- **Teams** who need a shared, private place to see what a provider actually sent and when.
+- **Agents and automations** that consume webhooks over [MCP](/mcp/overview).
+
+## How to use it
+
+Everything works the same way whether you prefer clicking, scripting, or code: the
+**dashboard**, the **`wbhk` CLI**, the **API**, and **MCP** are four ways into one product. Nothing is
+public unless you choose to share it.
+
+Ready to try it? [Create an account](/help/getting-started/create-an-account), then follow the
+[Quickstart](/quickstart). Want the deeper technical picture first? See
+[how webhook.co works](/concepts/how-webhook-co-works).
