@@ -191,6 +191,13 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
       case "ready":
         sessionId = frame.sessionId;
         attempt = 0; // a clean connect resets the backoff.
+        // Seed the resume position from CONNECT (#25): the DO reports the cursor it actually seeded/persisted
+        // at (server-resolved, so a skewed browser clock can't shift it). Mirrors the `event` arm — a caller
+        // that survives a pause holds this cursor, so a pause that begins BEFORE the first event still resumes
+        // from a real position instead of falling back to `since=now` and skipping what landed while paused.
+        // `null`/absent = the session seeded from the oldest / has no seed → nothing to resume from; an old
+        // engine that omits the field is tolerated the same way (the schema makes it optional + nullable).
+        if (frame.cursor != null) onCursor?.(frame.cursor);
         onConnectionChange("connected");
         return;
       case "event":
