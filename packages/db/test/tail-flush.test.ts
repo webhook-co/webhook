@@ -245,6 +245,61 @@ describe("flushOrgTail", () => {
     expect(rollupCalls).toBe(4);
   });
 
+  // The counting test above proves the re-roll is 4 BOUNDED statements; this proves they COMMIT per-day, so a
+  // mid-window failure is RESUMABLE — the exact revenue-path claim the docstring makes, on a real Postgres.
+  // A BEFORE trigger on `usage` aborts exactly the 3rd reroll day's rollup, so the flush throws after the
+  // first two days have already committed in their own transactions.
+  it("re-roll commits per-day, so a mid-window failure resumes without double-billing (#637)", async () => {
+    const { orgId, endpointId } = await seedOrg();
+    // Distinct per-day counts across the whole reroll window [07-03..07-06] (oldest→newest).
+    await seedEvents(orgId, endpointId, 3, "2026-07-03");
+    await seedEvents(orgId, endpointId, 5, "2026-07-04");
+    await seedEvents(orgId, endpointId, 7, "2026-07-05");
+    await seedEvents(orgId, endpointId, 2, "2026-07-06");
+
+    // Poison the 3rd reroll day: a BEFORE trigger raises when rollup_usage upserts the 07-05 row, aborting
+    // ONLY that day's transaction. If the re-roll shared one transaction, this would roll back ALL four days.
+    await admin`create or replace function tf_poison_637() returns trigger language plpgsql as $$
+      begin
+        if new.window_start::date = date '2026-07-05' then raise exception 'tf_poison_637'; end if;
+        return new;
+      end $$`;
+    await admin`create trigger tf_poison_637_trg before insert or update on usage
+      for each row execute function tf_poison_637()`;
+
+    try {
+      await expect(flush(orgId, fakeSink().sink)).rejects.toThrow(/tf_poison_637/);
+      // Per-day commit independence: the two days BEFORE the failure are rolled AND committed (visible on a
+      // fresh read despite the later abort); nothing is finalized and the Stripe drain never ran.
+      const partial = await usageDays(orgId);
+      expect(partial.map((d) => d.day)).toEqual(["2026-07-03", "2026-07-04"]);
+      expect(partial.map((d) => d.count)).toEqual([3, 5]);
+      expect(partial.every((d) => !d.finalized)).toBe(true);
+      expect(await outbox(orgId)).toEqual([]);
+    } finally {
+      await admin`drop trigger tf_poison_637_trg on usage`;
+      await admin`drop function tf_poison_637()`;
+    }
+
+    // Resume: a re-run completes every day, finalizes the whole pre-boundary tail, and drains to Stripe with
+    // each day billed EXACTLY once — the two days that had committed before the failure are NOT re-billed.
+    const { sink, calls } = fakeSink();
+    const res = await flush(orgId, sink);
+    const done = await usageDays(orgId);
+    expect(done.map((d) => d.day)).toEqual([
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+    ]);
+    expect(done.map((d) => d.count)).toEqual([3, 5, 7, 2]);
+    expect(done.every((d) => d.finalized)).toBe(true);
+    expect(res.finalized).toBe(4);
+    const identifiers = calls.map((c) => c.identifier);
+    expect(identifiers.length).toBe(4);
+    expect(new Set(identifiers).size).toBe(4); // each tail day billed once — no double-bill on resume
+  });
+
   it("does not double-bill when the normal reporter runs after a flush", async () => {
     const { orgId, endpointId } = await seedOrg();
     await seedEvents(orgId, endpointId, 40, "2026-07-05");
