@@ -20,6 +20,7 @@ interface Calls {
   logs: { event: string; fields: Record<string, unknown> }[];
   order: string[];
   autoDeliver: AutoDeliverArgs[];
+  metrics: { name: string; labels: Record<string, string>; value?: number }[];
 }
 
 // The default endpoint carries `dedupConfig: null` → the OFF default (no auto-dedup). Tests that exercise
@@ -28,7 +29,15 @@ function makeDeps(
   over: Partial<IngestDeps> = {},
   dedupConfig: DedupConfig | null = null,
 ): { deps: IngestDeps; calls: Calls } {
-  const calls: Calls = { put: [], ingest: [], verify: [], logs: [], order: [], autoDeliver: [] };
+  const calls: Calls = {
+    put: [],
+    ingest: [],
+    verify: [],
+    logs: [],
+    order: [],
+    autoDeliver: [],
+    metrics: [],
+  };
   const deps: IngestDeps = {
     resolve: async (token) =>
       token === GOOD
@@ -55,6 +64,7 @@ function makeDeps(
     },
     now: () => new Date("2026-06-14T12:00:00Z"),
     log: (event, fields) => calls.logs.push({ event, fields }),
+    metric: (name, labels, value) => calls.metrics.push({ name, labels, value }),
     maxBodyBytes: 1024 * 1024,
     ...over,
   };
@@ -1086,5 +1096,92 @@ describe("handleIngest — per-endpoint dedup config threads to the key (Slice 2
     // workerd freezes the clock across compute (Spectre), so a compute "span" would read ~0 and mislead.
     expect(f.verifyMs).toBeUndefined();
     expect(f.dedupMs).toBeUndefined();
+  });
+
+  // ── Slice 3: RED metrics (ingest.requests counter + ingest.duration_ms) at every terminal outcome ──
+  const reqLabels = (calls: Calls): Record<string, string> | undefined =>
+    calls.metrics.find((m) => m.name === "ingest.requests")?.labels;
+
+  it("a captured POST emits ingest.requests{captured} + ingest.duration_ms{captured}", async () => {
+    const { deps, calls } = makeDeps(); // default ingestEvent → inserted:true, verify → false
+    await handleIngest(req(GOOD), deps);
+    expect(reqLabels(calls)).toEqual({ outcome: "captured", method: "POST", verified: "false" });
+    const dur = calls.metrics.find((m) => m.name === "ingest.duration_ms");
+    expect(dur?.labels).toEqual({ outcome: "captured" });
+    expect(typeof dur?.value).toBe("number"); // the ACK-budget duration
+  });
+
+  it("a dedup no-op emits ingest.requests{duplicate} (still a success)", async () => {
+    const { deps, calls } = makeDeps({ ingestEvent: async () => ({ inserted: false }) });
+    await handleIngest(req(GOOD), deps);
+    expect(reqLabels(calls)?.outcome).toBe("duplicate");
+  });
+
+  it("a paused endpoint emits ingest.requests{paused}", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: true,
+        sealedSecrets: [],
+        dedupConfig: null,
+      }),
+    });
+    await handleIngest(req(GOOD), deps);
+    expect(reqLabels(calls)?.outcome).toBe("paused");
+  });
+
+  it("an unknown token emits ingest.requests{unknown}", async () => {
+    const { deps, calls } = makeDeps();
+    await handleIngest(req("some-unknown-token"), deps); // resolve → null for a non-GOOD token
+    expect(reqLabels(calls)?.outcome).toBe("unknown");
+  });
+
+  it("a too-large body emits ingest.requests{too_large}", async () => {
+    const { deps, calls } = makeDeps({ maxBodyBytes: 4 });
+    await handleIngest(req(GOOD, { body: "far larger than a 4-byte cap" }), deps);
+    expect(reqLabels(calls)?.outcome).toBe("too_large");
+  });
+
+  it("an insert failure (500) emits ingest.requests{error}", async () => {
+    const { deps, calls } = makeDeps({
+      ingestEvent: async () => {
+        throw new Error("db down");
+      },
+    });
+    await handleIngest(req(GOOD), deps);
+    expect(reqLabels(calls)?.outcome).toBe("error");
+  });
+
+  it("an R2 put failure (500) emits ingest.requests{error}", async () => {
+    const { deps, calls } = makeDeps({
+      putPayload: async () => {
+        throw new Error("r2 down");
+      },
+    });
+    await handleIngest(req(GOOD), deps);
+    expect(reqLabels(calls)?.outcome).toBe("error");
+  });
+
+  it("a declared oversized content-length emits ingest.requests{too_large} (the pre-read reject path)", async () => {
+    const { deps, calls } = makeDeps({ maxBodyBytes: 4 });
+    // Set content-length EXPLICITLY so the pre-read declared-CL 413 fires (the streamed-read path is what
+    // the other too-large test hits, since Miniflare's Request doesn't auto-set content-length).
+    const request = new Request(`https://wbhk.my/${GOOD}`, {
+      method: "POST",
+      body: "x".repeat(100),
+      headers: { "content-type": "application/json", "content-length": "100" },
+    });
+    await handleIngest(request, deps);
+    expect(reqLabels(calls)?.outcome).toBe("too_large");
+    expect(calls.put).toHaveLength(0); // rejected BEFORE the R2 put (never read the body)
+  });
+
+  it("every emitted metric label is a bounded enum (no id/uuid values)", async () => {
+    const { deps, calls } = makeDeps();
+    await handleIngest(req(GOOD), deps);
+    expect(calls.metrics.length).toBeGreaterThan(0);
+    for (const m of calls.metrics)
+      for (const v of Object.values(m.labels)) expect(v).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
   });
 });

@@ -58,6 +58,7 @@ import {
   LISTEN_SUBPROTOCOL,
   LISTEN_TICKET_SUBPROTOCOL_PREFIX,
   type ListenTicketGrant,
+  emitMetric,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
   billingEnabled,
@@ -144,6 +145,9 @@ export interface Env {
   R2_PAYLOADS: R2Bucket;
   /** KV namespace caching endpoint resolution (keyed by ingest-token hash). */
   KV_CONFIG: KVNamespace;
+  /** Analytics Engine dataset for bounded RED metrics (ADR-0124). No PII/id labels ever (ADR-0125); the
+   *  emit boundary enforces it. In-CF, cardinality-free, auto-created — no secret, no founder gate. */
+  METRICS: AnalyticsEngineDataset;
   // Secrets are Cloudflare Secrets Store bindings (`secrets_store_secrets`, injected at deploy) — read
   // via `await readSecretBinding(env.X)`. The shared trio (CREDENTIAL_PEPPER / CURSOR_KEY /
   // AUDIT_CHAIN_HMAC_KEY) is ONE account secret bound into engine + api + mcp (byte-identical by
@@ -490,6 +494,18 @@ export async function buildIngestDeps(env: Env, ctx: ExecutionContext): Promise<
     waitUntil: (promise) => ctx.waitUntil(promise),
     now: () => new Date(),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+    // Bounded RED metrics to Analytics Engine (in-CF, cheap, off the response body). emitMetric runs the
+    // catalog guard, so an unbounded/id-shaped label throws rather than writes — but the whole call is
+    // wrapped so a metric fault can NEVER fail an ingest (telemetry is strictly non-critical).
+    metric: (name, labels, value) => {
+      try {
+        emitMetric(env.METRICS, name, labels, value);
+      } catch (err) {
+        console.log(
+          JSON.stringify({ message: "ingest.metric_failed", metric: name, error: String(err) }),
+        );
+      }
+    },
     maxBodyBytes: MAX_VERIFIABLE_BODY_BYTES,
   };
 
@@ -814,6 +830,19 @@ export async function handleFetch(
     // A binding/connection fault (bad pepper, Hyperdrive down) surfaces in observability as a 500,
     // never a silent drop or an ACK of an unpersisted event.
     console.log(JSON.stringify({ message: "ingest.unhandled", error: String(err) }));
+    // Count the ESCAPED 500 in the RED "E" arm (outcome "unhandled" — distinct from the guarded r2/insert
+    // "error"), so a resolve/stream/dedup infra fault pages on the metric, not only the log. `request.method`
+    // is bounded here: a throw only escapes handleIngest AFTER its 405 gate (a supported verb). Guarded so a
+    // telemetry fault can never mask the 500.
+    try {
+      emitMetric(env.METRICS, "ingest.requests", {
+        outcome: "unhandled",
+        method: request.method,
+        verified: "unattempted",
+      });
+    } catch {
+      /* telemetry is strictly non-critical */
+    }
     return new Response("internal error", {
       status: 500,
       headers: { "content-type": "text/plain; charset=utf-8" },
