@@ -16,8 +16,14 @@ import { LOGOUT_URL, SESSION_COOKIE, verifySession } from "./session";
 
 /**
  * Permanently erase the signed-in user's account (right to erasure, slice 2.2):
- *  1. delete the org(s) they SOLELY own — their personal org — via slice 2.1's deleteOrgWithAudit
- *     (cascade + WORM-audit preservation + durable R2 purge), as webhook_app;
+ *  1. delete the org(s) they SOLELY own — their personal org — via the SYNCHRONOUS deleteOrgWithAudit
+ *     (cascade + WORM-audit preservation + durable R2 purge), as webhook_app. Deliberately the sync path even
+ *     when ASYNC_ORG_DELETION is on (unlike the dashboard org-delete): the async mark-`deleting` would leave
+ *     the personal org lingering, and if step 2's identity delete then failed, bootstrapPersonalOrg's
+ *     `on conflict do nothing` would find the still-present `deleting` row and NOT recreate it — stranding the
+ *     surviving account with no visible org until the reaper drops it. The sync hard-delete preserves that
+ *     self-heal (a failed identity delete leaves no org, so next sign-in recreates a fresh one), and an
+ *     account's solo-owned orgs are the user's own — rarely large enough to need the reaper (#665);
  *  2. delete the identity itself via auth.'s AccountDeleter RPC (only webhook_auth may touch
  *     user/session/account) — cascades remaining sessions/accounts/memberships;
  *  3. clear the session cookie and return to sign-in.
@@ -66,6 +72,8 @@ export async function deleteAccount(formData: FormData): Promise<void> {
   // Solo-owned orgs (nobody else in them) are erased WITH the account. Leaving them behind would be an
   // even more complete orphan than the one above: no owner, no members, nobody to notice — and still
   // billed.
+  // Always the synchronous hard-delete here, even under ASYNC_ORG_DELETION — see the header: the async
+  // mark-`deleting` path would break the recreate-on-next-login self-heal if step 2's identity delete fails.
   for (const org of soleOwnedSolo) {
     await deleteOrgWithAudit(app, { orgId: org.orgId, actor: userActor(session.userId) }, auditKey);
   }

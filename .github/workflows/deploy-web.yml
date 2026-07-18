@@ -80,6 +80,9 @@ jobs:
       # workflow does not forward reaches the generator as "" and fail-closes the dashboard silently.
       BILLING_MODE: ${{ vars.BILLING_MODE }}
       STRIPE_PLANS: ${{ vars.STRIPE_PLANS }}
+      # ASYNC_ORG_DELETION (#665) — "true" routes org deletes through the async requestOrgDeletion + reaper;
+      # unset/anything-else → the proven synchronous deleteOrgWithAudit (fail-safe until the reaper is live).
+      ASYNC_ORG_DELETION: ${{ vars.ASYNC_ORG_DELETION }}
       # The Billing Portal configuration id (bpc_…, S6c-ii) — pins the no-refund/at-period-end contract.
       # OPTIONAL; unset → "" → the portal uses the account default.
       STRIPE_PORTAL_CONFIGURATION_ID: ${{ vars.STRIPE_PORTAL_CONFIGURATION_ID }}

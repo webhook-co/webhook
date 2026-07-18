@@ -98,6 +98,15 @@ export async function runUsageRollup(deps: UsageRollupDeps): Promise<UsageRollup
         // Pin UTC so date_trunc('day', …) in rollup_usage buckets on UTC midnight regardless of the
         // connection's default TimeZone (F4 — a TZ drift would misalign the bucket). tx-scoped.
         await tx`set local time zone 'UTC'`;
+        // Skip a `deleting` org (#665): requestOrgDeletion already WAIVED its usage, and the webhook_reaper
+        // cron is draining its events chunk by chunk. Re-rolling those still-present events into a fresh
+        // frozen usage snapshot would resurrect the exact F6 reconcile drift the waive removed (the reaper
+        // then deletes the counted events out from under the frozen count). The metering roles hold no `orgs`
+        // grant to filter the cross-org enumeration on, so the guard lives HERE — the per-org webhook_app tx
+        // that can read `orgs.status`. (`!org` can't happen for an enumerated org — events FK to a live orgs
+        // row and the reaper drops the row only after the events are gone — but skip defensively.)
+        const [org] = await tx<{ status: string }[]>`select status from orgs where id = ${orgId}`;
+        if (!org || org.status === "deleting") return 0;
         for (const w of windows) {
           await tx`select rollup_usage(${w})`;
         }

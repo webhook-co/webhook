@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { drainBillingCancellations, type StripeCanceller } from "../src/billing-cancellation";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { deleteOrgWithAudit } from "../src/org-lifecycle";
+import { deleteOrgWithAudit, requestOrgDeletion } from "../src/org-lifecycle";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -118,6 +118,39 @@ describe("deleteOrgWithAudit enqueues a Stripe cancellation", () => {
     await seedSubscription(orgId, "canceled");
     await deleteOrgWithAudit(app, { orgId, actor: userActor("u1") }, key);
     expect(await readJob(orgId)).toBeUndefined();
+  });
+});
+
+// The async requestOrgDeletion (#665) shares enqueueOrgDeletionSideEffects, so it must capture the same
+// cancellation BEFORE the reaper later cascades the subscription away — otherwise a paying customer who
+// deletes keeps being charged for the whole reaper window.
+describe("requestOrgDeletion enqueues the same Stripe cancellation (#665)", () => {
+  it("enqueues the live subscription id for a paid org", async () => {
+    const orgId = await seedOrg();
+    const subId = await seedSubscription(orgId, "active");
+    await requestOrgDeletion(app, { orgId, actor: userActor("u1") }, key);
+    expect(await readJob(orgId)).toMatchObject({
+      stripe_subscription_id: subId,
+      status: "pending",
+    });
+  });
+
+  it("does NOT enqueue for a Free org, and a re-request stays idempotent (one job)", async () => {
+    const free = await seedOrg();
+    await requestOrgDeletion(app, { orgId: free, actor: userActor("u1") }, key);
+    expect(await readJob(free)).toBeUndefined();
+
+    const paid = await seedOrg();
+    await seedSubscription(paid, "active");
+    await requestOrgDeletion(app, { orgId: paid, actor: userActor("u1") }, key);
+    await requestOrgDeletion(app, { orgId: paid, actor: userActor("u1") }, key); // idempotent re-request
+    const [{ n }] = await withTenant(
+      app,
+      paid,
+      (tx) => tx<{ n: number }[]>`
+      select count(*)::int as n from org_billing_cancellations where org_id = ${paid}`,
+    );
+    expect(n).toBe(1);
   });
 });
 

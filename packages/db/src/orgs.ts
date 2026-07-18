@@ -49,24 +49,28 @@ export async function createOrg(app: Sql, input: CreateOrgInput): Promise<Create
 export type MembershipRole = "owner" | "admin" | "member";
 
 /**
- * An org's service state (migration 0083).
+ * An org's service state (migration 0083, extended by 0091).
  *  - `active`    — normal. The default at creation and the only state most orgs ever have.
  *  - `suspended` — disabled but NOT deleted: the dashboard is read-only and outbound delivery is held (and,
  *                  separately, the free-org-cap reconciler pauses ingest via `ingest_paused`). Set by the
  *                  reconciler when a user exceeds their Free-org allowance; cleared when they restore.
+ *  - `deleting`  — requested for deletion (#665): invisible everywhere (user_org_directory filters it),
+ *                  ingest quiesced (endpoints soft-deleted), credentials revoked, outbound delivery held —
+ *                  and the webhook_reaper cron is draining its rows before dropping the org. A terminal state.
  */
-export type OrgStatus = "active" | "suspended";
+export type OrgStatus = "active" | "suspended" | "deleting";
 
 /**
- * Is the CONTEXT org suspended? Reads under the tenant GUC (RLS scopes `orgs` to the one org `withTenant`
- * pinned), so it takes no org argument — call it inside a `withTenant(app, orgId, …)`. Used by the outbound
- * delivery drain to hold a suspended org's deliveries (they stay durably owed until the org is restored).
+ * Should the CONTEXT org's OUTBOUND delivery be HELD? True for any non-`active` state — a `suspended` org
+ * (durably owed until restored) or a `deleting` org (which must egress nothing more, #665). Reads under the
+ * tenant GUC (RLS scopes `orgs` to the one org `withTenant` pinned), so it takes no org argument — call it
+ * inside `withTenant(app, orgId, …)`. Used by the outbound delivery drain.
  */
-export async function isOrgSuspended(tx: TenantTx): Promise<boolean> {
+export async function isOrgDeliveryHeld(tx: TenantTx): Promise<boolean> {
   const [row] = await tx<{ status: OrgStatus }[]>`select status from orgs`;
   // No row ⇒ the tenant GUC does not match a visible org (should never happen inside a valid withTenant); treat
-  // as "not suspended" so a resolver quirk can never silently freeze delivery for a healthy org.
-  return row?.status === "suspended";
+  // as "not held" so a resolver quirk can never silently freeze delivery for a healthy org.
+  return row !== undefined && row.status !== "active";
 }
 
 /**

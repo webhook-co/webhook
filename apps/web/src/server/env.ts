@@ -354,6 +354,22 @@ export function getBillingMode(): BillingMode {
 }
 
 /**
+ * ASYNC_ORG_DELETION (#665) — route an org delete through the async requestOrgDeletion (mark `deleting`; the
+ * webhook_reaper cron drains the rows) instead of the synchronous deleteOrgWithAudit. Fail-safe OFF: only the
+ * literal "true"/"1"/"on" enables it, so until the reaper role + Hyperdrive are provisioned in prod, deletes
+ * stay on the proven synchronous path — flipping this before the reaper is live would strand orgs `deleting`
+ * with nothing to reap them. Read from the same injected deploy var as the other workers.
+ */
+export function getAsyncOrgDeletionEnabled(): boolean {
+  const fromBinding = workerEnv().ASYNC_ORG_DELETION;
+  const raw =
+    (typeof fromBinding === "string" && fromBinding.length > 0 ? fromBinding : null) ??
+    process.env.ASYNC_ORG_DELETION ??
+    null;
+  return raw === "true" || raw === "1" || raw === "on";
+}
+
+/**
  * The Stripe secret key (sk_test_ / sk_live_) — a Secrets Store binding in prod, or process.env in dev.
  * Null when unset (the caller treats that as "billing not configured" and no-ops). NEVER logged.
  */

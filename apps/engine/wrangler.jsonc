@@ -144,6 +144,17 @@
       "localConnectionString": "postgres://webhook_retention:postgres@127.0.0.1:5432/webhook_dev",
     },
     // @gen-end HYPERDRIVE_RETENTION_ID
+    // @gen-optional HYPERDRIVE_REAPER_ID
+    // HYPERDRIVE_REAPER (#665) — the webhook_reaper cross-org read+delete that drains a requested-for-deletion
+    // org's events in chunks and drops the org row (the async twin of deleteOrgWithAudit). OPTIONAL: kept only
+    // when the HYPERDRIVE_REAPER_ID GH var is set (provisioned), stripped otherwise so the engine deploys
+    // dark; the reaper cron then skips. Caching off, like the other crons.
+    {
+      "binding": "HYPERDRIVE_REAPER",
+      "id": "<HYPERDRIVE_REAPER_ID>",
+      "localConnectionString": "postgres://webhook_reaper:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    // @gen-end HYPERDRIVE_REAPER_ID
     // @gen-optional HYPERDRIVE_CAPRECONCILER_ID
     // HYPERDRIVE_CAPRECONCILER (PR2b) — the webhook_capreconciler cross-USER read of the ownership graph +
     // the suspend-lifecycle write for the free-org-cap reconcile. OPTIONAL: kept only when the

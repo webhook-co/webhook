@@ -826,6 +826,52 @@ describe("catalog-driven RLS coverage", () => {
     expect(ownedByAnchor[0]?.n).toBe(0);
   });
 
+  it("the reaper role is non-owner/super/bypass and holds ONLY its least-privilege grants (#665)", async () => {
+    // webhook_reaper drains a deleting org's rows. It is DELETE-capable on the hot tables, so its blast
+    // radius must be pinned: never super/bypass/owner, and grants ONLY on what it touches.
+    const [role] = await owner<{ super: boolean; bypass: boolean }[]>`
+      select rolsuper as super, rolbypassrls as bypass from pg_roles where rolname = ${DB_ROLES.reaper}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+    const [{ owned }] = await owner<{ owned: number }[]>`
+      select count(*)::int as owned from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.reaper}`;
+    expect(owned).toBe(0);
+
+    // DELETE on orgs + events only. NOT delivery_attempts (that cascades via the composite FK — no grant),
+    // and nothing on any other tenant table.
+    const [priv] = await owner<
+      {
+        orgsDel: boolean;
+        eventsDel: boolean;
+        daDel: boolean;
+        membersSel: boolean;
+        keysDel: boolean;
+      }[]
+    >`
+      select
+        has_table_privilege(${DB_ROLES.reaper}, 'orgs', 'DELETE') as "orgsDel",
+        has_table_privilege(${DB_ROLES.reaper}, 'events', 'DELETE') as "eventsDel",
+        has_table_privilege(${DB_ROLES.reaper}, 'delivery_attempts', 'DELETE') as "daDel",
+        has_table_privilege(${DB_ROLES.reaper}, 'memberships', 'SELECT') as "membersSel",
+        has_table_privilege(${DB_ROLES.reaper}, 'api_keys', 'DELETE') as "keysDel"`;
+    expect(priv.orgsDel).toBe(true);
+    expect(priv.eventsDel).toBe(true);
+    expect(priv.daDel).toBe(false);
+    expect(priv.membersSel).toBe(false);
+    expect(priv.keysDel).toBe(false);
+
+    // Column-scoped SELECT on events: it can read `id` (to pick a chunk) but NOT the payload key/headers.
+    const [col] = await owner<{ idSel: boolean; keySel: boolean }[]>`
+      select
+        has_column_privilege(${DB_ROLES.reaper}, 'events', 'id', 'SELECT') as "idSel",
+        has_column_privilege(${DB_ROLES.reaper}, 'events', 'payload_r2_key', 'SELECT') as "keySel"`;
+    expect(col.idSel).toBe(true);
+    expect(col.keySel).toBe(false);
+  });
+
   it("the auth role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
     // webhook_auth is the Better Auth runtime role: it manages the global identity tables and,
     // like every other request-path role, must never be a superuser, never BYPASSRLS, never a
