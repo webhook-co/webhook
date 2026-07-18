@@ -24,7 +24,6 @@ import {
   encodeCursor,
   orderKeyLagMs,
   parseSince,
-  verifyAuditChain,
   type Cursor,
   type DedupStrategy,
   type Since,
@@ -32,7 +31,7 @@ import {
   type PayloadReaderRpc,
 } from "@webhook-co/shared";
 
-import { readAuditChain } from "./audit-append";
+import { verifyAuditChainPaged } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import {
   getDelivery,
@@ -362,8 +361,11 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
   handlers.set(auditVerify.name, async (ctx, input) => {
     ensureScope(ctx, auditVerify);
     parse(auditVerify, input); // input is {} — validate it's shaped right
-    const rows = await withTenant(deps.tenant, ctx.orgId, (tx) => readAuditChain(tx, ctx.orgId));
-    return verifyAuditChain(deps.auditKey, ctx.orgId, rows);
+    // Stream the chain page-by-page (#636) — the whole chain in memory is a Worker OOM risk that grows with
+    // org age. verifyAuditChainPaged carries the prior page's tail so every hash-chain check still holds, and
+    // opens its OWN short transaction per page (so it takes the pool, not a tx) rather than pinning one
+    // connection across the whole verification.
+    return verifyAuditChainPaged(deps.tenant, ctx.orgId, deps.auditKey);
   });
 
   // usage.get (S4.2): the metering usage surface for the caller's org + current billing period. Empty
