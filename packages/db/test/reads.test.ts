@@ -416,7 +416,15 @@ describe("reads repos (RLS + keyset pagination)", () => {
   it("does not search external_id — the column is never written, so the branch was unreachable", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-extid" }, hasher)).id;
     // Hand-seed the value production cannot: even so, it must not be findable.
-    await seedEvent(orgA, ep, { providerEventId: "evt_e1", externalId: "order-9981" });
+    // dedupKey is PINNED (not the random newId() default) so external_id is the ONLY field carrying "9981":
+    // the default random hex dedup_key can coincidentally contain the digits "9981" (~1/2500), which would
+    // make this "external_id is unsearchable" assertion flake by matching dedup_key instead (a real bug this
+    // test hit in CI, per probabilistic-failures-look-like-flakes).
+    await seedEvent(orgA, ep, {
+      providerEventId: "evt_e1",
+      dedupKey: "dedup-e1",
+      externalId: "order-9981",
+    });
     const hits = await withTenant(app, orgA, (tx) =>
       listEvents(tx, { endpointId: ep, limit: 50, search: "9981" }),
     );
@@ -1315,7 +1323,7 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
     const parsed = parseSince(sinceStr);
     if (parsed.kind === "invalid") throw new Error(`unexpected invalid --since: ${sinceStr}`);
     return withTenant(app, orgA, async (tx) => {
-      const cursor = await resolveSince(tx, { endpointId, since: parsed });
+      const cursor = await resolveSince(tx, { since: parsed });
       const page = await tailEvents(tx, { endpointId, sinceCursor: cursor, limit: 50 });
       return page.items.map((e) => e.id);
     });
@@ -1350,7 +1358,7 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
     await seedEvent(orgA, epNow, { provider: "stripe" });
 
     const { cursor, dbNow } = await withTenant(app, orgA, async (tx) => {
-      const cursor = await resolveSince(tx, { endpointId: epNow, since: { kind: "now" } });
+      const cursor = await resolveSince(tx, { since: { kind: "now" } });
       // The reference clock is the DB's, NOT the test runner's — the cursor is now()-derived, and on the
       // remote nightly the runner and Neon are different hosts, so a runner Date.now() comparison could go
       // negative from clock skew (a red nightly that is not a regression — the trap this lane has hit).
@@ -1414,12 +1422,8 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
   it("resolve-once is stable for a timestamp (no clock drift between calls)", async () => {
     const parsed = parseSince("2026-06-01T00:00:01.500Z");
     if (parsed.kind === "invalid") throw new Error("x");
-    const c1 = await withTenant(app, orgA, (tx) =>
-      resolveSince(tx, { endpointId: epTail, since: parsed }),
-    );
-    const c2 = await withTenant(app, orgA, (tx) =>
-      resolveSince(tx, { endpointId: epTail, since: parsed }),
-    );
+    const c1 = await withTenant(app, orgA, (tx) => resolveSince(tx, { since: parsed }));
+    const c2 = await withTenant(app, orgA, (tx) => resolveSince(tx, { since: parsed }));
     expect(c1).toEqual(c2);
   });
 });
