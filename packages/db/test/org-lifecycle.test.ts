@@ -467,6 +467,16 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     expect(await countIn(org, "events")).toBe(4);
     expect(await countIn(org, "delivery_attempts")).toBe(4);
 
+    // Ingest is quiesced: the org's endpoints are soft-deleted, so their tokens 404 (ADR-0076) — but the
+    // rows (and events) survive for the reaper.
+    const [ep] = await withTenant(
+      app,
+      org,
+      (tx) => tx<{ live: number }[]>`
+      select count(*)::int as live from endpoints where org_id = ${org} and deleted_at is null`,
+    );
+    expect(ep.live).toBe(0);
+
     // The WORM audit chain gained org.deleted, and the R2 purge job was enqueued.
     const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
     expect(chain.map((r) => r.action)).toEqual(["org.created", "endpoint.created", "org.deleted"]);

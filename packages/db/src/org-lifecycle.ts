@@ -840,6 +840,12 @@ export async function requestOrgDeletion(
       return { orgId: input.orgId, deletingAt: existing.deletingAt! };
     }
 
+    // Quiesce INGEST immediately: soft-delete the org's endpoints. The ingest cold-lookup already 404s on
+    // `deleted_at is null` (ADR-0076), so their tokens stop resolving — no new grant or resolver change, and
+    // the KV hot path self-heals within its TTL. A soft-delete is an UPDATE, so it does NOT cascade events
+    // (those are the reaper's bounded job). The eventual `delete from orgs` hard-deletes the endpoint rows.
+    await tx`update endpoints set deleted_at = now() where org_id = ${input.orgId} and deleted_at is null`;
+
     // Close out the tamper-evident chain (this is where the advisory lock is taken — held only through this
     // small write + commit). audit_log has no FK to orgs (0051), so the row survives the eventual reap.
     await appendAuditEntry(tx, auditKey, {
