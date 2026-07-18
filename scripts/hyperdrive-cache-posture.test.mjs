@@ -20,10 +20,13 @@ import {
   bindingPlaceholderViolations,
   cachePostureViolations,
   configsByIdFromPages,
+  deployMain,
   fetchAllConfigs,
   deployableBindings,
   hyperdriveBindings,
+  lintMain,
   missingDbApps,
+  readAppConfigs,
 } from "./hyperdrive-cache-posture.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -588,4 +591,191 @@ test("deployableBindings THROWS rather than reading a non-array top-level key as
     () => deployableBindings(`{"hyperdrive":{"binding":"X","id":"y"}}`),
     /not an array/,
   );
+});
+
+// ---------------------------------------------------------------- readAppConfigs (injected filesystem)
+
+// An in-memory apps/ tree: `tree` is { appName: { filename: contents } }. `dirErrors` injects a readdir
+// failure for a named app dir. Both readdir shapes the real code uses are honoured — withFileTypes at the
+// apps root (dirents), plain filenames per app dir — so the fake exercises the exact call sites.
+const fakeAppsFs = (tree, { dirErrors = {} } = {}) => {
+  const appsDir = "/apps";
+  const readdir = async (dir) => {
+    if (dir === appsDir)
+      return Object.keys(tree).map((name) => ({ name, isDirectory: () => true }));
+    const name = dir.slice(appsDir.length + 1);
+    if (name in dirErrors) throw dirErrors[name];
+    return Object.keys(tree[name] ?? {});
+  };
+  const readFile = async (path) => {
+    const rel = path.slice(appsDir.length + 1);
+    const slash = rel.indexOf("/");
+    const contents = tree[rel.slice(0, slash)]?.[rel.slice(slash + 1)];
+    if (contents === undefined) throw codeErr("ENOENT", `no such file: ${path}`);
+    return contents;
+  };
+  return { readdir, readFile, appsDir };
+};
+
+const codeErr = (code, msg) => Object.assign(new Error(msg), { code });
+
+test("readAppConfigs collects matching configs (incl. variants) across app dirs, ignoring non-matches", async () => {
+  const fs = fakeAppsFs({
+    web: { "wrangler.jsonc": "WEB", "package.json": "{}" },
+    engine: { "wrangler.jsonc": "ENGINE", "wrangler.staging.jsonc": "ENGINE_STAGING" },
+  });
+  assert.deepEqual(await readAppConfigs("wrangler.jsonc", fs), [
+    { name: "web", file: "wrangler.jsonc", text: "WEB" },
+    { name: "engine", file: "wrangler.jsonc", text: "ENGINE" },
+    { name: "engine", file: "wrangler.staging.jsonc", text: "ENGINE_STAGING" },
+  ]);
+});
+
+// The NON_DEPLOYED exclusion is BY NAME (engine/wrangler.bench.jsonc): it matches the variant glob but carries
+// no prod tenant risk, so it must be dropped even though its filename would otherwise be collected.
+test("readAppConfigs skips a NON_DEPLOYED variant (engine/wrangler.bench.jsonc)", async () => {
+  const fs = fakeAppsFs({
+    engine: { "wrangler.jsonc": "ENGINE", "wrangler.bench.jsonc": "BENCH" },
+  });
+  assert.deepEqual(await readAppConfigs("wrangler.jsonc", fs), [
+    { name: "engine", file: "wrangler.jsonc", text: "ENGINE" },
+  ]);
+});
+
+// ENOENT means "this app isn't a Worker" — skip it and keep going.
+test("readAppConfigs CONTINUES past an app dir whose readdir throws ENOENT", async () => {
+  const fs = fakeAppsFs(
+    { web: { "wrangler.jsonc": "WEB" }, ghost: {} },
+    { dirErrors: { ghost: codeErr("ENOENT", "no such dir") } },
+  );
+  assert.deepEqual(await readAppConfigs("wrangler.jsonc", fs), [
+    { name: "web", file: "wrangler.jsonc", text: "WEB" },
+  ]);
+});
+
+// THE ANTI-SILENT-GREEN GUARANTEE. A blanket `catch { continue }` would drop an app on a real read fault and
+// let the caller report every binding it DID find as fine. Only ENOENT is benign; every other code rethrows.
+test("readAppConfigs RETHROWS a non-ENOENT readdir error (EACCES) — no blanket catch, no silent green", async () => {
+  const fs = fakeAppsFs(
+    { web: { "wrangler.jsonc": "WEB" }, locked: {} },
+    { dirErrors: { locked: codeErr("EACCES", "permission denied") } },
+  );
+  await assert.rejects(() => readAppConfigs("wrangler.jsonc", fs), /permission denied/);
+});
+
+// ---------------------------------------------------------------- lintMain / deployMain (orchestration)
+
+// Records log/error/exit calls so a test can prove exactly what an entry point emitted — and, crucially, what
+// it did NOT (the success log must never print after exit(1)).
+const spyDeps = () => {
+  const logs = [];
+  const errors = [];
+  const exits = [];
+  return {
+    logs,
+    errors,
+    exits,
+    deps: {
+      log: (m) => logs.push(m),
+      error: (m) => errors.push(m),
+      exit: (c) => exits.push(c),
+    },
+  };
+};
+
+const cleanTenant = (id = "<HYPERDRIVE_TENANT_ID>") =>
+  `{"hyperdrive":[{"binding":"${REQUIRED_TENANT_BINDING}","id":"${id}"}]}`;
+
+// One config per DB app, each declaring the tenant binding so the per-app floor passes; override an app's text
+// to inject a specific fault. `file` defaults to the lint config; the deploy path passes the prod overlay.
+const dbAppConfigs = (overrides = {}, file = "wrangler.jsonc") =>
+  DB_APPS.map((name) => ({ name, file, text: overrides[name] ?? cleanTenant() }));
+
+const CREDS = { CLOUDFLARE_ACCOUNT_ID: "acct", CLOUDFLARE_API_TOKEN: "tok" };
+
+// THE return-after-exit, proven: an INJECTED exit does not halt the function, so without the `return;` the
+// clean-branch success log would print on top of the failure. Here it must NOT.
+test("lintMain: a pinning violation calls exit(1) and does NOT emit the success log", async () => {
+  const spy = spyDeps();
+  // web declares the tenant binding (floor passes) but pins it at the CACHED pool (a pinning violation).
+  const configs = dbAppConfigs({ web: cleanTenant("<HYPERDRIVE_CACHED_ID>") });
+  await lintMain({ readConfigs: async () => configs, ...spy.deps });
+  assert.deepEqual(spy.exits, [1]);
+  assert.equal(spy.logs.length, 0, "the success log must NOT print after exit(1)");
+  assert.ok(
+    spy.errors.some((m) => /binding pinning/.test(m)),
+    "the violation must be reported on error()",
+  );
+});
+
+test("lintMain: a clean set emits the success log and does NOT exit", async () => {
+  const spy = spyDeps();
+  await lintMain({ readConfigs: async () => dbAppConfigs(), ...spy.deps });
+  assert.deepEqual(spy.exits, []);
+  assert.equal(spy.logs.length, 1);
+  assert.match(spy.logs[0], /binding pinning: all/);
+});
+
+// The per-app floor fires BEFORE any success — a DB app absent from discovery is a thrown error, not a pass.
+test("lintMain: a missing DB app makes assertEveryDbAppSeen throw before any success", async () => {
+  const spy = spyDeps();
+  const configs = dbAppConfigs().filter((c) => c.name !== "auth");
+  await assert.rejects(
+    () => lintMain({ readConfigs: async () => configs, ...spy.deps }),
+    /does not declare HYPERDRIVE_TENANT: auth/,
+  );
+  assert.deepEqual(spy.exits, []);
+  assert.equal(spy.logs.length, 0);
+});
+
+test("deployMain: missing account id or token throws the creds error", async () => {
+  const args = { readConfigs: async () => dbAppConfigs(), fetchConfigs: async () => ({}) };
+  await assert.rejects(
+    () => deployMain({ env: {}, ...args }),
+    /CLOUDFLARE_ACCOUNT_ID \+ CLOUDFLARE_API_TOKEN/,
+  );
+  // token present, id absent → still throws: both are required.
+  await assert.rejects(
+    () => deployMain({ env: { CLOUDFLARE_API_TOKEN: "tok" }, ...args }),
+    /CLOUDFLARE_ACCOUNT_ID \+ CLOUDFLARE_API_TOKEN/,
+  );
+});
+
+test("deployMain: zero overlays throws (run gen-wrangler-prod first)", async () => {
+  await assert.rejects(
+    () => deployMain({ env: CREDS, readConfigs: async () => [], fetchConfigs: async () => ({}) }),
+    /run scripts\/gen-wrangler-prod\.mjs first/,
+  );
+});
+
+// THE return-after-exit on the deploy path, and proof the injected fetch is used (never the real network).
+test("deployMain: a caching-ENABLED tenant pool calls exit(1) and emits no success log", async () => {
+  const spy = spyDeps();
+  let fetched = false;
+  await deployMain({
+    env: CREDS,
+    readConfigs: async () => dbAppConfigs({}, "wrangler.prod.jsonc"),
+    fetchConfigs: async () => {
+      fetched = true;
+      return { "<HYPERDRIVE_TENANT_ID>": on("webhook-prod-cached") };
+    },
+    ...spy.deps,
+  });
+  assert.equal(fetched, true, "the injected fetchConfigs must be used, never the real network");
+  assert.deepEqual(spy.exits, [1]);
+  assert.equal(spy.logs.length, 0, "the success report must NOT print after exit(1)");
+});
+
+test("deployMain: all pools caching-disabled emits the success report and does NOT exit", async () => {
+  const spy = spyDeps();
+  await deployMain({
+    env: CREDS,
+    readConfigs: async () => dbAppConfigs({}, "wrangler.prod.jsonc"),
+    fetchConfigs: async () => ({ "<HYPERDRIVE_TENANT_ID>": off("webhook-prod-tenant") }),
+    ...spy.deps,
+  });
+  assert.deepEqual(spy.exits, []);
+  assert.match(spy.logs[0], /caching is disabled on every pool/);
+  // one summary line + one line per app checked (each DB app resolves the same disabled pool).
+  assert.equal(spy.logs.length, 1 + DB_APPS.length);
 });

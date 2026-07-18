@@ -43,7 +43,7 @@
 // whichever deploy noticed it — but the report says which bindings it saw precisely because that set is not
 // fixed.
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir as realReaddir, readFile as realReadFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -351,12 +351,20 @@ export async function fetchAllConfigs(accountId, token, fetchImpl = fetch, perPa
  * ONLY an ENOENT is "this app isn't a Worker" — every other error (EACCES, EISDIR, a decoding fault) is
  * rethrown. A blanket `catch { return null }` here is how the whole guard goes quietly green: a read fault
  * would drop the app, and the caller would cheerfully report that every binding it found is fine.
+ *
+ * The filesystem is injected so a test can drive it without real I/O; the defaults are the real
+ * `node:fs/promises` functions and the real APPS_DIR, so a call with no options is byte-for-byte today's read.
+ * @param {string} filename
+ * @param {{readdir?: typeof realReaddir, readFile?: typeof realReadFile, appsDir?: string}} [deps]
  */
-async function readAppConfigs(filename) {
-  const apps = (await readdir(APPS_DIR, { withFileTypes: true })).filter((d) => d.isDirectory());
+export async function readAppConfigs(
+  filename,
+  { readdir = realReaddir, readFile = realReadFile, appsDir = APPS_DIR } = {},
+) {
+  const apps = (await readdir(appsDir, { withFileTypes: true })).filter((d) => d.isDirectory());
   const out = [];
   for (const { name } of apps) {
-    const dir = join(APPS_DIR, name);
+    const dir = join(appsDir, name);
     let files;
     try {
       files = await readdir(dir);
@@ -400,8 +408,19 @@ function assertEveryDbAppSeen(configs) {
   }
 }
 
-async function lintMain() {
-  const configs = await readAppConfigs("wrangler.jsonc");
+/**
+ * The lint entry point (LAYER 1, no network). Dependencies are injected so a test can drive the orchestration
+ * without touching the disk or the real process; the defaults are today's exact behaviour.
+ * @param {{readConfigs?: typeof readAppConfigs, log?: typeof console.log, error?: typeof console.error,
+ *          exit?: typeof process.exit}} [deps]
+ */
+export async function lintMain({
+  readConfigs = readAppConfigs,
+  log = console.log,
+  error = console.error,
+  exit = process.exit,
+} = {}) {
+  const configs = await readConfigs("wrangler.jsonc");
   const bindings = configs.flatMap((c) => hyperdriveBindings(c.text));
   // PER-APP floor. A global "did we find any bindings?" check only fires when EVERY app breaks at once — so
   // moving ONE app to a filename discovery misses (wrangler.json / wrangler.toml are both valid to wrangler)
@@ -410,26 +429,43 @@ async function lintMain() {
   assertEveryDbAppSeen(configs);
   const violations = bindingPlaceholderViolations(configs);
   if (violations.length > 0) {
-    console.error("✖ Hyperdrive binding pinning: a binding does not point at its own pool:\n");
-    for (const v of violations) console.error(`  ${v}\n`);
-    process.exit(1);
+    error("✖ Hyperdrive binding pinning: a binding does not point at its own pool:\n");
+    for (const v of violations) error(`  ${v}\n`);
+    exit(1);
+    // A real `process.exit` never returns, but an INJECTED exit (a test spy, or a no-op) does — without this
+    // return the "clean" success log below would run on top of the failure. Part of the fix, not decoration.
+    return;
   }
-  console.log(
+  log(
     `✔ Hyperdrive binding pinning: all ${bindings.length} binding(s) across ${configs.length} app config(s) ` +
       "point at their own pool's placeholder.",
   );
 }
 
-async function deployMain() {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-  const token = process.env.CLOUDFLARE_API_TOKEN;
+/**
+ * The deploy entry point (LAYER 2). Dependencies are injected so a test can drive the orchestration without
+ * the real env, the real disk, or a network call; the defaults are today's exact behaviour.
+ * @param {{readConfigs?: typeof readAppConfigs, fetchConfigs?: typeof fetchAllConfigs,
+ *          env?: NodeJS.ProcessEnv, log?: typeof console.log, error?: typeof console.error,
+ *          exit?: typeof process.exit}} [deps]
+ */
+export async function deployMain({
+  readConfigs = readAppConfigs,
+  fetchConfigs = fetchAllConfigs,
+  env = process.env,
+  log = console.log,
+  error = console.error,
+  exit = process.exit,
+} = {}) {
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID;
+  const token = env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !token) {
     throw new Error(
       "hyperdrive-cache-posture needs CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN. This preflight runs on " +
         "the deploy path only; it must never be wired into a pull_request job (it would need the prod token).",
     );
   }
-  const overlays = await readAppConfigs("wrangler.prod.jsonc");
+  const overlays = await readConfigs("wrangler.prod.jsonc");
   if (overlays.length === 0) {
     throw new Error(
       "no apps/*/wrangler.prod.jsonc found — run scripts/gen-wrangler-prod.mjs first. Refusing to report a " +
@@ -444,28 +480,29 @@ async function deployMain() {
 
   const violations = cachePostureViolations({
     bindings,
-    configsById: await fetchAllConfigs(accountId, token),
+    configsById: await fetchConfigs(accountId, token),
   });
   if (violations.length > 0) {
-    console.error(
-      "✖ Hyperdrive cache posture: a tenant-scoped binding resolves to a caching pool:\n",
-    );
-    for (const v of violations) console.error(`  ${v}\n`);
-    process.exit(1);
+    error("✖ Hyperdrive cache posture: a tenant-scoped binding resolves to a caching pool:\n");
+    for (const v of violations) error(`  ${v}\n`);
+    exit(1);
+    // As in lintMain: a real `process.exit` never returns, but an injected one does — return so the success
+    // report below can never print on top of a violation.
+    return;
   }
   // Report exactly WHAT was checked — never a completeness claim over a set we did not enumerate.
   const checked = bindings;
   const byApp = new Map();
   for (const b of checked) byApp.set(b.app, [...(byApp.get(b.app) ?? []), b.binding]);
-  console.log(
+  log(
     `✔ Hyperdrive cache posture: caching is disabled on every pool the ${checked.length} binding(s) below ` +
       "resolve to. This is exactly what was checked — the generated overlays' bindings, nothing more:",
   );
-  for (const [app, list] of byApp) console.log(`    ${app}: ${list.sort().join(", ")}`);
+  for (const [app, list] of byApp) log(`    ${app}: ${list.sort().join(", ")}`);
 }
 
 // Run only when invoked directly (not when imported by the test — which would trip process.exit).
-if (process.argv[1] && (await readFile(process.argv[1], "utf8").catch(() => null)) !== null) {
+if (process.argv[1] && (await realReadFile(process.argv[1], "utf8").catch(() => null)) !== null) {
   const self = fileURLToPath(import.meta.url);
   const { realpath } = await import("node:fs/promises");
   // realpath both sides: a symlinked or relative argv would otherwise silently skip main() — the guard would
