@@ -40,7 +40,7 @@ export const CLIENT_LATEST: Record<ClientId, string> = {
   "webhook-co-js": "0.4.0",
   "webhook-co-python": "0.4.0",
   "webhook-co-go": "0.5.0",
-  "wbhk-cli": "0.5.0",
+  "wbhk-cli": "0.6.0",
 };
 
 /**
