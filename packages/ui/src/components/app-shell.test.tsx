@@ -10,11 +10,21 @@ function Example(props: Partial<React.ComponentProps<typeof AppShell>> = {}) {
     <AppShell
       sidebar={
         <>
-          <AppNavSection>Workspace</AppNavSection>
           <AppNavItem href="/overview" active count={24}>
             Overview
           </AppNavItem>
-          <AppNavItem href="/events">Events</AppNavItem>
+          <AppNavSection label="Inbound">
+            <AppNavItem
+              href="/endpoints"
+              subNav={
+                <AppNavItem href="/events" nested>
+                  Events
+                </AppNavItem>
+              }
+            >
+              Endpoints
+            </AppNavItem>
+          </AppNavSection>
         </>
       }
       topBar={<span>breadcrumbs</span>}
@@ -38,6 +48,58 @@ describe("AppShell", () => {
     );
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByRole("banner")).toHaveTextContent("breadcrumbs");
+  });
+
+  // The nesting is now SEMANTIC, not visual-only: the nav is a real list (#20). `role="list"` is set
+  // explicitly because Tailwind's `list-style:none` reset otherwise strips list semantics in Safari+VoiceOver.
+  it("wraps the nav in a real list, and every list carries an explicit role", () => {
+    render(<Example />);
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const lists = within(nav).getAllByRole("list");
+    expect(lists.length).toBeGreaterThan(0);
+    // Every <ul> we emit keeps role="list" so the semantics survive the list-style reset.
+    for (const ul of nav.querySelectorAll("ul")) {
+      expect(ul).toHaveAttribute("role", "list");
+    }
+  });
+
+  it("nests the Events sub-item inside a list under the Endpoints item — a true DOM child", () => {
+    render(<Example />);
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const endpoints = within(nav).getByRole("link", { name: "Endpoints" });
+    const events = within(nav).getByRole("link", { name: "Events" });
+
+    const endpointsItem = endpoints.closest("li");
+    const eventsItem = events.closest("li");
+    expect(endpointsItem).not.toBeNull();
+    expect(eventsItem).not.toBeNull();
+    // Events' <li> is a descendant of Endpoints' <li> — not a sibling.
+    expect(endpointsItem).toContainElement(eventsItem);
+    expect(eventsItem).not.toBe(endpointsItem);
+
+    // …and Events reaches that item through a NESTED <ul> that is not the top-level list Endpoints sits in.
+    const eventsList = events.closest("ul");
+    const endpointsList = endpoints.closest("ul");
+    expect(endpointsItem).toContainElement(eventsList);
+    expect(eventsList).not.toBe(endpointsList);
+  });
+
+  it("turns each section into a labeled group whose name is associated with its items", () => {
+    render(<Example />);
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    // The section label ("Inbound") is the accessible name of the list its items live in.
+    const inbound = within(nav).getByRole("list", { name: "Inbound" });
+    expect(within(inbound).getByRole("link", { name: "Endpoints" })).toBeInTheDocument();
+  });
+
+  it("keeps exactly one item marked as the current page", () => {
+    render(<Example />);
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((a) => a.getAttribute("aria-current") === "page");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveAccessibleName(/Overview/);
   });
 
   // The lockup is OPT-IN now: it renders only when a `homeHref` is given. The dashboard deliberately gives
@@ -116,6 +178,11 @@ describe("AppNavItem", () => {
     expect(screen.getByTestId("ic")).toBeInTheDocument();
   });
 
+  it("wraps the link in a list item", () => {
+    render(<AppNavItem href="/events">Events</AppNavItem>);
+    expect(screen.getByRole("link", { name: "Events" }).closest("li")).not.toBeNull();
+  });
+
   it("marks the active item with aria-current=page", () => {
     render(
       <AppNavItem href="/o" active>
@@ -130,7 +197,7 @@ describe("AppNavItem", () => {
     expect(screen.getByRole("link", { name: "Overview" })).not.toHaveAttribute("aria-current");
   });
 
-  it("forwards a ref", () => {
+  it("forwards a ref to the anchor", () => {
     const ref = createRef<HTMLAnchorElement>();
     render(
       <AppNavItem href="/o" ref={ref}>
@@ -141,10 +208,51 @@ describe("AppNavItem", () => {
   });
 });
 
+// Sub-items (#20). A parent entry owns its children by passing them as `subNav`; they render in a nested
+// `<ul role="list">` INSIDE the parent's own `<li>`, so assistive tech announces them as children — the
+// nesting is structural, not a visual indent bolted onto a flat sibling.
+describe("AppNavItem subNav", () => {
+  it("renders sub-items in a nested list inside its own list item", () => {
+    render(
+      <ul>
+        <AppNavItem
+          href="/endpoints"
+          subNav={
+            <AppNavItem href="/events" nested>
+              Events
+            </AppNavItem>
+          }
+        >
+          Endpoints
+        </AppNavItem>
+      </ul>,
+    );
+    const endpoints = screen.getByRole("link", { name: "Endpoints" });
+    const events = screen.getByRole("link", { name: "Events" });
+
+    const endpointsItem = endpoints.closest("li");
+    expect(endpointsItem).toContainElement(events);
+
+    const nested = events.closest("ul");
+    expect(nested).toHaveAttribute("role", "list");
+    expect(endpointsItem).toContainElement(nested);
+    // The nested list is not the outer list Endpoints itself sits in.
+    expect(nested).not.toBe(endpoints.closest("ul"));
+  });
+});
+
 describe("AppNavSection", () => {
-  it("renders a section label", () => {
-    render(<AppNavSection>Account</AppNavSection>);
+  it("renders a labeled group whose name is associated with its items", () => {
+    render(
+      <ul>
+        <AppNavSection label="Account">
+          <AppNavItem href="/settings">Settings</AppNavItem>
+        </AppNavSection>
+      </ul>,
+    );
     expect(screen.getByText("Account")).toBeInTheDocument();
+    const group = screen.getByRole("list", { name: "Account" });
+    expect(within(group).getByRole("link", { name: "Settings" })).toBeInTheDocument();
   });
 });
 

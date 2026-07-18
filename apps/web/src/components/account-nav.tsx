@@ -63,8 +63,7 @@ export function AccountNav() {
   const pathname = usePathname();
 
   return (
-    <>
-      <AppNavSection>Account</AppNavSection>
+    <AppNavSection label="Account">
       {NAV.map((item) => (
         <AppNavItem
           key={item.href}
@@ -76,6 +75,6 @@ export function AccountNav() {
           <Link href={item.href}>{item.label}</Link>
         </AppNavItem>
       ))}
-    </>
+    </AppNavSection>
   );
 }
