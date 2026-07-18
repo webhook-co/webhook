@@ -210,6 +210,29 @@ describe("flushOrgTail", () => {
     expect(calls).toEqual([]);
   });
 
+  it("is resumable — completes a tail day a partial prior re-roll left open (#637)", async () => {
+    // The re-roll is now one bounded rollup_usage per day, not one unbounded statement over N days. Its
+    // contract is that a partial roll (some days done, the rest still open) is FINISHED by a re-run rather
+    // than being all-or-nothing. Simulate a prior partial: roll only 07-04, leave 07-05 unrolled + open.
+    const { orgId, endpointId } = await seedOrg();
+    await seedEvents(orgId, endpointId, 40, "2026-07-04");
+    await seedEvents(orgId, endpointId, 60, "2026-07-05");
+    await withTenant(app, orgId, async (tx) => {
+      await tx`set local time zone 'UTC'`;
+      await tx`select rollup_usage('2026-07-04'::date::timestamptz)`;
+    });
+
+    const res = await flush(orgId, fakeSink().sink);
+
+    // The flush rolls the REMAINING day and freezes BOTH, with correct counts — not just the day it happened
+    // to roll first.
+    expect(res.finalized).toBe(2);
+    const days = await usageDays(orgId);
+    expect(days.filter((d) => d.finalized).map((d) => d.day)).toEqual(["2026-07-04", "2026-07-05"]);
+    expect(days.find((d) => d.day === "2026-07-04")?.count).toBe(40);
+    expect(days.find((d) => d.day === "2026-07-05")?.count).toBe(60);
+  });
+
   it("does not double-bill when the normal reporter runs after a flush", async () => {
     const { orgId, endpointId } = await seedOrg();
     await seedEvents(orgId, endpointId, 40, "2026-07-05");

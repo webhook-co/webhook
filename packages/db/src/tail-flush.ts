@@ -67,22 +67,40 @@ export async function flushOrgTail(
   const flushCutoff = tailFlushCutoff(periodEndMs);
   const rerollDays = Math.max(0, settleDays) + REROLL_MARGIN_DAYS;
 
-  const finalized = await withTenant(deps.app, orgId, async (tx) => {
-    // Pin UTC so rollup_usage buckets on UTC midnight regardless of the connection's TimeZone (F4).
-    await tx`set local time zone 'UTC'`;
-    // Re-roll the recent tail so a just-committed event isn't lost, bounded to [max(floor, cutoff-margin),
-    // cutoff-1day]. Older days were rolled + finalized when they were recent; re-rolling a finalized day is
-    // a guarded no-op. generate_series over UTC-midnight days (interval '1 day' is exact under UTC).
-    await tx`
-      select rollup_usage(gs)
+  // Enumerate the re-roll days (UTC-midnight, oldest→newest) in ONE cheap query, bounded to
+  // [max(floor, cutoff-margin), cutoff-1day]. Older days were rolled + finalized when they were recent.
+  const rerollDayList = await withTenant(deps.app, orgId, async (tx) => {
+    await tx`set local time zone 'UTC'`; // interval '1 day' is exact under UTC (F4)
+    const rows = await tx<{ day: string }[]>`
+      select to_char(gs, 'YYYY-MM-DD') as day
       from generate_series(
         greatest(${floorDay}::date::timestamptz, ${flushCutoff}::timestamptz - make_interval(days => ${rerollDays})),
         ${flushCutoff}::timestamptz - interval '1 day',
         interval '1 day'
-      ) as gs`;
-    // Freeze EVERY still-open day before the boundary (the tail + any older straggler), never the boundary
-    // day. NULL->now() only — the F1 trigger forbids re-freezing, and matching the rollup's `is null` guard
-    // means we never attempt it. Floor-bounded so a pre-subscription day is never frozen into a billed row.
+      ) as gs
+      order by gs`;
+    return rows.map((r) => r.day);
+  });
+
+  // Re-roll ONE day per statement, EACH in its own transaction (#637). The old form ran rollup_usage for
+  // every day in a SINGLE statement — each call does a full-day count(*) over events + delivery_attempts, so
+  // on a real-volume org that one statement was unbounded, and this runs on the REVENUE path (the
+  // invoice.created draft-grace flush): if it didn't finish, the tail never reached Stripe, silently. Now
+  // each day is independently bounded, and a partial failure is RESUMABLE rather than all-or-nothing —
+  // rollup_usage upserts, so a re-run re-rolls the already-done days as a no-op and finishes the rest.
+  for (const day of rerollDayList) {
+    await withTenant(deps.app, orgId, async (tx) => {
+      await tx`set local time zone 'UTC'`;
+      await tx`select rollup_usage(${day}::date::timestamptz)`;
+    });
+  }
+
+  // Freeze EVERY still-open day before the boundary (the tail + any older straggler), never the boundary
+  // day. NULL->now() only — the F1 trigger forbids re-freezing, and matching the rollup's `is null` guard
+  // means we never attempt it. Floor-bounded so a pre-subscription day is never frozen into a billed row. A
+  // bounded single-range UPDATE, its own statement after the re-roll (re-run safe: it re-freezes nothing).
+  const finalized = await withTenant(deps.app, orgId, async (tx) => {
+    await tx`set local time zone 'UTC'`;
     const frozen = await tx`
       update usage set finalized_at = now()
       where finalized_at is null
