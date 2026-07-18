@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { activeNavKey, AppNav, COMMAND_ITEMS, NAV, orgHref } from "./app-nav";
@@ -75,5 +76,56 @@ describe("COMMAND_ITEMS (⌘K)", () => {
     const hits = COMMAND_ITEMS(SLUG).filter((i) => i.keywords.includes("events"));
     expect(hits).toHaveLength(1);
     expect(hits[0].href).toBe(orgHref(SLUG, "/events"));
+  });
+});
+
+// The SEMANTIC WIRING at the real call site (#20). The ui-package primitives are proven in isolation, but a
+// regression that flattens Events back to a flat sibling of Endpoints — reintroducing the exact a11y bug #20
+// fixes — lives HERE, in how app-nav composes the primitives. These tests lock that composition: Events must
+// be Endpoints' nested child, and each section must be a real labeled group. They render `<AppNav>` inside a
+// `<ul>` because that is precisely what AppShell wraps the sidebar in (`<nav><ul role="list">…`); the wrapper
+// stands in for that owner so the top-level list is a real reference point.
+describe("AppNav semantic list wiring", () => {
+  const wrapInList = ({ children }: { children: ReactNode }) => <ul>{children}</ul>;
+
+  it("nests Events as a true child of Endpoints — not a flat sibling", () => {
+    pathname = `/org/${SLUG}/dashboard`;
+    const { container } = render(<AppNav slug={SLUG} />, { wrapper: wrapInList });
+    const topList = container.querySelector("ul"); // the outermost <ul> — AppShell's owner list
+
+    const endpoints = screen.getByRole("link", { name: "Endpoints" });
+    const events = screen.getByRole("link", { name: "Events" });
+
+    const endpointsItem = endpoints.closest("li");
+    const eventsItem = events.closest("li");
+    // Events' <li> is a DESCENDANT of Endpoints' <li>, so AT announces it as a child. A flat sibling would
+    // fail this — which is the whole regression this test exists to catch.
+    expect(endpointsItem).toContainElement(eventsItem);
+    expect(eventsItem).not.toBe(endpointsItem);
+
+    // …and it reaches that item through a nested `<ul role="list">` that is not the top-level nav list.
+    const nested = events.closest("ul");
+    expect(nested).toHaveAttribute("role", "list");
+    expect(nested).not.toBe(topList);
+    expect(endpointsItem).toContainElement(nested);
+  });
+
+  it("groups each section as a labeled list that owns its links", () => {
+    pathname = `/org/${SLUG}/dashboard`;
+    render(<AppNav slug={SLUG} />, { wrapper: wrapInList });
+
+    // Each section name is the accessible name of the list its items live in (via aria-labelledby). A
+    // decorative sibling heading that grouped nothing would make these queries find no such list.
+    const inbound = screen.getByRole("list", { name: "Inbound" });
+    expect(within(inbound).getByRole("link", { name: "Endpoints" })).toBeInTheDocument();
+    expect(within(inbound).getByRole("link", { name: "Triggers" })).toBeInTheDocument();
+
+    const outbound = screen.getByRole("list", { name: "Outbound" });
+    expect(within(outbound).getByRole("link", { name: "Destinations" })).toBeInTheDocument();
+    expect(within(outbound).getByRole("link", { name: "Deliveries" })).toBeInTheDocument();
+
+    const account = screen.getByRole("list", { name: "Account" });
+    expect(within(account).getByRole("link", { name: "Usage" })).toBeInTheDocument();
+    expect(within(account).getByRole("link", { name: "Settings" })).toBeInTheDocument();
   });
 });
