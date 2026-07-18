@@ -37,9 +37,9 @@ export type ClientId = (typeof CLIENT_IDS)[number];
  * SDK's models rotted 12 schemas behind while CI stayed green.)
  */
 export const CLIENT_LATEST: Record<ClientId, string> = {
-  "webhook-co-js": "0.3.0",
-  "webhook-co-python": "0.3.0",
-  "webhook-co-go": "0.4.0",
+  "webhook-co-js": "0.4.0",
+  "webhook-co-python": "0.4.0",
+  "webhook-co-go": "0.5.0",
   "wbhk-cli": "0.4.0",
 };
 
