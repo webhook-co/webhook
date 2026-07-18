@@ -284,4 +284,24 @@ describe("handleFetch routing + lifecycle", () => {
     expect(res.status).toBe(500);
     expect(f.closed()).toBe(1); // no leaked DB connections on the error path
   });
+
+  it("an unhandled handleIngest throw emits ingest.requests{unhandled} — the RED error arm (S6 slice 3)", async () => {
+    const written: AnalyticsEngineDataPoint[] = [];
+    const metricsEnv = {
+      ...bindings,
+      METRICS: { writeDataPoint: (dp: AnalyticsEngineDataPoint) => written.push(dp) },
+    } as unknown as Env;
+    const f = fakeHandle({
+      resolve: async () => {
+        throw new Error("hyperdrive down"); // an infra fault that ESCAPES handleIngest (not a guarded 500)
+      },
+    });
+    const res = await handleFetch(post("/whep_good"), metricsEnv, ctx, () =>
+      Promise.resolve(f.handle),
+    );
+    expect(res.status).toBe(500);
+    // The escaped 500 lands in the RED "E" arm as outcome=unhandled (method bounded past the 405 gate).
+    const dp = written.find((d) => d.indexes?.[0] === "ingest.requests");
+    expect(dp?.blobs).toEqual(["unhandled", "POST", "unattempted"]);
+  });
 });
