@@ -1044,4 +1044,47 @@ describe("handleIngest — per-endpoint dedup config threads to the key (Slice 2
     expect(calls.ingest[1]?.dedupStrategy).toBe("unique");
     expect(calls.ingest[0]?.dedupKey).not.toBe(calls.ingest[1]?.dedupKey);
   });
+
+  it("ingest.captured logs I/O step timings (resolveMs/r2PutMs/insertMs); compute steps are not timed", async () => {
+    // Delay each I/O dep so its measured span is a REAL, non-zero duration, not a hardcoded 0 (workerd's
+    // frozen clock reads exactly 0 for a no-I/O fake, so an undelayed fake could not prove realness). The
+    // put/insert delays are deliberately ASYMMETRIC (40 vs 10 ms, measured on separate sequential awaits)
+    // so a mutation that wires r2PutMs to the insert (or vice versa) is caught by r2PutMs > insertMs.
+    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const { deps, calls } = makeDeps({
+      resolve: async (token) => {
+        await delay(20);
+        return token === GOOD
+          ? { orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [], dedupConfig: null }
+          : null;
+      },
+      putPayload: async () => {
+        await delay(40);
+      },
+      ingestEvent: async () => {
+        await delay(10);
+        return { inserted: true };
+      },
+    });
+
+    await handleIngest(req(GOOD), deps);
+
+    const captured = calls.logs.find((l) => l.event === "ingest.captured");
+    expect(captured).toBeDefined();
+    const f = captured!.fields;
+    // Each of the three I/O steps on the ACK path is timed (these fields don't exist until Slice 2).
+    expect(typeof f.resolveMs).toBe("number");
+    expect(typeof f.r2PutMs).toBe("number");
+    expect(typeof f.insertMs).toBe("number");
+    // REAL spans, not hardcoded 0s: each delayed step registers measurable time.
+    expect(f.resolveMs as number).toBeGreaterThan(0);
+    expect(f.r2PutMs as number).toBeGreaterThan(0);
+    expect(f.insertMs as number).toBeGreaterThan(0);
+    // Each timer is bound to its OWN op: the 40 ms put must out-measure the 10 ms insert (a swap fails here).
+    expect(f.r2PutMs as number).toBeGreaterThan(f.insertMs as number);
+    // I/O-ONLY by design: pure-compute steps (verify / deriveDedup) are NOT emitted as durations —
+    // workerd freezes the clock across compute (Spectre), so a compute "span" would read ~0 and mislead.
+    expect(f.verifyMs).toBeUndefined();
+    expect(f.dedupMs).toBeUndefined();
+  });
 });
