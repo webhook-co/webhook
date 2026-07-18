@@ -1,0 +1,46 @@
+---
+title: "How we protect your data"
+sidebarTitle: "How we protect your data"
+description: "Encryption in transit and at rest, KMS-sealed secrets, database-enforced tenant isolation, and SSRF-safe delivery — in plain terms."
+icon: "lock"
+---
+
+Here's how webhook.co protects your data day to day. For the engineering detail behind each point, see
+[security & architecture](/concepts/security).
+
+<CardGroup cols={2}>
+  <Card title="Encrypted in transit and at rest" icon="lock">
+    Everything travels over TLS, and your data is encrypted where it's stored. The API and SDKs are
+    HTTPS-only — the one exception is loopback, for local development.
+  </Card>
+  <Card title="Secrets are sealed" icon="key">
+    Your provider signing secrets, outbound signing keys, and ingest tokens are **sealed with a key
+    management service** and only unsealed by the engine that needs them — never sitting in
+    plaintext.
+  </Card>
+  <Card title="One organization can't see another" icon="table-cells-lock">
+    Tenant isolation is enforced by the **database itself** (row-level security), not by application
+    code remembering to filter. A query is constrained to its organization at the lowest level.
+  </Card>
+  <Card title="Delivery can't be turned on your network" icon="shield-halved">
+    Outbound delivery only targets destinations you've allowlisted, re-validates every URL, and
+    refuses private or internal addresses — so a misconfigured destination can't be used to reach
+    inside a network.
+  </Card>
+</CardGroup>
+
+## Private by default
+
+Nothing you create is public, listed, or shared with anyone until you deliberately make it so. There's
+no accidental public view of your endpoints or events.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="The audit log" icon="list-check" href="/help/security/the-audit-log">
+    Verify the record of what happened.
+  </Card>
+  <Card title="Security & architecture" icon="shield-halved" href="/concepts/security">
+    The full engineering detail.
+  </Card>
+</CardGroup>
