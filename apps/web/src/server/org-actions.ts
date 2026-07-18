@@ -27,14 +27,17 @@ import { requireOrgAccess } from "./org-access";
 import { LOGOUT_URL, SESSION_COOKIE } from "./session";
 
 /**
- * Permanently delete the current organization: cascade-delete all its Postgres data, PRESERVE the
- * tamper-evident WORM audit trail (the org.deleted entry closes it out), and enqueue the durable R2
- * payload-body purge. OWNER-ONLY: the web session model is otherwise flat ("any member may manage"),
- * which is not enough for an irreversible, org-wide destroy — so we gate on the role from
- * `requireOrgAccess` (which also proves current membership). A typed "DELETE" acknowledgement is
- * required (client gate + re-checked here).
+ * Permanently delete the current organization, PRESERVING the tamper-evident WORM audit trail and enqueuing
+ * the durable R2 payload-body purge. HOW the Postgres data goes depends on the ASYNC_ORG_DELETION flag (see
+ * deleteOrRequestOrg): the synchronous path cascade-deletes everything and closes the chain with an
+ * `org.deleted` entry; the async path marks the org `deleting` (audit action `org.deletion_requested`),
+ * revokes its credentials, and lets the webhook_reaper cron drain the rows — so on the async path the org row
+ * lingers until the reaper finalizes it (no `org.deleted` entry fires at request time). OWNER-ONLY: the web
+ * session model is otherwise flat ("any member may manage"), which is not enough for an irreversible, org-wide
+ * destroy — so we gate on the role from `requireOrgAccess` (which also proves current membership). A typed
+ * "DELETE" acknowledgement is required (client gate + re-checked here).
  *
- * On success the org — and therefore this session's tenancy — no longer exists, so we clear the
+ * On success the org — and therefore this session's tenancy — is gone or being reaped, so we clear the
  * cookie and return to sign-in.
  */
 export async function deleteOrganization(slug: string, formData: FormData): Promise<void> {

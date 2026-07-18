@@ -4,6 +4,7 @@ const { getCloudflareContext } = vi.hoisted(() => ({ getCloudflareContext: vi.fn
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext }));
 
 import {
+  getAsyncOrgDeletionEnabled,
   getAuthBaseUrl,
   getBillingMode,
   getIngestCacheEvictor,
@@ -142,6 +143,41 @@ describe("getFreeEventCap", () => {
     expect(getFreeEventCap()).toBeNull();
     getCloudflareContext.mockReturnValue({ env: { FREE_EVENT_CAP: "10k" } });
     expect(getFreeEventCap()).toBeNull();
+  });
+});
+
+describe("getAsyncOrgDeletionEnabled", () => {
+  // The whole #665 rollout rests on this being fail-safe OFF: it routes prod org deletes to the async
+  // requestOrgDeletion, and flipping it on before the webhook_reaper role + Hyperdrive are provisioned would
+  // strand orgs invisibly in `deleting` with nothing to reap them. So ONLY the exact literals enable it.
+  it("enables ONLY on the exact literals true/1/on from the Worker binding", () => {
+    for (const v of ["true", "1", "on"]) {
+      getCloudflareContext.mockReturnValue({ env: { ASYNC_ORG_DELETION: v } });
+      expect(getAsyncOrgDeletionEnabled()).toBe(true);
+    }
+  });
+
+  it("falls back to process.env outside a bound worker request", () => {
+    getCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    vi.stubEnv("ASYNC_ORG_DELETION", "true");
+    expect(getAsyncOrgDeletionEnabled()).toBe(true);
+  });
+
+  it("is OFF for unset, blank, the unresolved placeholder, and every truthy-looking non-literal", () => {
+    // Unset binding + no process.env → OFF.
+    getCloudflareContext.mockReturnValue({ env: {} });
+    vi.stubEnv("ASYNC_ORG_DELETION", "");
+    expect(getAsyncOrgDeletionEnabled()).toBe(false);
+    // A deploy that never set the GH var leaves the literal placeholder — it must NOT read as enabled.
+    getCloudflareContext.mockReturnValue({ env: { ASYNC_ORG_DELETION: "<ASYNC_ORG_DELETION>" } });
+    expect(getAsyncOrgDeletionEnabled()).toBe(false);
+    // Case-sensitive + no truthiness coercion: "TRUE"/"yes"/"false"/"0" all stay OFF.
+    for (const v of ["TRUE", "True", "yes", "false", "0", "off", "enabled"]) {
+      getCloudflareContext.mockReturnValue({ env: { ASYNC_ORG_DELETION: v } });
+      expect(getAsyncOrgDeletionEnabled()).toBe(false);
+    }
   });
 });
 

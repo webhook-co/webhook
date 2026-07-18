@@ -17,8 +17,9 @@ import { LOGOUT_URL, SESSION_COOKIE, verifySession } from "./session";
 
 /**
  * Permanently erase the signed-in user's account (right to erasure, slice 2.2):
- *  1. delete the org(s) they SOLELY own — their personal org — via slice 2.1's deleteOrgWithAudit
- *     (cascade + WORM-audit preservation + durable R2 purge), as webhook_app;
+ *  1. delete the org(s) they SOLELY own — their personal org — via deleteOrRequestOrg, as webhook_app: the
+ *     synchronous hard-delete (cascade + WORM-audit preservation + durable R2 purge), or, under
+ *     ASYNC_ORG_DELETION, the async mark-`deleting` + webhook_reaper drain (#665);
  *  2. delete the identity itself via auth.'s AccountDeleter RPC (only webhook_auth may touch
  *     user/session/account) — cascades remaining sessions/accounts/memberships;
  *  3. clear the session cookie and return to sign-in.
