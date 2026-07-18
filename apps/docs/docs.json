@@ -151,6 +151,30 @@
             "group": "Help center",
             "icon": "life-ring",
             "pages": ["help/overview"]
+          },
+          {
+            "group": "Getting started",
+            "icon": "rocket",
+            "pages": [
+              "help/getting-started/overview",
+              "help/getting-started/what-is-webhook-co",
+              "help/getting-started/create-an-account",
+              "help/getting-started/the-dashboard",
+              "help/getting-started/glossary"
+            ]
+          },
+          {
+            "group": "Your account",
+            "icon": "user",
+            "pages": [
+              "help/your-account/overview",
+              "help/your-account/sign-in-methods",
+              "help/your-account/sessions",
+              "help/your-account/change-your-name",
+              "help/your-account/change-your-email",
+              "help/your-account/connected-apps",
+              "help/your-account/delete-your-account"
+            ]
           }
         ]
       },
