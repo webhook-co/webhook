@@ -323,8 +323,22 @@ export class ListenSession extends DurableObject<ListenEnv> {
     // Hibernation API (NOT server.accept()): the socket survives DO eviction. Tagged with the
     // sessionId so getWebSockets(tag) can address it; the binding lives in storage, not an attachment.
     this.ctx.acceptWebSocket(server, [sessionId]);
+    // Carry the DO's current resume position in the ready frame (#25), for BOTH the first-bind and the
+    // resume path. It is the persisted "cursor" — the just-seeded boundary on a first bind (`since=now`
+    // resolves to a non-null wall-clock-now cursor server-side; `beginning`/oldest leaves it unset), or
+    // the last acked cursor on a reconnect. Encoded with the SAME opaque cursor key/`encodeCursor` the
+    // event frames use, so a streaming client has a cursor from CONNECT — before the first event — and a
+    // pause that begins before any event still resumes losslessly. SERVER-resolved by construction (it is
+    // whatever the DO actually persisted), never a wall clock here, so a skewed client clock can't shift it.
+    // Unset cursor (oldest-inclusive seed / no seed) → `null`: there is no position to resume from.
+    const seeded = this.toCursor(await this.ctx.storage.get<AnyStoredCursor>("cursor"));
     server.send(
-      encodeServerFrame({ type: "ready", sessionId, watermarkDeltaMs: WATERMARK_DELTA_MS }),
+      encodeServerFrame({
+        type: "ready",
+        sessionId,
+        watermarkDeltaMs: WATERMARK_DELTA_MS,
+        cursor: seeded ? await encodeCursor(seeded, this.cursorKey) : null,
+      }),
     );
 
     // Connect-time cursor-contract status (ADR-0017), first bind only: the initial caughtUp + the

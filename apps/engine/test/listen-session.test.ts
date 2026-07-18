@@ -1,6 +1,7 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import {
   b64ToBytes,
+  decodeCursor,
   encodeCursor,
   importCursorKey,
   readSecretBinding,
@@ -285,6 +286,85 @@ describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)"
       orderKey: c.orderKey,
       id: c.id,
     });
+  });
+});
+
+describe("ListenSession — ready frame seed cursor (#25)", () => {
+  // Capture every frame off a freshly-accepted socket (the ready frame is sent synchronously on connect,
+  // buffered until accept()). The ready frame carries the DO's SEEDED/persisted resume position from
+  // CONNECT so a streaming client has a cursor before the first event — closing the hide-before-first-event
+  // resume gap. SERVER-resolved: it is exactly what the DO seeded/persisted, never a wall clock.
+  function framesOf(res: Response): {
+    ws: WebSocket;
+    frames: { type: string; cursor?: string | null }[];
+  } {
+    const ws = res.webSocket as WebSocket;
+    const frames: { type: string; cursor?: string | null }[] = [];
+    ws.addEventListener("message", (e) =>
+      frames.push(JSON.parse(typeof e.data === "string" ? e.data : "")),
+    );
+    ws.accept();
+    return { ws, frames };
+  }
+
+  async function readyOf(res: Response): Promise<{ type: string; cursor?: string | null }> {
+    const { frames } = framesOf(res);
+    await vi.waitFor(() => expect(frames.some((f) => f.type === "ready")).toBe(true));
+    return frames.find((f) => f.type === "ready")!;
+  }
+
+  it("a first-bind since=now ready frame carries the SEEDED head cursor (non-null, decodes to the seed)", async () => {
+    const b = newBinding();
+    const resolved: Cursor = {
+      orderKey: orderKeyOf(new Date("2026-06-10T12:00:09.000Z")),
+      id: crypto.randomUUID(),
+    };
+    const stub = stubFor(b.sessionId);
+    await runInDurableObject(stub, (inst) => {
+      (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as Pollable).backlogMeta = EMPTY_META;
+      (inst as WithResolve).resolveSinceCursor = async () => resolved;
+    });
+    const res = await connect(stub, b, { sinceSpec: "now" });
+
+    expect(res.status).toBe(101);
+    const ready = await readyOf(res);
+    expect(typeof ready.cursor).toBe("string");
+    // Decodes to EXACTLY the DO's seeded position — proof it is server-resolved, not a client clock.
+    expect(await decodeCursor(ready.cursor as string, cursorKey)).toEqual(resolved);
+  });
+
+  it("a first-bind beginning/oldest ready frame carries cursor: null (no seed to resume from)", async () => {
+    const b = newBinding();
+    const stub = stubFor(b.sessionId);
+    await runInDurableObject(stub, (inst) => {
+      (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as Pollable).backlogMeta = EMPTY_META;
+      (inst as WithResolve).resolveSinceCursor = async () => undefined;
+    });
+    const res = await connect(stub, b, { sinceSpec: "beginning" });
+
+    expect(res.status).toBe(101);
+    const ready = await readyOf(res);
+    expect(ready.cursor).toBeNull();
+  });
+
+  it("a RESUME (reconnect) ready frame carries the persisted acked cursor", async () => {
+    const b = newBinding();
+    const { stub } = await openSession(b); // first bind, no seed → cursor unset (ready cursor is null)
+    const c: Cursor = {
+      orderKey: orderKeyOf(new Date("2026-06-10T12:00:05.000Z")),
+      id: crypto.randomUUID(),
+    };
+    await runInDurableObject(stub, async (inst, state) => {
+      await (inst as ListenSession).webSocketMessage(state.getWebSockets()[0], await ackCursor(c));
+    });
+    const res = await connect(stub, b); // reconnect → ready frame reflects the durable acked cursor
+
+    expect(res.status).toBe(101);
+    const ready = await readyOf(res);
+    expect(typeof ready.cursor).toBe("string");
+    expect(await decodeCursor(ready.cursor as string, cursorKey)).toEqual(c);
   });
 });
 

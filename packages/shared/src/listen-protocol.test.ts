@@ -58,6 +58,54 @@ describe("listen-protocol — server frames", () => {
     expect(ServerFrameSchema.parse(JSON.parse(encodeServerFrame(frame)))).toEqual(frame);
   });
 
+  // #25 — the ready frame carries the DO's seeded resume cursor so a streaming client has a position
+  // from CONNECT (before the first event). The field is OPTIONAL + NULLABLE for cross-version back-compat:
+  // the CLI is versioned independently, so a NEW client must tolerate an OLD engine that omits it, and an
+  // OLD client must ignore a NEW engine that includes it.
+  it("round-trips a ready frame that CARRIES a seed cursor", () => {
+    const frame: ServerFrame = {
+      type: "ready",
+      sessionId: "s1",
+      watermarkDeltaMs: 5000,
+      cursor: "opaque.seed.cursor",
+    };
+    const parsed = ServerFrameSchema.parse(JSON.parse(encodeServerFrame(frame)));
+    expect(parsed).toEqual(frame);
+    if (parsed.type === "ready") expect(parsed.cursor).toBe("opaque.seed.cursor");
+  });
+
+  it("still parses an OLD ready frame with NO cursor (back-compat, new client ⇄ old engine)", () => {
+    // The wire shape an engine that predates #25 sends: no `cursor` key at all. A new client must accept it.
+    const wire = JSON.stringify({ type: "ready", sessionId: "s1", watermarkDeltaMs: 5000 });
+    const parsed = ServerFrameSchema.parse(JSON.parse(wire));
+    expect(parsed).toEqual({ type: "ready", sessionId: "s1", watermarkDeltaMs: 5000 });
+    if (parsed.type === "ready") expect(parsed.cursor).toBeUndefined();
+  });
+
+  it("accepts a ready frame whose cursor is explicitly null (seeded from the oldest / no seed)", () => {
+    const wire = JSON.stringify({
+      type: "ready",
+      sessionId: "s1",
+      watermarkDeltaMs: 5000,
+      cursor: null,
+    });
+    const parsed = ServerFrameSchema.parse(JSON.parse(wire));
+    expect(parsed.type).toBe("ready");
+    if (parsed.type === "ready") expect(parsed.cursor).toBeNull();
+  });
+
+  it("rejects a ready frame whose cursor is the wrong type (not string/null)", () => {
+    const wire = JSON.stringify({
+      type: "ready",
+      sessionId: "s1",
+      watermarkDeltaMs: 5000,
+      cursor: 7,
+    });
+    expect(() => ServerFrameSchema.parse(JSON.parse(wire))).toThrow();
+    // parseServerFrame is the untrusted-input path: a bad cursor type → null, never a throw.
+    expect(parseServerFrame(wire)).toBeNull();
+  });
+
   it("encodes an event frame's Date as ISO and coerces it back on parse", () => {
     const frame: ServerFrame = { type: "event", summary: summary(), cursor: "cur" };
     const wire = encodeServerFrame(frame);
