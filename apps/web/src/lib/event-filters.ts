@@ -28,6 +28,9 @@ export interface EventFilters {
   /** Multi-select verification state — OR'd. Set only when non-empty. */
   readonly verificationState?: readonly VerificationState[];
   readonly search?: string;
+  /** Case-insensitive substring over the raw request headers — a SEPARATE, unindexed scan (min 1, max 256,
+   *  mirroring the contract). AND-composes with `search`, never OR'd into it. */
+  readonly headerSearch?: string;
   /** Drill down to ONE endpoint (the org-wide browse). Absent = every endpoint in the org. */
   readonly endpointId?: string;
   /** Multi-select HTTP-method filter — OR'd. Set only when non-empty. */
@@ -49,6 +52,9 @@ export interface EventFilterParams {
   readonly status?: string | string[] | null;
   /** Free-text substring over provider_event_id + dedup_key (`?search=`); min 3 chars (pg_trgm's floor). */
   readonly search?: string | null;
+  /** Case-insensitive substring over the raw request headers (`?headerSearch=`); a SEPARATE, unindexed scan
+   *  — min 1 (NO trigram floor, since it's unindexed), max 256. Slower than `search`; best date-bounded. */
+  readonly headerSearch?: string | null;
   /** A relative date preset (`?range=`): 1h | 24h | 7d | 30d — resolves to a receivedAfter bound. */
   readonly range?: string | null;
   /** Drill down to ONE endpoint (`?endpointId=`) — org-wide browse only; the per-endpoint page ignores it. */
@@ -113,6 +119,7 @@ export function parseEventFilters(
     receivedBefore?: Date;
     verificationState?: VerificationState[];
     search?: string;
+    headerSearch?: string;
     endpointId?: string;
     method?: HttpMethod[];
     dedupStrategy?: DedupStrategy[];
@@ -165,6 +172,13 @@ export function parseEventFilters(
     search.length <= SEARCH_MAX_LENGTH
   )
     filters.search = search;
+  // headerSearch (#24): a SEPARATE, deliberately-unindexed substring over the raw headers. Deliberately NO
+  // SEARCH_MIN_LENGTH floor — that floor exists only because pg_trgm extracts no trigrams below 3 chars, and
+  // this scan is unindexed, so a 1-2 char term is valid here (unlike `search`). One predicate,
+  // effectiveHeaderSearch, decides what actually applies — shared with the filter bar so the URL/box/Clear/hint
+  // can never claim a filter the parser then drops (whitespace-only, or over the max).
+  const headerSearch = effectiveHeaderSearch(firstParam(params.headerSearch ?? undefined));
+  if (headerSearch) filters.headerSearch = headerSearch;
   // SHAPE-validated only, deliberately NOT membership-validated — a departure from the provider filter
   // above, which checks its value against a static vocabulary.
   //
@@ -218,6 +232,21 @@ export function effectiveEventType(raw: string | null | undefined): string {
 }
 
 /**
+ * The header substring the query will ACTUALLY filter on, from a raw URL/input value: trimmed, and dropped
+ * (→ "") when empty/whitespace or over the max (SEARCH_MAX_LENGTH) the contract enforces. Returning "" for
+ * "no filter" (rather than undefined) lets the filter bar use it directly as an input value.
+ *
+ * The SINGLE source of truth for "is a header-search filter active", shared by the parser (above) and the
+ * client bar — the exact `effectiveEventType` discipline (a shared link can't light the filter UI over a list
+ * the server never filtered). DELIBERATELY has no `SEARCH_MIN_LENGTH` floor: header search is UNINDEXED, so
+ * pg_trgm's 3-char floor doesn't apply — a 1-2 char term is valid here (it just runs a slower scan).
+ */
+export function effectiveHeaderSearch(raw: string | null | undefined): string {
+  const cleaned = cleanString(raw);
+  return cleaned !== undefined && cleaned.length <= SEARCH_MAX_LENGTH ? cleaned : "";
+}
+
+/**
  * A collision-free React re-seed key from a filter's values. Both events pages re-key their client list on the
  * active filter set so a filter change replaces the once-seeded first page rather than appending onto a stale
  * one — but a naive `parts.join("|")` collides when a FREE-TEXT value (search, eventType) itself contains the
@@ -252,6 +281,7 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
     filters.receivedBefore !== undefined ||
     filters.verificationState !== undefined ||
     filters.search !== undefined ||
+    filters.headerSearch !== undefined ||
     filters.endpointId !== undefined ||
     filters.method !== undefined ||
     filters.dedupStrategy !== undefined ||
@@ -274,6 +304,7 @@ export function hasLiveIncompatibleFilters(filters: EventFilters): boolean {
     filters.receivedBefore !== undefined ||
     filters.verificationState !== undefined ||
     filters.search !== undefined ||
+    filters.headerSearch !== undefined ||
     filters.endpointId !== undefined ||
     filters.method !== undefined ||
     filters.dedupStrategy !== undefined ||

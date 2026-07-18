@@ -44,6 +44,7 @@ interface ListFlags extends GlobalFlags {
   before?: string;
   status?: (typeof VERIFICATION_STATES)[number][];
   search?: string;
+  headerSearch?: string;
   method?: (typeof HTTP_METHODS)[number][];
   dedupStrategy?: (typeof DEDUP_STRATEGIES)[number][];
   eventType?: string;
@@ -67,6 +68,7 @@ export const eventsListCommand = buildCommand<ListFlags, [string | undefined], A
           receivedBefore: flags.before,
           verificationState: flags.status,
           search: flags.search,
+          headerSearch: flags.headerSearch,
           method: flags.method,
           dedupStrategy: flags.dedupStrategy,
           eventType: flags.eventType,
@@ -160,6 +162,22 @@ export const eventsListCommand = buildCommand<ListFlags, [string | undefined], A
         },
         brief:
           "substring (min 3 chars) over the provider event id + dedup key, or an exact event id (uuid)",
+        optional: true,
+      },
+      headerSearch: {
+        kind: "parsed",
+        // Reject an explicitly-empty value (e.g. `--header-search "$H"` with $H unset) rather than forwarding
+        // `?headerSearch=`, which the server drops to NO filter — the operator would read the unfiltered list
+        // as if it were scoped. Mirrors the --event-type / endpointId footgun guards. No min-length floor: this
+        // scan is UNINDEXED (unlike --search's trigram path), so pg_trgm's 3-char floor doesn't apply.
+        parse: (value: string) => {
+          if (value.trim() === "") {
+            throw new Error("--header-search is empty — omit it, or pass a real header substring.");
+          }
+          return value;
+        },
+        brief:
+          "case-insensitive substring over the raw request headers — a SEPARATE, unindexed scan, SLOWER than --search, so pair it with --after/--before",
         optional: true,
       },
       method: {

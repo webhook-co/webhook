@@ -1324,6 +1324,8 @@ export interface operations {
                 dedupStrategy?: ("sw_webhook_id" | "provider_event_id" | "content_hash" | "fields" | "unique")[];
                 /** @description Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value. */
                 eventType?: string;
+                /** @description Case-insensitive substring over the raw request headers. A SEPARATE, deliberately-unindexed residual scan — SLOWER than `search` (which is trigram-indexed), so best combined with a date range. AND-composes with `search`; never OR'd into it. */
+                headerSearch?: string;
                 /** @description Max items to return (1–200, default 50). */
                 limit?: number;
                 /** @description Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable). */
@@ -1552,6 +1554,8 @@ export interface operations {
                 endpointId?: string;
                 /** @description Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value. */
                 eventType?: string;
+                /** @description Case-insensitive substring over the raw request headers. A SEPARATE, deliberately-unindexed residual scan — SLOWER than `search` (which is trigram-indexed), so best combined with a date range. AND-composes with `search`; never OR'd into it. */
+                headerSearch?: string;
                 /** @description Max items to return (1–200, default 50). */
                 limit?: number;
                 /** @description Filter by captured HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD | OPTIONS (repeatable). */

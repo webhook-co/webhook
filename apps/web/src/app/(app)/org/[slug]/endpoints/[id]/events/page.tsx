@@ -36,6 +36,7 @@ export default async function EventsPage({
     from?: string | string[];
     to?: string | string[];
     search?: string | string[];
+    headerSearch?: string | string[];
     range?: string | string[];
     method?: string | string[];
     dedupStrategy?: string | string[];
@@ -57,6 +58,7 @@ export default async function EventsPage({
     from: firstParam(sp.from),
     to: firstParam(sp.to),
     search: firstParam(sp.search),
+    headerSearch: firstParam(sp.headerSearch),
     range: firstParam(sp.range),
     method: sp.method,
     dedupStrategy: sp.dedupStrategy,
@@ -76,6 +78,7 @@ export default async function EventsPage({
     provider: rawParams.provider,
     status: rawParams.status,
     search: rawParams.search,
+    headerSearch: rawParams.headerSearch,
     method: rawParams.method,
     dedupStrategy: rawParams.dedupStrategy,
     eventType: rawParams.eventType,
@@ -131,6 +134,7 @@ export default async function EventsPage({
               filterParams.from,
               filterParams.to,
               filterParams.search,
+              filterParams.headerSearch,
               filterParams.method,
               filterParams.dedupStrategy,
               filterParams.eventType,

@@ -169,6 +169,26 @@ describe("keyset browse reads use their covering index (no Sort node)", () => {
     });
   });
 
+  it("the date-bounded headerSearch residual rides events_org_ordered_idx (UNINDEXED by design — no Sort)", async () => {
+    await withTenant(app, orgId, async (tx) => {
+      // #24: headerSearch is a DELIBERATELY UNINDEXED `headers::text ilike` residual — the GIN on headers::text
+      // was refused at ~88x ingest p99 (ingest-gin-writeamp.pg.test.ts), so there is intentionally NO index for
+      // it and this guard must NOT force one. What it DOES assert: with a date bound (the honest way to run a
+      // header scan), the residual applies ON TOP of the ordered scan — the date range rides the index's 2nd
+      // column so the browse still rides events_org_ordered_idx (org_id, received_at, id) with NO blocking Sort;
+      // the ilike is just a per-row recheck. Mirrors browseEvents' org-wide WHERE + ORDER BY with headerSearch set.
+      const p = await planOf(
+        tx,
+        (t) => t`select id from events
+                 where deleted_at is null
+                   and received_at >= now() - interval '7 days'
+                   and headers::text ilike ${"%x-shopify-topic%"}
+                 order by received_at desc, id desc limit 51`,
+      );
+      expect(usesIndexNoSort(p, "events_org_ordered_idx")).toBe(true);
+    });
+  });
+
   it("the org-wide failed filter rides events_org_failed_idx (0022's partial, one scope wider)", async () => {
     await withTenant(app, orgId, async (tx) => {
       const p = await planOf(

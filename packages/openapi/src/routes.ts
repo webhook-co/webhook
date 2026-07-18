@@ -185,6 +185,12 @@ const EVENT_FILTER_QUERY: readonly QueryParamDef[] = [
       "Exact match on the normalized, provider-derived event type (e.g. `charge.succeeded`). Events with no parsed type (providers we don't extract one for) match no eventType value.",
     schemaFrom: "filter.eventType",
   },
+  {
+    name: "headerSearch",
+    description:
+      "Case-insensitive substring over the raw request headers. A SEPARATE, deliberately-unindexed residual scan — SLOWER than `search` (which is trigram-indexed), so best combined with a date range. AND-composes with `search`; never OR'd into it.",
+    schemaFrom: "filter.headerSearch",
+  },
 ];
 
 /**
@@ -215,6 +221,9 @@ function eventListInput(
   if (methods.length > 0) filter.method = methods;
   const eventType = q.get("eventType");
   if (eventType && eventType.trim() !== "") filter.eventType = eventType;
+  // A whitespace-only / empty headerSearch means "no header search" (the contract trims + min(1)s it).
+  const headerSearch = q.get("headerSearch");
+  if (headerSearch && headerSearch.trim() !== "") filter.headerSearch = headerSearch;
   if (Object.keys(filter).length > 0) input.filter = filter;
   return input;
 }

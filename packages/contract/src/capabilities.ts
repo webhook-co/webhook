@@ -285,6 +285,14 @@ export const eventsList = defineCapability({
         dedupStrategy: multiEnum(DedupStrategySchema).optional(),
         method: multiEnum(HttpMethodSchema).optional(),
         eventType: z.string().trim().min(1).max(EVENT_TYPE_MAX_LENGTH).optional(),
+        // A case-insensitive substring over the raw request headers (`headers::text`), a SEPARATE
+        // deliberately-unindexed residual scan (slice 2 refused a GIN at ~88x ingest write-amp — see
+        // packages/db/test/ingest-gin-writeamp.pg.test.ts). SLOWER than `search`, best combined with a date
+        // range; it AND-composes with `search`, never OR'd into it (re-poisoning the fast trigram search is
+        // the exact thing slice 2 fixed). min(1), NOT the SEARCH_MIN_LENGTH (=3) floor: that floor exists only
+        // because pg_trgm extracts no trigrams below 3 chars, and header search is UNINDEXED, so it never
+        // applies here. Reuses SEARCH_MAX_LENGTH (an upper bound is still worth enforcing on an unindexed scan).
+        headerSearch: z.string().trim().min(1).max(SEARCH_MAX_LENGTH).optional(),
       })
       .optional(),
   }),

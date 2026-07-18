@@ -42,6 +42,7 @@ export default async function OrgEventsPage({
     from?: string | string[];
     to?: string | string[];
     search?: string | string[];
+    headerSearch?: string | string[];
     range?: string | string[];
     endpointId?: string | string[];
     method?: string | string[];
@@ -84,6 +85,7 @@ export default async function OrgEventsPage({
     from: firstParam(sp.from),
     to: firstParam(sp.to),
     search: firstParam(sp.search),
+    headerSearch: firstParam(sp.headerSearch),
     range,
     endpointId: firstParam(sp.endpointId),
     method: sp.method,
@@ -112,6 +114,7 @@ export default async function OrgEventsPage({
     provider: rawParams.provider,
     status: rawParams.status,
     search: rawParams.search,
+    headerSearch: rawParams.headerSearch,
     endpointId: rawParams.endpointId,
     method: rawParams.method,
     dedupStrategy: rawParams.dedupStrategy,
@@ -128,6 +131,7 @@ export default async function OrgEventsPage({
     rawParams.provider,
     rawParams.status,
     rawParams.search,
+    rawParams.headerSearch,
     rawParams.endpointId,
     rawParams.method,
     rawParams.dedupStrategy,

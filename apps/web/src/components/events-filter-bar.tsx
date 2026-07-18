@@ -19,6 +19,8 @@ import { effectiveDateRange } from "@/lib/date-range";
 import {
   EVENT_TYPE_MAX_LENGTH,
   effectiveEventType,
+  effectiveHeaderSearch,
+  SEARCH_MAX_LENGTH,
   SEARCH_MIN_LENGTH,
   searchTooShort,
 } from "@/lib/event-filters";
@@ -39,6 +41,7 @@ const FILTER_KEYS = [
   "from",
   "to",
   "search",
+  "headerSearch",
   "range",
   "endpointId",
   "method",
@@ -150,6 +153,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   // box, `active`/Clear, and the coverage hint off this (the same predicate the parser uses) means a shared
   // link with a whitespace-only or over-long value can't light the filter UI over an unfiltered list.
   const eventType = effectiveEventType(viewParams.get("eventType"));
+  // The EFFECTIVE header search — what the server will actually filter on — keyed off the same predicate the
+  // parser uses, so a shared link with a whitespace-only / over-long value can't light the filter UI over an
+  // unfiltered list (the same chip-vs-data discipline as eventType).
+  const headerSearch = effectiveHeaderSearch(viewParams.get("headerSearch"));
   const from = viewParams.get("from") ?? "";
   const to = viewParams.get("to") ?? "";
   const search = viewParams.get("search") ?? "";
@@ -167,6 +174,7 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     methodSel.length > 0 ||
     dedupSel.length > 0 ||
     eventType !== "" ||
+    headerSearch !== "" ||
     from !== "" ||
     to !== "" ||
     search !== "" ||
@@ -297,6 +305,32 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     committedEventTypeRef.current = effective;
     applyPatch({ eventType: effective });
   }
+
+  // headerSearch (#24) — a SLOW, unindexed substring over the raw headers. It commits on Enter/blur, NOT
+  // debounced-as-you-type like `search`: each header search is an expensive scan, so it must not fire on every
+  // keystroke. It therefore uses the SAME commit-on-Enter/blur URL-sync strategy as eventType (compare the
+  // incoming URL value against what WE last pushed to tell our own commit's lagging echo apart from an external
+  // navigation), not search's always-running debounce. Wired through the SAME applyPatch as the other facets.
+  const [headerSearchInput, setHeaderSearchInput] = React.useState(headerSearch);
+  const committedHeaderSearchRef = React.useRef(headerSearch);
+  React.useEffect(() => {
+    // Adopt the URL value into the box ONLY on an EXTERNAL change (back/forward, Clear, a shared link); when it
+    // equals what we last pushed it's just our own commit's navigation catching up, and the box may hold
+    // characters typed during that round trip — adopting here would clobber them. Same discipline as eventType.
+    if (headerSearch !== committedHeaderSearchRef.current) setHeaderSearchInput(headerSearch);
+    committedHeaderSearchRef.current = headerSearch;
+  }, [headerSearch]);
+  function commitHeaderSearch() {
+    // Only a value the parser would actually APPLY reaches the URL (effectiveHeaderSearch — the exact predicate
+    // the parser uses), so a whitespace-only / over-long term can't light Clear + the hint over an unfiltered
+    // list. Normalize the box even on a no-op so trailing whitespace / an over-long paste doesn't linger.
+    const effective = effectiveHeaderSearch(headerSearchInput);
+    setHeaderSearchInput(effective);
+    if (effective === committedHeaderSearchRef.current) return;
+    committedHeaderSearchRef.current = effective;
+    applyPatch({ headerSearch: effective });
+  }
+
   const searchPendingRef = React.useRef(false);
   React.useEffect(() => {
     if (!searchPendingRef.current) setSearchInput(search);
@@ -343,6 +377,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     searchPendingRef.current = false;
     setEventTypeInput("");
     committedEventTypeRef.current = "";
+    // Reset the header-search box + its committed ref too (same reasoning as eventType: typed-but-uncommitted
+    // text otherwise lingers, since its URL value never changed so the URL→input sync effect wouldn't fire).
+    setHeaderSearchInput("");
+    committedHeaderSearchRef.current = "";
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
     // apply() pins this (empty) query as the snapshot and bumps, so viewParams reads empty on the next render:
@@ -444,6 +482,24 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           className="w-56"
         />
 
+        {/* headerSearch (#24) is a free substring over the RAW headers — a SEPARATE, deliberately-unindexed
+            scan, so it commits on Enter/blur (NOT debounced-as-you-type like the search box above): each scan
+            is expensive, so it must not fire on every keystroke. The hint is honest about the cost — it's
+            slower than search, so pair it with a date range. */}
+        <Input
+          value={headerSearchInput}
+          onChange={(e) => setHeaderSearchInput(e.target.value)}
+          onBlur={commitHeaderSearch}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitHeaderSearch();
+          }}
+          placeholder="Search headers (e.g. x-shopify-topic)"
+          aria-label="Search request headers"
+          aria-describedby={headerSearch !== "" ? "events-headersearch-hint" : undefined}
+          maxLength={SEARCH_MAX_LENGTH}
+          className="w-56"
+        />
+
         {endpoints ? (
           <Combobox
             label="Filter by endpoint"
@@ -477,6 +533,14 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
       <FilterHint id="events-eventtype-hint" active={eventType !== ""}>
         Event type is parsed for some providers only — no matches can mean we don’t extract this
         provider’s type, not that no events arrived.
+      </FilterHint>
+
+      {/* Visible + announced only while a header search is set. Header search runs an unindexed scan over the
+          raw headers, so it's slower than the id/dedup-key search above — say so, and nudge toward a date
+          range, which keeps it fast. */}
+      <FilterHint id="events-headersearch-hint" active={headerSearch !== ""}>
+        Header search scans the raw request headers, so it’s slower than the search above — pair it
+        with a date range to keep it fast.
       </FilterHint>
     </div>
   );

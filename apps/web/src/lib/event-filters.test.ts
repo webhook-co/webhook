@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EVENT_TYPE_MAX_LENGTH,
   effectiveEventType,
+  effectiveHeaderSearch,
   filterListKey,
   firstParam,
   hasAppliedFilters,
@@ -347,6 +348,69 @@ describe("parseEventFilters — the new facets (method, eventType, dedupStrategy
     expect(hasAppliedFilters(parseEventFilters({ dedupStrategy: ["unique"] }))).toBe(true);
     expect(hasAppliedFilters(parseEventFilters({ eventType: "charge.succeeded" }))).toBe(true);
     expect(hasAppliedFilters(parseEventFilters({}))).toBe(false);
+  });
+});
+
+// #24: headerSearch — the opt-in, deliberately-unindexed header substring facet. Distinct from `search`:
+// min(1), NOT the trigram min(3) floor (header search is unindexed, so the floor doesn't apply), and it
+// AND-composes with `search` rather than folding into it.
+describe("parseEventFilters — headerSearch (the unindexed header substring facet)", () => {
+  it("applies a trimmed header substring; empty/whitespace dropped; NO 3-char floor (min 1)", () => {
+    expect(parseEventFilters({ headerSearch: "x-shopify-topic" }).headerSearch).toBe(
+      "x-shopify-topic",
+    );
+    expect(parseEventFilters({ headerSearch: "  x-topic  " }).headerSearch).toBe("x-topic");
+    // A 1-2 char term is APPLIED (unlike `search`, which drops below 3) — the trigram floor doesn't apply.
+    expect(parseEventFilters({ headerSearch: "x" }).headerSearch).toBe("x");
+    expect(parseEventFilters({ headerSearch: "ab" }).headerSearch).toBe("ab");
+    // whitespace-only / empty → no filter
+    expect(parseEventFilters({ headerSearch: "   " }).headerSearch).toBeUndefined();
+    expect(parseEventFilters({ headerSearch: "" }).headerSearch).toBeUndefined();
+    // an over-long value is dropped (mirrors the contract's max SEARCH_MAX_LENGTH)
+    expect(
+      parseEventFilters({ headerSearch: "x".repeat(SEARCH_MAX_LENGTH + 1) }).headerSearch,
+    ).toBe(undefined);
+    expect(parseEventFilters({ headerSearch: "x".repeat(SEARCH_MAX_LENGTH) }).headerSearch).toBe(
+      "x".repeat(SEARCH_MAX_LENGTH),
+    );
+  });
+
+  it("AND-composes with search — both are set as their own independent fields", () => {
+    const f = parseEventFilters({ search: "evt_abc", headerSearch: "x-shopify-topic" });
+    expect(f.search).toBe("evt_abc");
+    expect(f.headerSearch).toBe("x-shopify-topic");
+  });
+
+  it("hasAppliedFilters + hasLiveIncompatibleFilters are both true when headerSearch is set", () => {
+    // It's a content facet, so a `since=now` live tail cannot honour it → it blocks Live (like search/eventType).
+    expect(hasAppliedFilters(parseEventFilters({ headerSearch: "x" }))).toBe(true);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ headerSearch: "x" }))).toBe(true);
+  });
+});
+
+// The single predicate the filter bar keys its box / Clear / hint off — the same "what will actually apply"
+// contract effectiveEventType has, so a shared link can't light the header-search UI over an unfiltered list.
+describe("effectiveHeaderSearch", () => {
+  it("returns a trimmed non-empty value, else '' (no filter)", () => {
+    expect(effectiveHeaderSearch("x-shopify-topic")).toBe("x-shopify-topic");
+    expect(effectiveHeaderSearch("  x-topic  ")).toBe("x-topic");
+    expect(effectiveHeaderSearch("x")).toBe("x"); // no 3-char floor
+    expect(effectiveHeaderSearch(null)).toBe("");
+    expect(effectiveHeaderSearch(undefined)).toBe("");
+    expect(effectiveHeaderSearch("")).toBe("");
+    expect(effectiveHeaderSearch("   ")).toBe("");
+    // capped at SEARCH_MAX_LENGTH
+    expect(effectiveHeaderSearch("x".repeat(SEARCH_MAX_LENGTH))).toBe(
+      "x".repeat(SEARCH_MAX_LENGTH),
+    );
+    expect(effectiveHeaderSearch("x".repeat(SEARCH_MAX_LENGTH + 1))).toBe("");
+  });
+
+  it("agrees with what parseEventFilters applies", () => {
+    for (const raw of ["x-topic", "  y  ", "", "   ", "x".repeat(SEARCH_MAX_LENGTH + 1)]) {
+      const applied = parseEventFilters({ headerSearch: raw }).headerSearch ?? "";
+      expect(effectiveHeaderSearch(raw)).toBe(applied);
+    }
   });
 });
 
