@@ -121,6 +121,29 @@ describe("wbhk events list", () => {
     expect(u.searchParams.get("eventType")).toBe("charge.succeeded");
   });
 
+  it("maps --header-search to the headerSearch input (its own facet, alongside --search)", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["events", "list", "--search", "evt_abc", "--header-search", "x-shopify-topic"],
+      t.ctx,
+    );
+    const u = new URL(cap.urls[0]);
+    // Both facets ride as their OWN query params — headerSearch is never folded into search.
+    expect(u.searchParams.get("search")).toBe("evt_abc");
+    expect(u.searchParams.get("headerSearch")).toBe("x-shopify-topic");
+  });
+
+  it("rejects an explicitly-empty --header-search as a usage error", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", "--header-search", ""], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
   it("rejects an unknown --method as a usage error", async () => {
     const t = makeTestContext({
       store: loggedInStore(),
@@ -158,6 +181,7 @@ describe("wbhk events list", () => {
     receivedAfter: { flag: "--after", value: "2026-06-01T00:00:00Z" },
     receivedBefore: { flag: "--before", value: "2026-06-01T00:00:00Z" },
     search: { flag: "--search", value: "abc" },
+    headerSearch: { flag: "--header-search", value: "x-shopify-topic" },
     method: { flag: "--method", value: "GET" },
     dedupStrategy: { flag: "--dedup-strategy", value: "unique" },
     eventType: { flag: "--event-type", value: "charge.succeeded" },

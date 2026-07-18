@@ -392,6 +392,13 @@ export interface EventBrowseFilters extends ListOptions {
   readonly verificationState?: readonly VerificationState[];
   /** Case-insensitive substring across provider_event_id + dedup_key (+ exact id match when a uuid). */
   readonly search?: string;
+  /**
+   * Case-insensitive substring over the RAW request headers (`headers::text`) — a SEPARATE, deliberately
+   * UNINDEXED residual scan (#24). It rides on top of the ordered scan as its own `and (...)` filter and
+   * AND-composes with `search`; it is NEVER folded into `eventSearchFilter`/`search` (re-poisoning the fast
+   * trigram search is the exact thing slice 2 fixed — a GIN on headers::text was refused at ~88x ingest p99).
+   */
+  readonly headerSearch?: string;
   /** Multi-select dedup-strategy filter — OR'd. Always NOT NULL, so every row is filterable. */
   readonly dedupStrategy?: readonly DedupStrategy[];
   /** Multi-select HTTP-method filter — OR'd. NULL on legacy pre-0028 rows, which never match a value. */
@@ -495,7 +502,13 @@ async function browseEvents(tx: TenantTx, opts: ListOrgEventsOptions): Promise<P
     dedupStrategy,
     method,
     eventType,
+    headerSearch,
   } = opts;
+  // NB `eventSearchFilter(tx, search)` and the `headerSearch` residual below are TWO SEPARATE filters that
+  // AND together — headerSearch is NEVER folded into eventSearchFilter/search. `search` rides the trigram GINs
+  // (fast); headerSearch is a deliberately UNINDEXED `headers::text ilike` residual (#24) — the GIN on headers
+  // was refused at ~88x ingest p99 (test/ingest-gin-writeamp.pg.test.ts). Keeping them independent is the whole
+  // point: the fast search stays un-poisoned, and a header scan only runs when a caller explicitly asks for one.
   const rows = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
            ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
@@ -510,6 +523,7 @@ async function browseEvents(tx: TenantTx, opts: ListOrgEventsOptions): Promise<P
     ${dedupStrategy && dedupStrategy.length > 0 ? tx`and dedup_strategy in ${tx([...dedupStrategy])}` : tx``}
     ${method && method.length > 0 ? tx`and method in ${tx([...method])}` : tx``}
     ${eventType ? tx`and event_type = ${eventType}` : tx``}
+    ${headerSearch ? tx`and headers::text ilike ${likeContains(headerSearch)}` : tx``}
     ${cursor ? keysetBefore(tx, cursor) : tx``}
     order by received_at desc, id desc
     limit ${limit + 1}`;

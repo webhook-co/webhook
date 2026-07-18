@@ -175,6 +175,9 @@ export interface EventsListParams extends ListParams {
   /** Multi-select — each value rides as a repeated `?verificationState=` query param. */
   readonly verificationState?: readonly string[];
   readonly search?: string;
+  /** Case-insensitive substring over the raw request headers (`?headerSearch=`) — a SEPARATE, unindexed scan
+   *  (slower than `search`); AND-composes with `search`, never OR'd into it. */
+  readonly headerSearch?: string;
   /** Multi-select captured HTTP method (`?method=`). */
   readonly method?: readonly string[];
   /** Multi-select dedup strategy (`?dedupStrategy=`). */
@@ -582,6 +585,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         receivedBefore: params.receivedBefore,
         verificationState: params.verificationState,
         search: params.search,
+        headerSearch: params.headerSearch,
         method: params.method,
         dedupStrategy: params.dedupStrategy,
         eventType: params.eventType,

@@ -10,9 +10,6 @@ const verifyAuditChainPaged = vi.fn(async () => ({ ok: true, rowsVerified: 1 }))
 vi.mock("@webhook-co/db/audit-append", () => ({
   verifyAuditChainPaged: (...a: unknown[]) => verifyAuditChainPaged(...a),
 }));
-vi.mock("@webhook-co/db/client", () => ({
-  withTenant: (_app: unknown, _org: string, fn: (tx: unknown) => unknown) => fn({}),
-}));
 
 // PARTIAL mock: keep the REAL isAuditReaderRole. A gate tested against a hand-rolled copy of itself is green
 // and worthless — the real predicate could drift to `true` for a member and every test here would still pass.
@@ -31,11 +28,12 @@ vi.mock("./audit", () => ({
   loadAuthAudit: (...a: unknown[]) => loadAuthAudit(...a),
 }));
 
-const readAuthAuditChain = vi.fn(async () => [{ seq: 1 }]);
-const verifyAuthAuditChain = vi.fn(async () => ({ ok: true, rowsVerified: 1 }));
+// The governance action now STREAMS via verifyAuthAuditChainPaged (#663) — same shape as the main chain's
+// verifyAuditChainPaged. It's the one collaborator to stub; the paged reader's own correctness (compound
+// keyset, no-lower-bound first page, cross-page link) lives in packages/db's real-Postgres suite.
+const verifyAuthAuditChainPaged = vi.fn(async () => ({ ok: true, rowsVerified: 1 }));
 vi.mock("@webhook-co/db/auth-audit", () => ({
-  readAuthAuditChain: (...a: unknown[]) => readAuthAuditChain(...a),
-  verifyAuthAuditChain: (...a: unknown[]) => verifyAuthAuditChain(...a),
+  verifyAuthAuditChainPaged: (...a: unknown[]) => verifyAuthAuditChainPaged(...a),
 }));
 
 import {
@@ -57,7 +55,7 @@ beforeEach(() => {
   verifyAuditChainPaged.mockResolvedValue({ ok: true, rowsVerified: 1 });
   loadAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
   loadAuthAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
-  verifyAuthAuditChain.mockResolvedValue({ ok: true, rowsVerified: 1 });
+  verifyAuthAuditChainPaged.mockResolvedValue({ ok: true, rowsVerified: 1 });
 });
 
 describe("the audit role gate", () => {
@@ -135,8 +133,7 @@ describe("the audit role gate — governance chain", () => {
   it("REFUSES a plain member the governance VERIFY — and reads nothing", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
     expect(await verifyAuthAuditChainAction("acme")).toEqual({ status: "forbidden" });
-    expect(readAuthAuditChain).not.toHaveBeenCalled();
-    expect(verifyAuthAuditChain).not.toHaveBeenCalled();
+    expect(verifyAuthAuditChainPaged).not.toHaveBeenCalled();
   });
 
   it("allows an admin", async () => {
@@ -151,11 +148,11 @@ describe("verifyAuthAuditChainAction", () => {
       status: "ok",
       verification: { ok: true, rowsVerified: 1 },
     });
-    expect(readAuthAuditChain).toHaveBeenCalled();
+    expect(verifyAuthAuditChainPaged).toHaveBeenCalled();
   });
 
   it("reports a BREAK verbatim (a deleted governance row is exactly what this exists to catch)", async () => {
-    verifyAuthAuditChain.mockResolvedValueOnce({
+    verifyAuthAuditChainPaged.mockResolvedValueOnce({
       ok: false,
       rowsVerified: 2,
       break: { kind: "seq_gap", seq: 4, detail: "a row is missing" },
@@ -167,7 +164,7 @@ describe("verifyAuthAuditChainAction", () => {
   });
 
   it("returns an error result rather than throwing when the read fails", async () => {
-    readAuthAuditChain.mockRejectedValueOnce(new Error("db down"));
+    verifyAuthAuditChainPaged.mockRejectedValueOnce(new Error("db down"));
     expect(await verifyAuthAuditChainAction("acme")).toEqual({ status: "error" });
   });
 });

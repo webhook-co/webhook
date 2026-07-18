@@ -158,7 +158,7 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     // The router maps raw query strings into filter; the events.list Zod schema coerces them downstream.
     await handleRequest(
       get(
-        `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=7d&receivedBefore=2026-06-02T00:00:00Z&search=evt_abc&dedupStrategy=unique&dedupStrategy=content_hash&method=GET&method=POST&eventType=charge.succeeded`,
+        `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=7d&receivedBefore=2026-06-02T00:00:00Z&search=evt_abc&headerSearch=x-shopify-topic&dedupStrategy=unique&dedupStrategy=content_hash&method=GET&method=POST&eventType=charge.succeeded`,
       ),
       deps,
     );
@@ -172,6 +172,8 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
         receivedAfter: "7d",
         receivedBefore: "2026-06-02T00:00:00Z",
         search: "evt_abc",
+        // headerSearch AND-composes as its OWN filter param — never folded into `search`.
+        headerSearch: "x-shopify-topic",
         dedupStrategy: ["unique", "content_hash"],
         method: ["GET", "POST"],
         eventType: "charge.succeeded",

@@ -36,6 +36,7 @@ export default async function EventsPage({
     from?: string | string[];
     to?: string | string[];
     search?: string | string[];
+    headerSearch?: string | string[];
     range?: string | string[];
     method?: string | string[];
     dedupStrategy?: string | string[];
@@ -57,6 +58,7 @@ export default async function EventsPage({
     from: firstParam(sp.from),
     to: firstParam(sp.to),
     search: firstParam(sp.search),
+    headerSearch: firstParam(sp.headerSearch),
     range: firstParam(sp.range),
     method: sp.method,
     dedupStrategy: sp.dedupStrategy,
@@ -76,6 +78,7 @@ export default async function EventsPage({
     provider: rawParams.provider,
     status: rawParams.status,
     search: rawParams.search,
+    headerSearch: rawParams.headerSearch,
     method: rawParams.method,
     dedupStrategy: rawParams.dedupStrategy,
     eventType: rawParams.eventType,
@@ -114,7 +117,15 @@ export default async function EventsPage({
       ) : null}
 
       {result.status === "error" ? (
-        <Banner tone="danger">We couldn&apos;t load these events. Refresh to try again.</Banner>
+        // A timed-out browse is DETERMINISTIC (it will time out again), so "Refresh" is advice that cannot
+        // work — the only thing that helps is a narrower window. This page browses all-time, so the new
+        // unindexed headerSearch residual (#24) can trip the 5s browse timeout. Mirror the org-wide page's
+        // timeout-specific banner; keep the generic "Refresh" for a real blip (reason=unknown).
+        <Banner tone="danger">
+          {result.reason === "timeout"
+            ? "That's a lot of history to search at once, and the query timed out. Narrow the date range and try again — a header search especially is faster over a smaller window."
+            : "We couldn't load these events. Refresh to try again."}
+        </Banner>
       ) : (
         <div className="flex flex-col gap-5">
           <EventsFilterBar providers={PROVIDERS} />
@@ -131,6 +142,7 @@ export default async function EventsPage({
               filterParams.from,
               filterParams.to,
               filterParams.search,
+              filterParams.headerSearch,
               filterParams.method,
               filterParams.dedupStrategy,
               filterParams.eventType,

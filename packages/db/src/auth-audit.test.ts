@@ -4,8 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalizeAuthAuditEntry,
   computeAuthAuditRowHash,
+  verifyAuthAuditChain,
+  verifyAuthAuditChainChunk,
   verifyAuthAuditRowHash,
   type AuthAuditEntry,
+  type StoredAuthAuditRow,
 } from "./auth-audit";
 
 // Pure (no DB) coverage for the `aae1` control-plane audit canon — a SEPARATE chain from
@@ -163,5 +166,172 @@ describe("canon hardening — fail-loud + total over its input", () => {
       entry({ metadata: JSON.parse('{"__proto__":{"polluted":true}}') as unknown }),
     );
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+// The PAGED chunk verifier (#663) — the same walk as verifyAuthAuditChain, but resumable across page
+// boundaries so verifyAuthAuditChainPaged (see the real-PG suite) never has to hold the whole chain in
+// memory. These are pure, in-memory checks: they build a valid chain by hand and feed it as chunks.
+describe("verifyAuthAuditChainChunk (resumable paged walk, #663)", () => {
+  /** Build a VALID in-memory aae1 chain of `n` rows (seq 1..n), each hash-linked to the prior. */
+  async function buildChain(
+    key: CryptoKey,
+    orgId: string,
+    n: number,
+  ): Promise<StoredAuthAuditRow[]> {
+    const rows: StoredAuthAuditRow[] = [];
+    let prevHash: Uint8Array | null = null;
+    for (let seq = 1; seq <= n; seq++) {
+      const e: AuthAuditEntry = {
+        orgId,
+        seq,
+        actor: `u_${seq}`,
+        eventType: "login",
+        targetId: null,
+        ip: null,
+        geo: null,
+        metadata: null,
+      };
+      const rowHash = await computeAuthAuditRowHash(key, prevHash, e);
+      rows.push({ ...e, prevHash, rowHash });
+      prevHash = rowHash;
+    }
+    return rows;
+  }
+
+  const testKey = () => importAuditKey(new Uint8Array(32).fill(0x5a));
+
+  it("verifies the cross-page link when a chunk continues from a prior cursor", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 4);
+
+    const first = await verifyAuthAuditChainChunk(key, ORG, rows.slice(0, 2), null, 0);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+    expect(first.rowsVerified).toBe(2);
+    expect(first.tail).toEqual({ seq: 2, rowHash: rows[1]!.rowHash });
+
+    // Resuming the SECOND page from the first's tail links seq 3 to seq 2 across the boundary.
+    const second = await verifyAuthAuditChainChunk(
+      key,
+      ORG,
+      rows.slice(2),
+      first.tail,
+      first.rowsVerified,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("unreachable");
+    expect(second.rowsVerified).toBe(4);
+    expect(second.tail).toEqual({ seq: 4, rowHash: rows[3]!.rowHash });
+  });
+
+  it("catches a duplicate_seq fork even when the two forked rows straddle a page boundary", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 4);
+    // A second row sharing seq 2, placed as the FIRST row of page 2 — the boundary case a seq-only keyset
+    // could page past. The carried cursor (seq 2) must catch it before any per-row hash check.
+    const forged: StoredAuthAuditRow = { ...rows[1]!, targetId: "evil" };
+
+    const first = await verifyAuthAuditChainChunk(key, ORG, rows.slice(0, 2), null, 0);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    const second = await verifyAuthAuditChainChunk(
+      key,
+      ORG,
+      [forged, ...rows.slice(2)],
+      first.tail,
+      first.rowsVerified,
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("unreachable");
+    expect(second.break.kind).toBe("duplicate_seq");
+    expect(second.break.seq).toBe(2);
+  });
+
+  it("catches a cross-page broken_link even for a CONSISTENTLY RE-HASHED forgery — only the carried cursor can", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 4);
+    // The forgery hash_mismatch CANNOT catch: give seq 3 (the FIRST row of page 2) a WRONG prev_hash AND
+    // recompute its row_hash under that wrong prev, so the row is internally self-consistent. The only thing
+    // that rejects it is the cross-page link check — prev_hash vs page 1's tail row_hash, carried in the
+    // cursor. This is the regression guard for that check: drop the carried-cursor link and this forged chain
+    // would verify as VALID (the seq-only-keyset / dropped-link failure mode #663 exists to prevent).
+    const wrongPrev = new Uint8Array(32).fill(0xff);
+    const seq3 = rows[2]!;
+    const forged: StoredAuthAuditRow = {
+      ...seq3,
+      prevHash: wrongPrev,
+      rowHash: await computeAuthAuditRowHash(key, wrongPrev, seq3),
+    };
+
+    const first = await verifyAuthAuditChainChunk(key, ORG, rows.slice(0, 2), null, 0);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    const second = await verifyAuthAuditChainChunk(
+      key,
+      ORG,
+      [forged, rows[3]!],
+      first.tail,
+      first.rowsVerified,
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("unreachable");
+    expect(second.break.kind).toBe("broken_link");
+    expect(second.break.seq).toBe(3);
+    expect(second.rowsVerified).toBe(2); // seqs 1 + 2 verified before the boundary break
+  });
+
+  it("applies genesis rules on the FIRST chunk (prior === null): a chunk starting past seq 1 is bad_genesis_seq", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 3);
+    const result = await verifyAuthAuditChainChunk(key, ORG, rows.slice(1), null, 0);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.break.kind).toBe("bad_genesis_seq");
+    expect(result.break.seq).toBe(2);
+  });
+
+  it("applies genesis rules on the FIRST chunk: a genesis carrying a prev_hash is bad_genesis_prev_hash", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 2);
+    const grafted = [{ ...rows[0]!, prevHash: new Uint8Array(32).fill(7) }, ...rows.slice(1)];
+    const result = await verifyAuthAuditChainChunk(key, ORG, grafted, null, 0);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.break.kind).toBe("bad_genesis_prev_hash");
+    expect(result.break.seq).toBe(1);
+  });
+
+  it("carries priorVerified so a mid-chunk break reports the TRUE cumulative count", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 5);
+    const first = await verifyAuthAuditChainChunk(key, ORG, rows.slice(0, 2), null, 0);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+    expect(first.rowsVerified).toBe(2);
+
+    // Page 2 = [seq 3, seq 5] (seq 4 dropped). seq 3 verifies (cumulative → 3), then seq 5 is a gap.
+    const second = await verifyAuthAuditChainChunk(
+      key,
+      ORG,
+      [rows[2]!, rows[4]!],
+      first.tail,
+      first.rowsVerified,
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("unreachable");
+    expect(second.break.kind).toBe("seq_gap");
+    expect(second.break.seq).toBe(5);
+    expect(second.rowsVerified).toBe(3); // 2 prior + seq 3, not 1
+  });
+
+  it("verifyAuthAuditChain (the wrapper) still verifies a whole chain and drops the tail cursor", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 3);
+    const result = await verifyAuthAuditChain(key, ORG, rows);
+    expect(result).toEqual({ ok: true, rowsVerified: 3 });
+    expect(result).not.toHaveProperty("tail");
   });
 });

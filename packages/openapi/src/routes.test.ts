@@ -181,7 +181,7 @@ describe("matchRoute — routing + input construction (ported behavior)", () => 
   it("events.list builds the full filter from raw query strings", () => {
     const m = match(
       "GET",
-      `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z&search=evt_abc`,
+      `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z&search=evt_abc&headerSearch=x-shopify-topic`,
     );
     expect(m?.input).toEqual({
       endpointId: EP,
@@ -191,6 +191,8 @@ describe("matchRoute — routing + input construction (ported behavior)", () => 
         receivedAfter: "2026-06-01T00:00:00Z",
         receivedBefore: "2026-06-02T00:00:00Z",
         search: "evt_abc",
+        // headerSearch AND-composes as its OWN filter param — never merged into `search`.
+        headerSearch: "x-shopify-topic",
       },
     });
   });
