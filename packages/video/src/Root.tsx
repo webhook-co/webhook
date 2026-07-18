@@ -39,5 +39,14 @@ export const RemotionRoot = () => (
       height={1080}
       defaultProps={{ format: "16x9" }}
     />
+    <Composition
+      id="promo-9x16"
+      component={PromoMaster}
+      durationInFrames={1800}
+      fps={30}
+      width={1080}
+      height={1920}
+      defaultProps={{ format: "9x16" }}
+    />
   </>
 );
