@@ -31,6 +31,9 @@ export interface OrgEventsListProps {
   readonly liveWsUrl?: string;
   /** Mint an ORG-scoped listen ticket (the session-authed action, pre-bound with slug — no endpointId). */
   readonly mintTicket?: () => Promise<MintTicketResult>;
+  /** Whether an active filter BLOCKS live (a live-specific subset — a lower date bound is compatible; see
+   *  hasLiveIncompatibleFilters). Disables the Live toggle rather than stream contradicting events. */
+  readonly filtersBlockLive?: boolean;
   /** Test seam: inject a FakeWebSocket. Undefined in the app → the browser `WebSocket`. */
   readonly webSocketCtor?: WebSocketCtor;
 }
@@ -53,6 +56,7 @@ export function OrgEventsList({
   loadMore,
   liveWsUrl,
   mintTicket,
+  filtersBlockLive,
   webSocketCtor,
 }: OrgEventsListProps) {
   // Memoised so the pager's callback identity is stable across renders.
@@ -75,10 +79,12 @@ export function OrgEventsList({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Org-scoped: no endpointId → the tail spans every endpoint (scope comes from the org ticket). */}
+      {/* Org-scoped: no endpointId → the tail spans every endpoint (scope comes from the org ticket).
+          Disabled while filtered — an unfiltered `since=now` stream would contradict the active chips. */}
       <LiveTailBar
         liveWsUrl={liveWsUrl}
         mintTicket={mintTicket}
+        filtersBlockLive={filtersBlockLive}
         setItems={setItems}
         webSocketCtor={webSocketCtor}
       />

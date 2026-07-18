@@ -21,7 +21,14 @@ export interface LiveTailBarProps {
   readonly liveWsUrl?: string;
   /** Mint a short-lived listen ticket — scope-agnostic + pre-bound by the page (slug[, endpointId]). */
   readonly mintTicket?: () => Promise<MintTicketResult>;
-  /** The list-state setter the live tail prepends into (dedup + cap happen in the hook). */
+  /**
+   * Whether a filter is ACTIVE on the surrounding list. Live is DISABLED while filtered: the tail streams
+   * every new event (`since=now`, unfiltered — the wire summary can't carry method/eventType/search fields to
+   * re-apply them client-side), so prepending them under a filter chip would contradict what the chip claims
+   * the list is narrowed to. Rather than lie, the toggle is disabled with a "clear filters" nudge.
+   */
+  readonly filtersBlockLive?: boolean;
+  /** The list-state setter the live tail prepends into (dedup happens in the hook). */
   readonly setItems: React.Dispatch<React.SetStateAction<readonly EventSummaryItem[]>>;
   /** Test seam: inject a FakeWebSocket. Undefined in the app → the browser `WebSocket`. */
   readonly webSocketCtor?: WebSocketCtor;
@@ -43,22 +50,24 @@ export function LiveTailBar({
   endpointId,
   liveWsUrl,
   mintTicket,
+  filtersBlockLive = false,
   setItems,
   webSocketCtor,
 }: LiveTailBarProps): React.ReactElement | null {
   const [live, setLive] = React.useState(false);
   const liveAvailable = liveWsUrl !== undefined && mintTicket !== undefined;
 
-  // The live tail. `enabled` gates on the toggle AND the wiring being present; the hook auto-pauses on a
-  // hidden tab / unmount and prepends+dedups+caps arrived events into `setItems`. A safe no-op mint stands in
-  // when the wiring is absent (the hook stays disabled, so it never runs).
+  // The live tail. `enabled` gates on the toggle AND the wiring being present AND no active filter (an
+  // unfiltered `since=now` stream can't honour a filter chip). The hook auto-pauses on a hidden tab / unmount
+  // and prepends+dedups arrived events into `setItems`. A safe no-op mint stands in when the wiring is absent
+  // (the hook stays disabled, so it never runs).
   const {
     connection,
     caughtUp,
     lag,
     error: liveError,
   } = useLiveEvents({
-    enabled: live && liveAvailable,
+    enabled: live && liveAvailable && !filtersBlockLive,
     wsUrl: liveWsUrl ?? "",
     endpointId,
     mintTicket: mintTicket ?? UNAVAILABLE_MINT,
@@ -67,6 +76,19 @@ export function LiveTailBar({
   });
 
   if (!liveAvailable) return null;
+
+  // Live is incompatible with a filtered view (see the filtersBlockLive prop doc). Show the toggle disabled with a
+  // nudge rather than stream events that contradict the active chips.
+  if (filtersBlockLive) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="min-h-5 text-sm text-fg-muted">clear filters to watch live events.</span>
+        <Button variant="primary" size="sm" disabled aria-pressed={false}>
+          Go live
+        </Button>
+      </div>
+    );
+  }
 
   // Honest live indicator — a colored, pulsing dot + terse status. Green = caught up, amber = behind by a
   // (capped) count. We never claim "instant": new events surface within a few seconds.

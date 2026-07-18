@@ -11,6 +11,7 @@ import {
   filterListKey,
   firstParam,
   hasAppliedFilters,
+  hasLiveIncompatibleFilters,
   parseEventFilters,
 } from "@/lib/event-filters";
 import { queryString } from "@/lib/org-url";
@@ -142,6 +143,7 @@ export default async function EventsPage({
             loadMore={loadMoreEventsAction.bind(null, session.slug)}
             liveWsUrl={getListenWsUrl()}
             mintTicket={mintListenTicketAction.bind(null, session.slug, id)}
+            filtersBlockLive={hasLiveIncompatibleFilters(filters)}
           />
         </div>
       )}

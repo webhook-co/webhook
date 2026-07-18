@@ -144,4 +144,15 @@ describe("OrgEventsList — org-wide live tail", () => {
     renderList({ liveWsUrl: undefined, mintTicket: undefined });
     expect(screen.queryByRole("button", { name: /go live/i })).not.toBeInTheDocument();
   });
+
+  it("DISABLES live while a live-blocking filter is active (an unfiltered since=now stream would contradict the chips)", async () => {
+    const user = userEvent.setup();
+    renderList({ filtersBlockLive: true });
+    const goLive = screen.getByRole("button", { name: /go live/i });
+    expect(goLive).toBeDisabled();
+    expect(screen.getByText(/clear filters to watch live events/i)).toBeInTheDocument();
+    // Clicking a disabled toggle opens no socket.
+    await user.click(goLive).catch(() => {});
+    expect(FakeWebSocket.instances.length).toBe(0);
+  });
 });

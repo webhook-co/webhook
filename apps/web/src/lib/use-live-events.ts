@@ -33,15 +33,6 @@ export interface UseLiveEventsOptions {
   readonly WebSocketCtor?: WebSocketCtor;
 }
 
-/**
- * Hard cap on the live-prepended list length. The org-wide tail spans up to ~100 endpoints, so a burst can
- * arrive far faster than one endpoint's — an unbounded prepend would grow the array without limit AND make the
- * per-event `.some()` dedup O(n²) over that burst. Capping the array bounds both: memory, and the dedup scan
- * (now ≤ this many comparisons per event). A live feed only ever shows the most recent rows, so dropping the
- * oldest off the tail is invisible to the reader; the full history is one click away in the paginated list.
- */
-export const MAX_LIVE_ROWS = 1000;
-
 export interface LiveEventsState {
   /** Coarse connection state for the indicator. `disconnected` covers paused/off and reconnecting. */
   readonly connection: LiveConnectionStatus;
@@ -106,15 +97,19 @@ export function useLiveEvents({
   }, []);
 
   // Prepend + dedup by id: a live event already present in the list (e.g. it also arrived via a page load)
-  // is not re-added; a genuinely new one goes to the top, and the list is capped at MAX_LIVE_ROWS so an
-  // org-wide burst can't grow it (or the dedup scan) without bound.
+  // is not re-added; a genuinely new one goes to the top.
+  //
+  // Deliberately NOT capped by slicing the array. `items` is SHARED with pagination — "Load older" APPENDS
+  // rows at the tail — so a head-keeping `slice(0, N)` would silently evict the rows the user deliberately
+  // paged in, leaving a non-refetchable gap (the pager's cursor already sits past them). A Set-based O(1)
+  // dedup can't replace `.some(prev)` either: the Set the hook owns is blind to those paginated rows, so it
+  // would re-prepend a live duplicate of one. The dedup MUST scan the full `prev` (all sources), and that is
+  // the only correct bound available here. Growth is bounded in practice by the hidden-tab auto-pause + the
+  // realistic org event rate; if a true blowup is ever measured, a correct cap must track live-vs-anchored
+  // rows rather than slice the shared array.
   const handleEvent = React.useCallback(
     (item: EventSummaryItem) => {
-      setItems((prev) => {
-        if (prev.some((e) => e.id === item.id)) return prev;
-        const next = [item, ...prev];
-        return next.length > MAX_LIVE_ROWS ? next.slice(0, MAX_LIVE_ROWS) : next;
-      });
+      setItems((prev) => (prev.some((e) => e.id === item.id) ? prev : [item, ...prev]));
     },
     [setItems],
   );

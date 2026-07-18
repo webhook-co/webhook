@@ -34,6 +34,10 @@ export interface EventsListProps {
   /** Mint a short-lived listen ticket (the session-authed server action), pre-bound with slug + endpointId
    *  by the page (scope-agnostic — see LiveEventsSessionOptions.mintTicket). */
   mintTicket?: () => Promise<MintTicketResult>;
+  /** Whether an active filter BLOCKS live (a live-specific subset of the applied filters — a lower date bound
+   *  is compatible; see hasLiveIncompatibleFilters). Disables the Live toggle rather than stream contradicting
+   *  events. Distinct from `isFiltered` (which drives the empty-copy and DOES count the date range). */
+  filtersBlockLive?: boolean;
   /** Test seam: inject a FakeWebSocket. Undefined in the app → the browser `WebSocket` is used. */
   webSocketCtor?: WebSocketCtor;
 }
@@ -47,6 +51,7 @@ export function EventsList({
   loadMore,
   liveWsUrl,
   mintTicket,
+  filtersBlockLive,
   webSocketCtor,
 }: EventsListProps) {
   // Bind this browse's shape onto the shared pager: endpoint + the raw filters, so paging stays inside the
@@ -74,6 +79,7 @@ export function EventsList({
         endpointId={endpointId}
         liveWsUrl={liveWsUrl}
         mintTicket={mintTicket}
+        filtersBlockLive={filtersBlockLive}
         setItems={setItems}
         webSocketCtor={webSocketCtor}
       />

@@ -6,6 +6,7 @@ import {
   filterListKey,
   firstParam,
   hasAppliedFilters,
+  hasLiveIncompatibleFilters,
   parseEventFilters,
   SEARCH_MAX_LENGTH,
   SEARCH_MIN_LENGTH,
@@ -146,6 +147,41 @@ describe("hasAppliedFilters", () => {
     expect(hasAppliedFilters(parseEventFilters({ provider: "stripe" }, PROVIDERS))).toBe(true);
     expect(hasAppliedFilters(parseEventFilters({ from: "2026-06-01" }))).toBe(true);
     expect(hasAppliedFilters(parseEventFilters({ status: "failed" }))).toBe(true);
+  });
+});
+
+describe("hasLiveIncompatibleFilters", () => {
+  // The load-bearing distinction from hasAppliedFilters: a LOWER date bound (receivedAfter, incl. the default
+  // 7-day range) is COMPATIBLE with a `since=now` live tail — live events always arrive after it — so it must
+  // NOT disable Live. Without this, the default org events page (which always sets a 7d range) would ship with
+  // Live permanently disabled.
+  it("a lower date bound alone does NOT block live (live events are always 'now')", () => {
+    expect(hasLiveIncompatibleFilters({})).toBe(false);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ from: "2026-06-01" }))).toBe(false);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ range: "7d" }))).toBe(false);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ range: "24h" }))).toBe(false);
+  });
+
+  it("an UPPER date bound blocks live (a past ceiling excludes 'now')", () => {
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ to: "2026-06-01" }))).toBe(true);
+  });
+
+  it("every content facet blocks live", () => {
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ provider: "stripe" }, PROVIDERS))).toBe(
+      true,
+    );
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ status: "failed" }))).toBe(true);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ search: "evt_abc" }))).toBe(true);
+    expect(
+      hasLiveIncompatibleFilters(
+        parseEventFilters({ endpointId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060" }),
+      ),
+    ).toBe(true);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ method: "POST" }))).toBe(true);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ dedupStrategy: "unique" }))).toBe(true);
+    expect(hasLiveIncompatibleFilters(parseEventFilters({ eventType: "charge.succeeded" }))).toBe(
+      true,
+    );
   });
 });
 
