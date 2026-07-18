@@ -45,6 +45,10 @@
     // `<FREE_EVENT_CAP>` placeholder is DEPLOY-INJECTED by the overlay (optional FREE_EVENT_CAP GH var);
     // unset → "" → uncapped (fail-safe). Must equal the engine's FREE_EVENT_CAP. `next dev` → uncapped.
     "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
+    // ASYNC_ORG_DELETION (#665) — DEPLOY-INJECTED (optional GH var); "true" routes org deletes through the
+    // async requestOrgDeletion + webhook_reaper cron, else the synchronous deleteOrgWithAudit. Fail-safe OFF
+    // until the reaper role + Hyperdrive are provisioned. `next dev` → unset → sync path.
+    "ASYNC_ORG_DELETION": "<ASYNC_ORG_DELETION>",
     // Billing (S4.4b) — DEPLOY-INJECTED (optional GH vars); unset/"" → dark. BILLING_MODE off → the dashboard
     // Checkout/Portal actions no-op ("disabled"). STRIPE_PLANS is a JSON map of self-serve plan id →
     // { base, overage } Checkout line-item price IDS (never amounts); malformed/unset → Checkout disabled

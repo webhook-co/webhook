@@ -1,6 +1,6 @@
 "use server";
 
-import { classifyOwnedOrgs, deleteOrgWithAudit } from "@webhook-co/db/org-lifecycle";
+import { classifyOwnedOrgs } from "@webhook-co/db/org-lifecycle";
 import { sessionCookieOptions } from "./session-cookie";
 import { avatarR2Key, userActor } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
@@ -11,6 +11,7 @@ import { redirect } from "next/navigation";
 import { logActionError } from "./action-log";
 import { getAvatarBucket } from "./avatar-r2";
 import { getTenantDb } from "./db";
+import { deleteOrRequestOrg } from "./org-delete";
 import { getAccountDeleterBinding, getAuditChainKey } from "./env";
 import { LOGOUT_URL, SESSION_COOKIE, verifySession } from "./session";
 
@@ -66,8 +67,9 @@ export async function deleteAccount(formData: FormData): Promise<void> {
   // Solo-owned orgs (nobody else in them) are erased WITH the account. Leaving them behind would be an
   // even more complete orphan than the one above: no owner, no members, nobody to notice — and still
   // billed.
+  // Sync hard-delete, or async mark-deleting + reaper + KV credential eviction, per ASYNC_ORG_DELETION (#665).
   for (const org of soleOwnedSolo) {
-    await deleteOrgWithAudit(app, { orgId: org.orgId, actor: userActor(session.userId) }, auditKey);
+    await deleteOrRequestOrg(app, { orgId: org.orgId, actor: userActor(session.userId) }, auditKey);
   }
 
   // 2. Erase the identity — only auth. (webhook_auth) can, so RPC its AccountDeleter entrypoint.

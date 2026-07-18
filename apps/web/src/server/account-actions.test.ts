@@ -20,14 +20,19 @@ vi.mock("./session", async () => {
   return { ...actual, verifySession: () => verifySession() };
 });
 
-const deleteOrgWithAudit = vi.fn(async () => ({ orgId: "org_1", deletedAt: "now" }));
+// The delete now routes through deleteOrRequestOrg (sync deleteOrgWithAudit or async requestOrgDeletion per
+// the ASYNC_ORG_DELETION flag) — that's the seam this file asserts on; the flag branching + credential
+// eviction live in org-delete.test.ts.
+const deleteOrRequestOrg = vi.fn(async () => {});
+vi.mock("./org-delete", () => ({
+  deleteOrRequestOrg: (...a: unknown[]) => deleteOrRequestOrg(...a),
+}));
 // Default: one solo-owned org (nobody else in it) and nothing that would be orphaned — deletion proceeds.
 const classifyOwnedOrgs = vi.fn(async () => ({
   wouldOrphan: [] as { orgId: string; name: string }[],
   soleOwnedSolo: [{ orgId: "personal_usr_1", name: "Personal" }],
 }));
 vi.mock("@webhook-co/db/org-lifecycle", () => ({
-  deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
   classifyOwnedOrgs: (...a: unknown[]) => classifyOwnedOrgs(...a),
 }));
 vi.mock("./db", () => ({ getTenantDb: async () => ({ end: async () => {} }) }));
@@ -79,7 +84,7 @@ describe("deleteAccount", () => {
 
   it("refuses without the typed DELETE acknowledgement, and erases nothing", async () => {
     await expect(deleteAccount(form("nope"))).rejects.toThrow(/not confirmed/);
-    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(deleteOrRequestOrg).not.toHaveBeenCalled();
     expect(deleteAccountRpc).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
@@ -87,7 +92,7 @@ describe("deleteAccount", () => {
   it("skips the org delete when the user owns no org at all, but still erases the identity", async () => {
     classifyOwnedOrgs.mockResolvedValueOnce({ wouldOrphan: [], soleOwnedSolo: [] });
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
-    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(deleteOrRequestOrg).not.toHaveBeenCalled();
     expect(deleteAccountRpc).toHaveBeenCalledWith("usr_1");
   });
 
@@ -97,7 +102,7 @@ describe("deleteAccount", () => {
       soleOwnedSolo: [{ orgId: "personal_usr_1", name: "Personal" }],
     });
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(/only owner of an organization/i);
-    expect(deleteOrgWithAudit).not.toHaveBeenCalled(); // not even the SAFE solo org — nothing is erased
+    expect(deleteOrRequestOrg).not.toHaveBeenCalled(); // not even the SAFE solo org — nothing is erased
     expect(deleteAccountRpc).not.toHaveBeenCalled(); // identity NOT erased → no orphaned org
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
@@ -120,7 +125,7 @@ describe("deleteAccount", () => {
       ],
     });
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
-    expect(deleteOrgWithAudit).toHaveBeenCalledTimes(2);
+    expect(deleteOrRequestOrg).toHaveBeenCalledTimes(2);
     expect(deleteAccountRpc).toHaveBeenCalledWith("usr_1");
   });
 });

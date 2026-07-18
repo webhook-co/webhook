@@ -1,6 +1,6 @@
 "use server";
 
-import { deleteOrgWithAudit, isPersonalOrg } from "@webhook-co/db/org-lifecycle";
+import { isPersonalOrg } from "@webhook-co/db/org-lifecycle";
 import {
   InvalidOrgSlugError,
   renameOrg,
@@ -21,6 +21,7 @@ import { redirect } from "next/navigation";
 
 import { logActionError } from "./action-log";
 import { getTenantDb, withTenantDb } from "./db";
+import { deleteOrRequestOrg } from "./org-delete";
 import { getAuditChainKey } from "./env";
 import { requireOrgAccess } from "./org-access";
 import { LOGOUT_URL, SESSION_COOKIE } from "./session";
@@ -66,7 +67,9 @@ export async function deleteOrganization(slug: string, formData: FormData): Prom
   const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
   // The REQUEST owns the client now (see server/db.ts): it is shared by every loader in this render and
   // closed once, after the response. Closing it here would pull the connection out from under the others.
-  await deleteOrgWithAudit(app, { orgId, actor: userActor(userId) }, auditKey);
+  // Sync hard-delete, or async mark-deleting + reaper + KV credential eviction, per the ASYNC_ORG_DELETION
+  // flag (#665) — see deleteOrRequestOrg.
+  await deleteOrRequestOrg(app, { orgId, actor: userActor(userId) }, auditKey);
 
   // Same attributes as the set — a `__Host-` cookie cleared without `Secure` is rejected by the browser
   // and the session would survive (RFC 6265bis §4.1.3).
