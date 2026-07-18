@@ -107,25 +107,33 @@ Create an endpoint, send its ingest URL a request, and see the captured event â€
     ```
 
     ```sh curl
-    curl "https://api.webhook.co/v1/endpoints/<endpoint-id>/events" \
+    # One endpoint. Drop the endpointId query to list your whole org's events.
+    curl "https://api.webhook.co/v1/events?endpointId=<endpoint-id>" \
       -H "Authorization: Bearer $WEBHOOK_API_KEY"
     ```
 
     ```ts TypeScript
-    for await (const event of webhook.events.list(endpoint.id)) {
+    // Pass { endpointId } for one endpoint; omit it to list the whole org.
+    for await (const event of webhook.events.list({ endpointId: endpoint.id })) {
       console.log(event.id, event.provider, event.verificationState);
     }
     ```
 
     ```python Python
-    for event in client.events.list(endpoint.id):
+    # Pass endpoint_id for one endpoint; omit it to list the whole org.
+    for event in client.events.list(endpoint_id=endpoint.id):
         print(event.id, event.provider, event.verification_state)
     ```
 
     ```go Go
-    page, _ := client.Events.List(ctx, ep.Id)
-    for _, e := range page.Data {
-        fmt.Println(e.Id, e.Provider, e.VerificationState)
+    // Set EndpointID for one endpoint; omit it (nil params) to list the whole org.
+    it := client.Events.List(&webhook.EventsListParams{EndpointID: &ep.ID})
+    for it.Next(ctx) {
+        e := it.Value()
+        fmt.Println(e.ID, e.Provider, e.VerificationState)
+    }
+    if err := it.Err(); err != nil {
+        log.Fatal(err)
     }
     ```
 

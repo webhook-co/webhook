@@ -11,11 +11,15 @@ Reading events needs an API key with `events:read`.
 
 ## List and filter
 
-`events.list` returns an endpoint's events newest-first, through an opaque keyset cursor. All filters are optional and combine with AND:
+`events.list` returns events newest-first, through an opaque keyset cursor. Pass an **endpointId** for a single endpoint, or **omit it** to browse your whole org's events on one page — the same consolidated view the dashboard's Events page shows. All filters are optional and combine with AND:
 
+- **endpointId** — one endpoint, or omit for the whole org.
 - **provider** — repeatable; matches any of the given providers.
 - **verification state** — `verified`, `authenticated`, `failed`, or `unattempted`; repeatable.
-- **after / before** — an RFC 3339 received-at range (after is inclusive, before is exclusive).
+- **method** — the request's HTTP method (`GET`, `POST`, …); repeatable.
+- **event type** — the parsed event type (e.g. `charge.succeeded`); repeatable. Only stripe, github, and shopify populate it today — for every other provider it's null, so filtering by it returns nothing (not "no events").
+- **dedup strategy** — how the event's dedup key was derived (`content_hash`, `sw_webhook_id`, `provider_event_id`, `fields`, `unique`); repeatable.
+- **after / before** — a received-at range (after is inclusive, before is exclusive). `after` accepts an RFC 3339 timestamp _or_ a relative duration — `7d`, `24h`, `30m`, or `now`.
 - **search** — a case-insensitive substring (minimum 3 characters) across the event's provider event id and dedup key; an exact match when the term is an event id. Request headers and payload bodies are not searched.
 
 `limit` caps a page at 200. On the CLI, `--all` follows the cursor to the end for you.
@@ -23,20 +27,25 @@ Reading events needs an API key with `events:read`.
 <CodeGroup>
 
 ```sh CLI
-# failed Stripe events from a start time, following every page
-wbhk events list <endpoint-id> \
+# failed Stripe events across the WHOLE org in the last 7 days, following every page
+wbhk events list \
   --provider stripe \
   --status failed \
-  --after 2026-07-09T00:00:00Z \
+  --after 7d \
   --all
 
-# free-text search across ids + headers
+# one endpoint, POSTs only, by dedup strategy
+wbhk events list <endpoint-id> --method POST --dedup-strategy content_hash
+
+# free-text search across the provider event id + dedup key
 wbhk events list <endpoint-id> --search "evt_1P9x"
 ```
 
 ```sh API
-curl -G "https://api.webhook.co/v1/endpoints/<endpoint-id>/events" \
+# Omit endpointId for the whole org. The nested /v1/endpoints/<id>/events is a deprecated alias.
+curl -G "https://api.webhook.co/v1/events" \
   -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  --data-urlencode "endpointId=<endpoint-id>" \
   --data-urlencode "provider=stripe" \
   --data-urlencode "verificationState=failed" \
   --data-urlencode "receivedAfter=2026-07-09T00:00:00Z" \
@@ -44,7 +53,8 @@ curl -G "https://api.webhook.co/v1/endpoints/<endpoint-id>/events" \
 ```
 
 ```ts TypeScript
-for await (const event of webhook.events.list(endpointId, {
+for await (const event of webhook.events.list({
+  endpointId,
   provider: ["stripe"],
   verificationState: ["failed"],
   receivedAfter: "2026-07-09T00:00:00Z",
@@ -55,7 +65,7 @@ for await (const event of webhook.events.list(endpointId, {
 
 ```python Python
 for event in client.events.list(
-    endpoint_id,
+    endpoint_id=endpoint_id,
     provider=["stripe"],
     verification_state=["failed"],
     received_after="2026-07-09T00:00:00Z",
