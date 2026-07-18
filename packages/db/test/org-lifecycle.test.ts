@@ -450,15 +450,15 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     await seedUser(ownerId);
     const org = await seedOrg("del-async", ownerId);
     await seedEventsWithAttempts(org, 4);
-    // A live API key — its credential must be revoked at request time (the reaper window keeps the row alive).
+    // A live API key AND a live OAuth grant (for the org owner) — BOTH must be revoked at request time; the
+    // org row lives through the reaper window, so a still-active grant could re-mint a fresh key otherwise.
     const keyId = randomUUID();
-    await withTenant(
-      app,
-      org,
-      (tx) => tx`
-      insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
-      values (${keyId}, ${org}, ${randomBytes(32)}, ${"whk_"}, ${"whk_x"}, ${"k"}, ${tx.json(["events:read"])})`,
-    );
+    await withTenant(app, org, async (tx) => {
+      await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
+               values (${keyId}, ${org}, ${randomBytes(32)}, ${"whk_"}, ${"whk_x"}, ${"k"}, ${tx.json(["events:read"])})`;
+      await tx`insert into auth_grant (id, org_id, user_id, status, auth_method)
+               values (${randomUUID()}, ${org}, ${ownerId}, ${"active"}, ${"pkce_loopback"})`;
+    });
 
     const res = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
     expect(res.orgId).toBe(org);
@@ -485,18 +485,27 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
       select count(*)::int as live from endpoints where org_id = ${org} and deleted_at is null`,
     );
     expect(ep.live).toBe(0);
-    // Credentials are revoked: a revoked key is rejected by the api-key cold lookup, so it can't authenticate.
-    const [ak] = await withTenant(
+    // Credentials are revoked: no live api_key (cold lookup rejects `revoked_at`) AND no active OAuth grant
+    // (a live grant would re-mint a fresh key via its refresh token otherwise).
+    const [cred] = await withTenant(
       app,
       org,
-      (tx) => tx<{ live: number }[]>`
-      select count(*)::int as live from api_keys where org_id = ${org} and revoked_at is null`,
+      (tx) => tx<{ liveKeys: number; activeGrants: number }[]>`
+      select
+        (select count(*)::int from api_keys where org_id = ${org} and revoked_at is null) as "liveKeys",
+        (select count(*)::int from auth_grant where org_id = ${org} and status = 'active') as "activeGrants"`,
     );
-    expect(ak.live).toBe(0);
+    expect(cred.liveKeys).toBe(0);
+    expect(cred.activeGrants).toBe(0);
 
-    // The WORM audit chain gained org.deleted, and the R2 purge job was enqueued.
+    // The WORM audit chain gained org.deletion_requested (NOT org.deleted — the org still exists), and the R2
+    // purge job was enqueued.
     const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
-    expect(chain.map((r) => r.action)).toEqual(["org.created", "endpoint.created", "org.deleted"]);
+    expect(chain.map((r) => r.action)).toEqual([
+      "org.created",
+      "endpoint.created",
+      "org.deletion_requested",
+    ]);
     expect((await verifyAuditChain(key, org, chain)).ok).toBe(true);
     expect(await countIn(org, "org_deletions")).toBe(1);
   });
@@ -511,7 +520,7 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     expect(second.deletingAt).toBe(first.deletingAt); // same timestamp — not re-marked
 
     const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
-    expect(chain.filter((r) => r.action === "org.deleted")).toHaveLength(1);
+    expect(chain.filter((r) => r.action === "org.deletion_requested")).toHaveLength(1);
     expect(await countIn(org, "org_deletions")).toBe(1);
   });
 
@@ -565,7 +574,11 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     expect(await countIn(org, "orgs")).toBe(0);
     expect(await finalizeReapedOrg(reaper, org)).toBe(false); // idempotent — already gone
     const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
-    expect(chain.map((r) => r.action)).toEqual(["org.created", "endpoint.created", "org.deleted"]);
+    expect(chain.map((r) => r.action)).toEqual([
+      "org.created",
+      "endpoint.created",
+      "org.deletion_requested",
+    ]);
   });
 
   it("SECURITY: the reaper cannot touch a LIVE (non-deleting) org's data (the status fence)", async () => {

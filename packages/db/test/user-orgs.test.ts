@@ -125,6 +125,22 @@ describe("listUserOrgs", () => {
     const seen = (await listUserOrgs(app, uid)).find((o) => o.orgId === org);
     expect(seen).toMatchObject({ status: "suspended", suspendedReason: "free_org_cap" });
   });
+
+  it("HIDES a deleting org — user_org_directory filters status='deleting', so the read gate 404s it (#665)", async () => {
+    const uid = `u_del_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const active = await seedOrg("Active Org", uid);
+    const deleting = await seedOrg("Deleting Org", uid);
+    await withTenant(
+      app,
+      deleting,
+      (tx) => tx`update orgs set status = 'deleting', deleting_at = now() where id = ${deleting}`,
+    );
+
+    const orgIds = (await listUserOrgs(app, uid)).map((o) => o.orgId);
+    expect(orgIds).toContain(active);
+    expect(orgIds).not.toContain(deleting); // vanished from the directory the read gate resolves through
+  });
 });
 
 describe("isOrgDeliveryHeld — the outbound-delivery gate reads it under the tenant GUC", () => {

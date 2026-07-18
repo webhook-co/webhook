@@ -25,11 +25,14 @@ Postgres rows.
    it would break referential integrity used in normal reads (a dangling event would become representable),
    whereas the audit decoupling was justified only because those tables are WORM and must survive the delete.
 
-2. **The sync request (`requestOrgDeletion`), one atomic transaction.** Mark `deleting` (+ `deleting_at`),
-   soft-delete the org's endpoints (ingest 404s at once via the existing `deleted_at is null` cold-lookup —
-   ADR-0076, no new grant), revoke the org's API keys (the api-key cold lookup already rejects a revoked key),
-   append the WORM `org.deleted` audit row, enqueue the R2 purge job, and capture any live Stripe cancellation.
-   The audit advisory lock is held only for this small write. Idempotent.
+2. **The sync request (`requestOrgDeletion`), one atomic transaction.** Mark `deleting` (+ `deleting_at`,
+   clearing suspension + free-org-cap columns), soft-delete the org's endpoints (ingest 404s at once via the
+   existing `deleted_at is null` cold-lookup — ADR-0076, no new grant), revoke ALL of the org's credentials —
+   both `api_keys` (the cold lookup rejects a revoked key) AND `auth_grant` (status→revoked; else a live
+   refresh token would re-mint a fresh key), append the WORM **`org.deletion_requested`** audit row (NOT
+   `org.deleted` — the org still exists; the reaper completes it later, so logging a completed deletion here
+   would make the append-only log assert something that hasn't happened), enqueue the R2 purge job, and
+   capture any live Stripe cancellation. The audit advisory lock is held only for this small write. Idempotent.
 
    `deleting` is a new lifecycle STATE, so it is handled at every gate `suspended` is, plus stronger: the web
    READ/auth gate resolves through `user_org_directory()` which filters it (→ 404, no per-page change); and the

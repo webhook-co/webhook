@@ -173,6 +173,24 @@ describe("findOwnersOverFreeCap (role-targeted cross-user detection)", () => {
     expect(seen).toMatchObject({ status: "suspended", suspendedReason: "free_org_cap" });
   });
 
+  it("EXCLUDES a deleting org from the count, so it can't push a healthy sibling over the cap (#665)", async () => {
+    const u = randomUUID();
+    await seedUser(u);
+    await seedOrg(u);
+    await seedOrg(u);
+    const third = await seedOrg(u); // 3 free orgs → over CAP=2...
+    await withTenant(
+      app,
+      third,
+      (tx) => tx`update orgs set status = 'deleting', deleting_at = now() where id = ${third}`,
+    );
+
+    // ...but the deleting org drops out of the count, leaving exactly CAP → the owner is NOT over cap, and the
+    // deleting org appears in no freeOrgs list (so the reconciler never suspends a healthy replacement).
+    const over = await findOwnersOverFreeCap(reconciler, CAP);
+    expect(over).toEqual([]);
+  });
+
   it("groups MULTIPLE over-cap owners in one call, each with only their own free orgs", async () => {
     // Proves the per-owner grouping: two distinct over-cap users must come back as two rows, and neither's
     // orgs bleed into the other's.

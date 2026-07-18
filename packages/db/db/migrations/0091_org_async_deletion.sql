@@ -189,11 +189,13 @@ create function user_org_directory()
   $$;
 grant execute on function user_org_directory() to webhook_app;
 
--- Any org left in `deleting` was already requested for deletion (audit row written, endpoints soft-deleted).
--- Rolling the feature back can't leave it in a status the restored 2-state CHECK forbids, so COMPLETE its
--- deletion synchronously — the same terminal outcome the reaper would have reached. (In practice there are
--- none: the feature ships inert.) This runs as the migration role (schema owner), which bypasses RLS.
-delete from orgs where status = 'deleting';
+-- Any org left in `deleting` can't stay in a status the restored 2-state CHECK forbids. REVERT it to `active`
+-- (deleting_at cleared; suspension metadata was already cleared on the deleting transition, so this satisfies
+-- the restored orgs_suspension_coherent). Deliberately NOT `delete from orgs` — that would re-introduce the
+-- unbounded synchronous cascade the reaper exists to avoid, and a timeout mid-rollback would leave the schema
+-- half-reverted. Reverting is non-destructive and cheap. (In practice there are none: the feature ships inert;
+-- its endpoints/credentials were revoked, so a reverted org is inert until an operator restores it.)
+update orgs set status = 'active', deleting_at = null where status = 'deleting';
 
 alter table orgs drop constraint orgs_lifecycle_coherent;
 alter table orgs add constraint orgs_suspension_coherent check (

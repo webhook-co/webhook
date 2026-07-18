@@ -831,10 +831,15 @@ export async function requestOrgDeletion(
 ): Promise<{ orgId: string; deletingAt: string }> {
   return withTenant(app, input.orgId, async (tx) => {
     // Transition active|suspended -> deleting, clearing suspension metadata (the lifecycle coherence check
-    // forbids carrying it into `deleting`). The `status <> 'deleting'` guard makes a re-request a no-op.
+    // forbids carrying it into `deleting`) AND the free-org-cap management columns (grace/reminded/keep) — a
+    // deleting org drops out of findOwnersOverFreeCap, so leaving grace_until set would make
+    // listFreeCapManagedOrgs disagree and the reconciler clear-grace it every pass. The `status <> 'deleting'`
+    // guard makes a re-request a no-op.
     const [marked] = await tx<{ deletingAt: string }[]>`
       update orgs
-         set status = 'deleting', deleting_at = now(), suspended_reason = null, suspended_at = null
+         set status = 'deleting', deleting_at = now(), suspended_reason = null, suspended_at = null,
+             free_org_cap_grace_until = null, free_org_cap_reminded_at = null,
+             free_org_cap_keep_requested_at = null, free_org_cap_keep_requested_by = null
        where id = ${input.orgId} and status <> 'deleting'
        returning deleting_at::text as "deletingAt"`;
     if (!marked) {
@@ -851,19 +856,28 @@ export async function requestOrgDeletion(
     // (those are the reaper's bounded job). The eventual `delete from orgs` hard-deletes the endpoint rows.
     await tx`update endpoints set deleted_at = now() where org_id = ${input.orgId} and deleted_at is null`;
 
-    // Revoke API CREDENTIALS immediately. The synchronous deleteOrgWithAudit cascaded api_keys away with the
-    // org row; the async mark leaves the org row alive until the reaper finalizes, so its keys would keep
-    // authenticating against the API for the whole reaper window. Set `revoked_at` — the api-key cold lookup
-    // already rejects a revoked key (no new grant). Bounded (a handful of keys per org). Web sessions need no
-    // action: a deleting org is absent from user_org_directory(), so the read gate 404s it.
+    // Revoke ALL CREDENTIALS immediately (mirrors removeMember): the synchronous deleteOrgWithAudit cascaded
+    // both api_keys and auth_grant away with the org row; the async mark leaves the org row alive until the
+    // reaper finalizes, so a live credential would keep authenticating for the whole reaper window. Revoke the
+    // api_keys (the cold lookup rejects `revoked_at is not null`) AND the OAuth grants (status='revoked') —
+    // otherwise a still-active refresh token would just re-mint a fresh, unrevoked api_key. Both are bounded
+    // (a handful per org). Web sessions need no action: a deleting org is absent from user_org_directory().
+    const revokedBy = input.actor.kind === "user" ? input.actor.id : null;
     await tx`update api_keys set revoked_at = now() where org_id = ${input.orgId} and revoked_at is null`;
+    await tx`
+      update auth_grant
+         set status = 'revoked', revoked_by = ${revokedBy}, revoked_at = now(),
+             revocation_reason = 'org_deletion_requested'
+       where org_id = ${input.orgId} and status <> 'revoked'`;
 
     // Close out the tamper-evident chain (this is where the advisory lock is taken — held only through this
-    // small write + commit). audit_log has no FK to orgs (0051), so the row survives the eventual reap.
+    // small write + commit). audit_log has no FK to orgs (0051), so the row survives the eventual reap. The
+    // action is `org.deletion_requested`, NOT `org.deleted`: the org still exists (the reaper drops it later),
+    // so logging a completed deletion here would make the WORM record assert something that hasn't happened.
     await appendAuditEntry(tx, auditKey, {
       orgId: input.orgId,
       actor: input.actor,
-      action: "org.deleted",
+      action: "org.deletion_requested",
       target: input.orgId,
     });
     // Enqueue the durable R2 payload purge + capture any live Stripe cancellation (shared with the
