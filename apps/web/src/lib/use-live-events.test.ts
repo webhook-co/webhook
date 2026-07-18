@@ -33,6 +33,11 @@ class FakeWebSocket {
   ready(sessionId = "s"): void {
     this.onmessage?.({ data: JSON.stringify({ type: "ready", sessionId, watermarkDeltaMs: 0 }) });
   }
+  readyWithCursor(cursor: string, sessionId = "s"): void {
+    this.onmessage?.({
+      data: JSON.stringify({ type: "ready", sessionId, watermarkDeltaMs: 0, cursor }),
+    });
+  }
   event(id: string, cursor = "c"): void {
     this.onmessage?.({
       data: JSON.stringify({
@@ -239,6 +244,66 @@ describe("useLiveEvents — the seed distinguishes going live from carrying on",
     expect(resumed).toBeDefined();
     expect(resumed.url).toContain("sinceCursor=cur-42");
     expect(resumed.url).not.toContain("since=now");
+  });
+
+  // GAP 1 (#25) — THE HIDE-BEFORE-FIRST-EVENT SKIP. The resume cursor used to be populated ONLY once an event
+  // had been delivered, so a tab that hid before the first event had no cursor: the resume fell back to
+  // `since=now` and silently dropped whatever landed while hidden. The ReadyFrame now carries the DO's
+  // seeded position (server-resolved), so `lastCursorRef` is initialized at CONNECT — before any event — and
+  // a hide-before-first-event pause resumes from the seed, losslessly.
+  it("resumes a pause that began BEFORE the first event from the ready-frame seed, not since=now", async () => {
+    const { result } = renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    // The engine's ready frame carries the seeded cursor. NO event is delivered before the tab hides.
+    act(() => FakeWebSocket.instances[0].readyWithCursor("cur-seed"));
+    expect(result.current.items).toHaveLength(0); // proves nothing was delivered — only the ready seed exists
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+
+    const resumed = FakeWebSocket.instances[1];
+    expect(resumed).toBeDefined();
+    // The resume uses the ready-frame seed — so events that arrived while hidden are NOT skipped.
+    expect(resumed.url).toContain("sinceCursor=cur-seed");
+    expect(resumed.url).not.toContain("since=now");
+  });
+
+  // A later event still wins: the ready seed initializes the ref, then each delivered event advances it, so a
+  // pause resumes from the LATEST position seen, not the connect seed.
+  it("a delivered event advances the resume position past the ready-frame seed", async () => {
+    const { result } = renderHook(() => useHarness({ enabled: true }));
+    await act(async () => {
+      await flush();
+    });
+    act(() => FakeWebSocket.instances[0].readyWithCursor("cur-seed"));
+    const E1 = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5099";
+    act(() => FakeWebSocket.instances[0].event(E1, "cur-later"));
+    expect(result.current.items.map((i) => i.id)).toContain(E1);
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flush();
+    });
+
+    const resumed = FakeWebSocket.instances[1];
+    expect(resumed.url).toContain("sinceCursor=cur-later");
+    expect(resumed.url).not.toContain("sinceCursor=cur-seed");
   });
 
   // Toggling Live OFF ends the live intent, so ON is a NEW one. Without dropping the cursor, toggling off,

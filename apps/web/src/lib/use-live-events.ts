@@ -55,8 +55,11 @@ export interface LiveEventsState {
  *
  * This bound covers the VISIBILITY path (a hide/show re-runs the connect effect) — the common sleep/lock,
  * which fires visibilitychange. A suspend that does NOT fire it leaves the socket to die and reconnect with
- * the sticky sessionId, and the DO then replays the gap from its durable cursor; bounding THAT needs a
- * server-side liveness signal the protocol does not yet have (filed, with the ReadyFrame work).
+ * the sticky sessionId, and the DO then replays the gap from its durable cursor; bounding THAT — capping how
+ * much of a long suspend replays — still needs a server-side liveness signal the protocol does not have. The
+ * ReadyFrame seed cursor (#25) is a DIFFERENT fix on a DIFFERENT axis: it gives the visibility path a resume
+ * position from connect (before the first event, so a hide-before-first-event pause is lossless), but it does
+ * not add that liveness signal, so the suspend-replay bound remains future work.
  *
  * 5 minutes is a judgement call, not a derivation: long enough that every real interruption resumes
  * losslessly, short enough that no plausible backlog is a flood. Tune it here if it reads wrong in practice.
@@ -117,18 +120,19 @@ export function useLiveEvents({
   const active = enabled && visible;
 
   /**
-   * The last cursor this tail delivered — the resume position across a PAUSE.
+   * The resume position across a PAUSE — seeded at CONNECT, then advanced by each delivered event.
    *
-   * KNOWN GAP, filed not hidden: this is only populated once an event has been DELIVERED. The listen protocol
-   * deliberately keeps `headCursor` HTTP-only ("a streaming client tracks position from the event-frame
-   * cursors" — listen-protocol.ts), which was safe while the tail replayed from the oldest event and could
-   * not lose anything. It no longer is: if the tab hides BEFORE the first event arrives, there is no cursor,
-   * the resume falls back to `since=now`, and whatever landed while hidden is skipped.
+   * It is initialized from the ReadyFrame's `cursor` (#25): the DO reports the opaque position it actually
+   * seeded/persisted at, so this ref is non-null from connect — BEFORE the first event — and each delivered
+   * event then advances it (the `onCursor` wiring below, fed by both the ready arm and the event arm in
+   * live-events.ts). That CLOSES the hide-before-first-event gap: a tab that hid before any event arrived used
+   * to have no cursor, so the resume fell back to `since=now` and silently skipped whatever landed while
+   * hidden. It now resumes from the seed instead.
    *
-   * The honest fix is a protocol change — the ReadyFrame carrying the position the DO actually seeded at, so
-   * a client always has one from connect, server-resolved and immune to browser clock skew. Seeding from a
-   * client-side `new Date()` instead would close the gap and introduce a worse one: a laptop clock minutes
-   * off silently skips or replays minutes of events.
+   * The seed is SERVER-resolved (the DO's persisted position), never a client-side `new Date()` — a laptop
+   * clock minutes off would otherwise silently skip or replay minutes of events. The ReadyFrame field is
+   * optional + nullable, so a `null`/absent seed (a session that started from the oldest, or an engine that
+   * predates #25) simply leaves this null until the first event, exactly as before — no regression.
    *
    * A ref, not state: it must survive the effect teardown/re-run that a visibility change causes, and writing
    * it must not re-render (every event would).

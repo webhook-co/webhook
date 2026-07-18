@@ -387,3 +387,45 @@ describe("createLiveEventsSession — Live means live", () => {
     session.stop();
   });
 });
+
+// #25 — the ready frame carries the DO's SEEDED resume cursor, so the resume position exists from CONNECT
+// (before any event). Without it a pause that began before the first event fell back to `since=now` and
+// silently skipped whatever landed while hidden.
+describe("createLiveEventsSession — ready frame seed cursor (#25)", () => {
+  it("reports a ready frame's seed cursor via onCursor, BEFORE any event arrives", async () => {
+    const seen: string[] = [];
+    const h = makeHarness(OK_TICKET);
+    const session = h.start({ onCursor: (c) => seen.push(c) });
+    await flush();
+    const ws = FakeWebSocket.instances[0];
+    // A ready frame carrying the DO's seeded cursor — reported at connect so a pause with zero events resumes.
+    ws.message({ type: "ready", sessionId: "sess-1", watermarkDeltaMs: 0, cursor: "seed-cur" });
+    expect(seen).toEqual(["seed-cur"]);
+    // The ready frame still marks the connection live.
+    expect(h.connections).toContain("connected");
+    session.stop();
+  });
+
+  it("does NOT report a cursor for an old-engine ready frame that omits one (back-compat)", async () => {
+    const seen: string[] = [];
+    const h = makeHarness(OK_TICKET);
+    const session = h.start({ onCursor: (c) => seen.push(c) });
+    await flush();
+    const ws = FakeWebSocket.instances[0];
+    ws.ready("sess-1"); // an engine predating #25 sends no cursor
+    expect(seen).toEqual([]);
+    expect(h.connections).toContain("connected");
+    session.stop();
+  });
+
+  it("treats a ready frame with cursor: null as no seed (seeded from the oldest)", async () => {
+    const seen: string[] = [];
+    const h = makeHarness(OK_TICKET);
+    const session = h.start({ onCursor: (c) => seen.push(c) });
+    await flush();
+    const ws = FakeWebSocket.instances[0];
+    ws.message({ type: "ready", sessionId: "sess-1", watermarkDeltaMs: 0, cursor: null });
+    expect(seen).toEqual([]);
+    session.stop();
+  });
+});
