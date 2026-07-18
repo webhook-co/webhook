@@ -50,8 +50,9 @@ function summarize(results) {
   };
 }
 
-// Variant R sweeps a realistic body size (?size=, default 5 KB ~ the PRD avg payload); A-D don't.
-const sizeQuery = (variant) => (variant === "R" ? `?size=${num("R_SIZE", 5120)}` : "");
+// Variants R and I sweep a realistic body size (?size=, default 5 KB ~ the PRD avg payload); A-D don't.
+const sizeQuery = (variant) =>
+  variant === "R" || variant === "I" ? `?size=${num("R_SIZE", 5120)}` : "";
 
 async function oneRequest(variant) {
   const t0 = performance.now();

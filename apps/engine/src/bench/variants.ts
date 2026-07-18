@@ -1,5 +1,7 @@
-import type { Sql } from "@webhook-co/db";
+import { insertIngestEvent, type Sql } from "@webhook-co/db";
 import { payloadR2Key } from "@webhook-co/shared";
+
+import { handleIngest, type IngestDeps } from "../ingest";
 
 // The four RLS-insert variants for the p99 ingest benchmark. Each performs ONE
 // logical "ingest insert" and returns the DB round-trip time (performance.now() around the DB call)
@@ -146,6 +148,59 @@ export async function variantR(sql: Sql, r2: R2Bucket, p: BenchInsert): Promise<
       ${p.id}::uuid, ${p.orgId}::uuid, ${p.endpointId}::uuid,
       ${key}, ${p.payloadBytes}::bigint, ${p.dedupKey}, ${p.dedupStrategy})`;
   return { inserted: rows[0]?.inserted === true, dbMs: performance.now() - tDb, r2Ms };
+}
+
+/**
+ * I — the FULL ingest orchestration through the real `handleIngest`. Faked resolve/verify (no KV/KMS
+ * latency), but the REAL readCappedBody + deriveDedup + payloadR2Key + R2 put + `ingest_event` insert —
+ * closing the gap where variant R measured only the R2 PUT + insert and never exercised the in-isolate
+ * compute (two SHA-256s + the streamed body read) that also sits on the ACK path (the bench's R5 gap).
+ * `r2Ms`/`dbMs` are captured inside the deps; the returned total (measured by the worker around this call)
+ * is the full-orchestration ACK budget. Distinct signature (takes the R2 bucket + builds the Request), so
+ * it is NOT in VARIANT_FNS — the worker routes `/run/I` to it directly, like variant R.
+ */
+export async function variantI(sql: Sql, r2: R2Bucket, p: BenchInsert): Promise<VariantResult> {
+  let r2Ms = 0;
+  let dbMs = 0;
+  let inserted = false;
+  // A body of the requested size; handleIngest streams + content-hashes it, and (dedup OFF) derives a
+  // per-request dedup_key from the generated event id, so each request is a real INSERT, not a no-op.
+  const body = new Uint8Array(p.payloadBytes);
+  const deps: IngestDeps = {
+    resolve: async () => ({
+      orgId: p.orgId,
+      endpointId: p.endpointId,
+      paused: false,
+      sealedSecrets: [],
+      dedupConfig: null,
+    }),
+    verify: async () => ({ verified: false, verification: null }),
+    unsealSecret: async () => "unused-in-bench",
+    putPayload: async (key, b) => {
+      const t = performance.now();
+      await r2.put(key, b);
+      r2Ms = performance.now() - t;
+    },
+    ingestEvent: async (row) => {
+      const t = performance.now();
+      const res = await insertIngestEvent(sql, row);
+      dbMs = performance.now() - t;
+      inserted = res.inserted;
+      return res;
+    },
+    now: () => new Date(),
+    log: () => {},
+    maxBodyBytes: 1_000_000,
+  };
+  await handleIngest(
+    new Request("https://wbhk.my/bench", {
+      method: "POST",
+      body,
+      headers: { "content-type": "application/octet-stream" },
+    }),
+    deps,
+  );
+  return { inserted, dbMs, r2Ms };
 }
 
 export const VARIANT_FNS: Record<Variant, (sql: Sql, p: BenchInsert) => Promise<VariantResult>> = {
