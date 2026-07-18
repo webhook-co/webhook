@@ -17,11 +17,23 @@ import { LagSchema } from "./lag";
 export const LISTEN_KEEPALIVE_PING = "ping";
 export const LISTEN_KEEPALIVE_PONG = "pong";
 
-/** server→client, first frame after the upgrade: announces the session id + the watermark lag. */
+/**
+ * server→client, first frame after the upgrade: announces the session id + the watermark lag, and (since
+ * #25) the opaque resume `cursor` the DO actually seeded/persisted at — the SAME opaque, HMAC-signed string
+ * encoding as the event-frame `cursor`. It gives a streaming client a resume position from CONNECT, before
+ * any event arrives, so a pause that begins before the first event still resumes losslessly (and it is
+ * SERVER-resolved, never a client `new Date()`, so a skewed clock can't shift the boundary).
+ *
+ * `cursor` is OPTIONAL + NULLABLE for cross-version back-compat — the CLI is versioned independently of the
+ * engine, so a NEW client must tolerate an OLD engine that omits it, and an OLD client must ignore a NEW
+ * engine that includes it. `null`/absent = the session seeded from the oldest (or has no seed), i.e. there
+ * is no position to resume from.
+ */
 export const ReadyFrameSchema = z.object({
   type: z.literal("ready"),
   sessionId: z.string(),
   watermarkDeltaMs: z.number().int().nonnegative(),
+  cursor: z.string().nullable().optional(),
 });
 
 /** server→client: one arrived event — the events.tail summary + its opaque resume cursor. */
