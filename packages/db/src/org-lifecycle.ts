@@ -801,3 +801,122 @@ export async function advancePurgeJob(
         r2_cursor = ${input.cursor}
     where org_id = ${input.orgId} and status = 'purging'`;
 }
+
+// ---- Async org deletion (#665) -----------------------------------------------------------------------
+// The async twin of deleteOrgWithAudit. Instead of deleting the whole tenant tree synchronously (one
+// unbounded cascade — a timeout risk at extreme volume, and an ingest-leak under the audit lock), the delete
+// is REQUESTED synchronously (mark `deleting` + audit + Stripe + enqueue, all atomic under a brief lock), and
+// the webhook_reaper cron drains the org's events in bounded, resumable chunks before dropping the org row.
+// Mirrors the R2 payload-purge lifecycle (claim/advance) that already drains the same org_deletions job.
+
+/**
+ * Request an org's deletion: mark it `deleting` (which hides it from every user surface via
+ * user_org_directory, 0091) and record the terminal side-effects — the WORM audit row, the durable R2 purge
+ * job, and any live Stripe subscription cancellation — all in ONE transaction, so the request is atomic and
+ * the audit advisory lock is held only for this small write (never a bulk delete). The tenant rows are left
+ * for the reaper. Idempotent: a second request on an already-`deleting` org is a no-op that returns the
+ * original `deletingAt` without re-auditing. Throws OrgNotFoundError if the org does not exist.
+ *
+ * AUTHZ is the caller's responsibility (verify owner via isOrgOwner) — as with deleteOrgWithAudit.
+ */
+export async function requestOrgDeletion(
+  app: Sql,
+  input: { orgId: string; actor: AuditActorInput },
+  auditKey: CryptoKey,
+): Promise<{ orgId: string; deletingAt: string }> {
+  return withTenant(app, input.orgId, async (tx) => {
+    // Transition active|suspended -> deleting, clearing suspension metadata (the lifecycle coherence check
+    // forbids carrying it into `deleting`). The `status <> 'deleting'` guard makes a re-request a no-op.
+    const [marked] = await tx<{ deletingAt: string }[]>`
+      update orgs
+         set status = 'deleting', deleting_at = now(), suspended_reason = null, suspended_at = null
+       where id = ${input.orgId} and status <> 'deleting'
+       returning deleting_at::text as "deletingAt"`;
+    if (!marked) {
+      // Either the org is already deleting (idempotent no-op) or it doesn't exist (a real 404).
+      const [existing] = await tx<{ deletingAt: string | null }[]>`
+        select deleting_at::text as "deletingAt" from orgs where id = ${input.orgId}`;
+      if (!existing) throw new OrgNotFoundError(input.orgId);
+      return { orgId: input.orgId, deletingAt: existing.deletingAt! };
+    }
+
+    // Close out the tamper-evident chain (this is where the advisory lock is taken — held only through this
+    // small write + commit). audit_log has no FK to orgs (0051), so the row survives the eventual reap.
+    await appendAuditEntry(tx, auditKey, {
+      orgId: input.orgId,
+      actor: input.actor,
+      action: "org.deleted",
+      target: input.orgId,
+    });
+    // Enqueue the durable R2 payload-body purge (same encoding rule as deleteOrgWithAudit: a user actor keeps
+    // its bare id so the column stays comparable to pre-existing rows; a non-user actor writes the prefixed
+    // form). `on conflict do nothing` keeps a re-request idempotent even across the guard above.
+    const requestedBy =
+      input.actor.kind === "user" ? input.actor.id : formatAuditActor(input.actor);
+    await tx`
+      insert into org_deletions (org_id, requested_by)
+      values (${input.orgId}, ${requestedBy})
+      on conflict (org_id) do nothing`;
+    // Capture the live Stripe subscription BEFORE the reaper later cascades billing_subscriptions away, and
+    // enqueue a cancellation the apps/api cron drains — else a paying customer who deletes keeps being charged.
+    const [sub] = await tx<{ stripeSubscriptionId: string; status: string }[]>`
+      select stripe_subscription_id as "stripeSubscriptionId", status
+      from billing_subscriptions where org_id = ${input.orgId}`;
+    if (sub && isLiveSubscriptionStatus(sub.status)) {
+      await tx`
+        insert into org_billing_cancellations (org_id, stripe_subscription_id)
+        values (${input.orgId}, ${sub.stripeSubscriptionId})
+        on conflict (org_id) do nothing`;
+    }
+    return { orgId: input.orgId, deletingAt: marked.deletingAt };
+  });
+}
+
+/**
+ * Claim up to `limit` orgs awaiting reaping, oldest request first. A CROSS-org read as webhook_reaper — the
+ * role-targeted `orgs_reaper_select` policy (0091) returns exactly the `deleting` orgs, no tenant GUC needed.
+ * Backed by the partial `orgs_deleting_idx`.
+ */
+export async function claimDeletingOrgs(reaper: Sql, limit: number): Promise<string[]> {
+  const rows = await reaper<{ orgId: string }[]>`
+    select id as "orgId" from orgs
+    where status = 'deleting'
+    order by deleting_at
+    limit ${limit}`;
+  return rows.map((r) => r.orgId);
+}
+
+/**
+ * Delete up to `chunkSize` of a `deleting` org's events (deleting an event CASCADES its delivery_attempts via
+ * the composite FK — no separate reaper grant needed). Runs under the org's tenant GUC; the RLS delete policy
+ * also fences on `status='deleting'`, so it is inert against a live org. Returns the rows deleted — a result
+ * BELOW `chunkSize` means the org's events are drained and the caller may finalize. Idempotent + resumable: a
+ * re-run just deletes whatever remains.
+ */
+export async function reapOrgEventsChunk(
+  reaper: Sql,
+  orgId: string,
+  chunkSize: number,
+): Promise<number> {
+  return withTenant(reaper, orgId, async (tx) => {
+    // Bounded by id (the reaper's granted column) — DELETE has no LIMIT, so pick the chunk in a subquery.
+    const deleted = await tx`
+      delete from events
+      where org_id = ${orgId}
+        and id in (select id from events where org_id = ${orgId} limit ${chunkSize})`;
+    return deleted.count;
+  });
+}
+
+/**
+ * Drop a drained `deleting` org's row — the small remaining cascade (endpoints, memberships, billing rows;
+ * the WORM audit tables + org_deletions persist, FK-decoupled). Runs under the org's tenant GUC; the
+ * `orgs_reaper_delete` policy fences on `status='deleting'`. Returns true if a row was deleted (false if a
+ * concurrent reaper already finalized it — idempotent).
+ */
+export async function finalizeReapedOrg(reaper: Sql, orgId: string): Promise<boolean> {
+  return withTenant(reaper, orgId, async (tx) => {
+    const deleted = await tx`delete from orgs where id = ${orgId} and status = 'deleting'`;
+    return deleted.count > 0;
+  });
+}

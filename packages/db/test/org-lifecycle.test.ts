@@ -9,12 +9,16 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import {
   advancePurgeJob,
+  claimDeletingOrgs,
   claimPurgeJobs,
   deleteOrgWithAudit,
+  finalizeReapedOrg,
   isOrgOwner,
   lastOwnerWouldOrphan,
   OrgNotFoundError,
   readOrgMembershipCensus,
+  reapOrgEventsChunk,
+  requestOrgDeletion,
 } from "../src/org-lifecycle";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -30,6 +34,7 @@ let pg: EphemeralPostgres;
 let app: Sql;
 let owner: Sql;
 let purge: Sql;
+let reaper: Sql;
 let key: CryptoKey;
 
 async function seedUser(id: string): Promise<void> {
@@ -90,6 +95,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   purge = createClient(pg.urlFor({ role: DB_ROLES.purge }));
+  reaper = createClient(pg.urlFor({ role: DB_ROLES.reaper }));
   key = await importAuditKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)));
 }, setupHookTimeoutMs());
 
@@ -97,6 +103,7 @@ afterAll(async () => {
   await app?.end();
   await owner?.end();
   await purge?.end();
+  await reaper?.end();
   await pg?.stop();
 });
 
@@ -434,5 +441,101 @@ describe("org_deletions RLS boundary (the anti-forgery gate)", () => {
         has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'UPDATE') as upd,
         has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'DELETE') as del`;
     expect(g).toEqual({ ins: true, sel: true, upd: false, del: false });
+  });
+});
+
+describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
+  it("marks the org deleting, appends the audit row + purge job, and does NOT delete the tenant rows", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-async", ownerId);
+    await seedEventsWithAttempts(org, 4);
+
+    const res = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+    expect(res.orgId).toBe(org);
+    expect(res.deletingAt).toEqual(expect.any(String));
+
+    // The org is MARKED, not gone — its events + attempts are untouched (the reaper drains them later).
+    const [row] = await withTenant(
+      app,
+      org,
+      (tx) => tx<{ status: string; at: string | null }[]>`
+      select status, deleting_at::text as at from orgs where id = ${org}`,
+    );
+    expect(row.status).toBe("deleting");
+    expect(row.at).toEqual(expect.any(String));
+    expect(await countIn(org, "events")).toBe(4);
+    expect(await countIn(org, "delivery_attempts")).toBe(4);
+
+    // The WORM audit chain gained org.deleted, and the R2 purge job was enqueued.
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.map((r) => r.action)).toEqual(["org.created", "endpoint.created", "org.deleted"]);
+    expect((await verifyAuditChain(key, org, chain)).ok).toBe(true);
+    expect(await countIn(org, "org_deletions")).toBe(1);
+  });
+
+  it("is idempotent — a second request is a no-op (no duplicate audit row or purge job)", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-async-idem", ownerId);
+
+    const first = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+    const second = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+    expect(second.deletingAt).toBe(first.deletingAt); // same timestamp — not re-marked
+
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.filter((r) => r.action === "org.deleted")).toHaveLength(1);
+    expect(await countIn(org, "org_deletions")).toBe(1);
+  });
+
+  it("throws OrgNotFoundError for an org that does not exist", async () => {
+    const ghost = randomUUID();
+    await expect(
+      requestOrgDeletion(app, { orgId: ghost, actor: userActor("x") }, key),
+    ).rejects.toBeInstanceOf(OrgNotFoundError);
+  });
+
+  it("reaper claims deleting orgs oldest-first, drains events in chunks (cascading attempts), then finalizes", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-reap", ownerId);
+    await seedEventsWithAttempts(org, 5);
+    await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+
+    // The reaper sees exactly this deleting org (cross-org claim under its role policy).
+    const claimed = await claimDeletingOrgs(reaper, 10);
+    expect(claimed).toContain(org);
+
+    // Chunked drain of events; deleting an event cascades its delivery_attempt via the composite FK.
+    const first = await reapOrgEventsChunk(reaper, org, 2);
+    expect(first).toBe(2);
+    const second = await reapOrgEventsChunk(reaper, org, 2);
+    expect(second).toBe(2);
+    const third = await reapOrgEventsChunk(reaper, org, 2);
+    expect(third).toBe(1); // < chunkSize → drained
+    expect(await countIn(org, "events")).toBe(0);
+    expect(await countIn(org, "delivery_attempts")).toBe(0); // cascaded away, no reaper grant needed
+
+    // Finalize drops the org row; the WORM audit chain survives (FK-decoupled).
+    expect(await finalizeReapedOrg(reaper, org)).toBe(true);
+    expect(await countIn(org, "orgs")).toBe(0);
+    expect(await finalizeReapedOrg(reaper, org)).toBe(false); // idempotent — already gone
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.map((r) => r.action)).toEqual(["org.created", "endpoint.created", "org.deleted"]);
+  });
+
+  it("SECURITY: the reaper cannot touch a LIVE (non-deleting) org's data (the status fence)", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const live = await seedOrg("del-live", ownerId);
+    await seedEventsWithAttempts(live, 3);
+
+    // A live org is never claimed...
+    expect(await claimDeletingOrgs(reaper, 10)).not.toContain(live);
+    // ...and even if the reaper is pointed straight at it, RLS deletes nothing (fenced on status='deleting').
+    expect(await reapOrgEventsChunk(reaper, live, 100)).toBe(0);
+    expect(await finalizeReapedOrg(reaper, live)).toBe(false);
+    expect(await countIn(live, "events")).toBe(3);
+    expect(await countIn(live, "orgs")).toBe(1);
   });
 });

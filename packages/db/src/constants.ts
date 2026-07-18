@@ -152,6 +152,16 @@ export const DB_ROLES = {
    */
   retention: "webhook_retention",
   /**
+   * Cross-org ASYNC-DELETION reaper role (#665 / migration 0091). After an owner requests an org delete, the
+   * org is marked `status='deleting'` synchronously (audit + Stripe + enqueue), and this role drives the
+   * engine cron that drains that org's events in bounded, resumable chunks (deleting an event CASCADES its
+   * delivery_attempts — no separate grant, like webhook_retention) and then drops the org row itself. Holds
+   * column-scoped SELECT (id, status, deleting_at) on orgs to claim/order, DELETE on events, and DELETE on
+   * orgs — nothing else. Every write is role-targeted AND fenced on `status='deleting'`, so a wrong-GUC bug
+   * can never touch a live org. NON-OWNER, NOSUPERUSER, NOBYPASSRLS. Password injected out of band.
+   */
+  reaper: "webhook_reaper",
+  /**
    * The free-org-cap reconciler (PR2b). The authoritative enforcement of the "at most N owned FREE orgs per
    * user" rule: a cron that, across ALL users, finds owners over the cap (e.g. after a paid org downgrades
    * back to Free) and suspends the overflow. That question is inherently CROSS-USER — no per-tenant role can
