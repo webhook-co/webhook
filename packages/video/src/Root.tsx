@@ -1,5 +1,7 @@
 import { Composition } from "remotion";
 import { Hello } from "./compositions/Hello";
+import { Promo, PROMO_DURATION_IN_FRAMES } from "./compositions/Promo/Promo";
+import { promoSchema } from "./compositions/Promo/schema";
 import { BrandLockup } from "./scenes/BrandLockup";
 import "./index.css";
 import "./fonts";
@@ -21,6 +23,20 @@ export const RemotionRoot = () => (
       fps={30}
       width={1080}
       height={1080}
+    />
+    <Composition
+      id="Promo"
+      component={Promo}
+      durationInFrames={PROMO_DURATION_IN_FRAMES}
+      fps={30}
+      width={1080}
+      height={1080}
+      schema={promoSchema}
+      defaultProps={{
+        headline: "Ship webhooks faster",
+        tagline: "free, signed URLs — replay to localhost",
+        theme: "dark",
+      }}
     />
   </>
 );
