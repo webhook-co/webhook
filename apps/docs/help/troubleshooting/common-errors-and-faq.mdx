@@ -1,0 +1,47 @@
+---
+title: "Errors & common questions"
+sidebarTitle: "Errors & FAQ"
+description: "The API and ingest errors you're most likely to hit — 401, 403, 429, and a paused endpoint — plus quick answers to common questions."
+icon: "triangle-exclamation"
+---
+
+## Common errors
+
+| You see                     | What it means                                                      | What to do                                                                                                                              |
+| --------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **401 unauthorized**        | The API key is missing, malformed, expired, or revoked.            | Check the `Authorization: Bearer` header and that the key is live. If it leaked, [revoke and replace it](/leaked-api-key).              |
+| **403 forbidden**           | The key is valid but missing the **scope** the action needs.       | Mint a key with the right scope rather than over-provisioning one. `whoami` shows a key's scopes.                                       |
+| **404 not found**           | The resource doesn't exist, or isn't visible to your organization. | Cross-organization resources return `404`, not `403` — we don't confirm things you can't see.                                           |
+| **409 endpoint paused**     | An API call targets a **paused** endpoint.                         | [Resume the endpoint](/help/usage/alerts-and-caps), or wait, then retry.                                                                |
+| **429 rate limited** (API)  | Your API requests were throttled.                                  | Back off and retry. See [rate limits](/reference/rate-limits).                                                                          |
+| **429 at your ingest URL**  | Your endpoint is **paused**, so ingest answers a retryable `429`.  | [Resume the endpoint](/help/usage/alerts-and-caps) or raise your usage limit; the retryable `429` is what makes the provider redeliver. |
+| **A delivery is `blocked`** | The destination resolved to a private/internal address.            | Point it at a public HTTPS URL. See [delivery failures](/help/troubleshooting/delivery-failures).                                       |
+
+The full status-code taxonomy is in the [errors reference](/reference/errors).
+
+## Common questions
+
+<AccordionGroup>
+  <Accordion title="I think my API key leaked. What now?">
+    Revoke it immediately and mint a replacement — nothing else can use the old one once it's
+    revoked. Full steps: [a leaked API key](/leaked-api-key).
+  </Accordion>
+  <Accordion title="Can I get my events back after I delete them?">
+    No. Deleting an event redacts and purges it — there's no recovery. It also doesn't lower your
+    usage (the event was already counted). See [your data &
+    privacy](/help/security/your-data-and-privacy).
+  </Accordion>
+  <Accordion title="Does replaying an event cost me?">
+    Replaying to your own machine (`wbhk listen` / `wbhk replay`) costs nothing. A replay that
+    **forwards to a destination** is a delivery, and that counts. See [events &
+    usage](/events-and-usage).
+  </Accordion>
+  <Accordion title="How do I know something's wrong on my side?">
+    Every error response carries a request id in the `x-request-id` header — include it when you
+    reach out, and it helps us trace exactly what happened.
+  </Accordion>
+</AccordionGroup>
+
+## Still stuck?
+
+See [get more help](/help/getting-help/overview) for how to reach us.

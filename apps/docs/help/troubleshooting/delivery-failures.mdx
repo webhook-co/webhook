@@ -1,0 +1,62 @@
+---
+title: "A delivery failed"
+sidebarTitle: "Delivery failures"
+description: "The outbound delivery states, what each means, and how to fix them — plus how retries and dead-lettering work."
+icon: "paper-plane"
+---
+
+When webhook.co forwards an event to a destination, each attempt is a **delivery** with a state. Here's
+what each means and what to do.
+
+## Delivery states
+
+| State                | What it means                                                                                                       | What to do                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `queued` / `pending` | Waiting to be sent, or in flight.                                                                                   | Nothing — it's working.                                                                                 |
+| `delivered`          | The destination returned a success (2xx).                                                                           | Nothing.                                                                                                |
+| `failed`             | A retryable error — a non-2xx response or a timeout.                                                                | Fix the receiver; it will retry on schedule.                                                            |
+| `dead`               | Retries were exhausted (all attempts over ~32h).                                                                    | Fix the receiver, then [replay](/guides/replay-past-or-failed-event) the missed events.                 |
+| `blocked`            | The destination resolved to a private/internal address and the SSRF guard refused it. **Terminal** — never retried. | Point the destination at a publicly reachable HTTPS URL.                                                |
+| `cancelled`          | The destination was **deleted** while the delivery was still open. **Terminal.**                                    | Recreate the destination and [replay](/guides/replay-past-or-failed-event) if you still need the event. |
+
+You may also see **`forwarded`** — that's the record of replaying an event to your **own machine** with
+the CLI (`wbhk listen` / `wbhk replay`), where the CLI made the request. It's not a delivery to a
+destination, and it doesn't count as usage.
+
+## How retries work
+
+A failed delivery retries on a **fixed exponential schedule — up to 8 attempts over roughly 32 hours**
+— then becomes `dead`. A receiver being briefly down never costs you the event, and retries **don't
+count against your usage** (a delivery counts once, when first dispatched). See
+[handle delivery failures](/guides/handle-delivery-failures) for the full schedule.
+
+<Warning>
+  After **20 consecutive dead deliveries**, a destination is **automatically disabled** and the
+  organization's owner is emailed. Fix the receiver, re-enable the destination, and owed deliveries
+  resume on the next drain.
+</Warning>
+
+## Diagnosing one delivery
+
+Open the delivery to read its error and the destination's response. Then fix the receiver and
+[replay](/guides/replay-past-or-failed-event) the affected events — rather than asking the provider to
+send them again.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card
+    title="Duplicates, ordering & retries"
+    icon="clone"
+    href="/help/troubleshooting/duplicates-ordering-and-retries"
+  >
+    How order and idempotency work.
+  </Card>
+  <Card
+    title="Delivery, retries & signing"
+    icon="paper-plane"
+    href="/concepts/delivery-retry-signing"
+  >
+    The engineering detail.
+  </Card>
+</CardGroup>

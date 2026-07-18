@@ -1,0 +1,52 @@
+---
+title: "A signature won't verify"
+sidebarTitle: "Signature verification"
+description: "The four verification states, why an inbound signature check fails, and why your own check of webhook.co's outbound signature might not match."
+icon: "shield-check"
+---
+
+Every captured event carries a **verification state**. Verification never affects whether an event is
+captured — it only records whether the request was proven genuine.
+
+## The four states
+
+| State           | Meaning                                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------- |
+| `verified`      | The signature was checked against a registered secret and passed.                                     |
+| `authenticated` | The request carried valid credentials (e.g. a token) rather than a signature.                         |
+| `failed`        | A signature was checked and **rejected**. The event is captured but never delivered or signed onward. |
+| `unattempted`   | No secret is registered for the endpoint, so nothing was checked.                                     |
+
+## Everything shows `unattempted`
+
+No provider secret is registered for the endpoint, so nothing is verified. Register the provider's
+signing secret — see [verify inbound signatures](/guides/verify-inbound-signatures) — and new events
+arrive with a real state.
+
+## A signature shows `failed`
+
+A signature was checked and rejected. The usual causes:
+
+- **The wrong secret** — a test secret against live traffic, or a stale one after a rotation. Confirm
+  it matches what the provider actually signs with.
+- **A proxy altered the body** — anything between the provider and `wbhk.my` that rewrites the payload
+  breaks the signature, because it's computed over the exact bytes.
+- **A URL-signing provider** (Square, Twilio, HubSpot) — these sign the request URL too, so the URL
+  configured at the provider must match your ingest URL **character-for-character**.
+
+## Verifying webhook.co's outbound signature yourself won't match
+
+Almost always one of two things: you're verifying over a **re-serialized** body instead of the raw
+bytes, or you're using `==` instead of a constant-time compare. Verify over the exact bytes you
+received and compare with `crypto.timingSafeEqual` / `hmac.compare_digest`. See
+[sign outbound webhooks](/guides/sign-outbound-webhooks).
+
+## Related
+
+<Card
+  title="Verify inbound signatures"
+  icon="shield-check"
+  href="/guides/verify-inbound-signatures"
+>
+  Register a provider secret.
+</Card>
