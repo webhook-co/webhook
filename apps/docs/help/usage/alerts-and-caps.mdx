@@ -1,0 +1,55 @@
+---
+title: "Usage alerts & caps"
+sidebarTitle: "Alerts & caps"
+description: "webhook.co warns you as you approach your limit, then pauses capture instead of running up a surprise bill. What that looks like, and how to resume."
+icon: "bell"
+---
+
+The design is simple: **warn you, then pause — never surprise you with a bill.** As your usage climbs,
+you get a heads-up; at the limit, capture pauses rather than silently charging overage.
+
+## Usage alerts
+
+You're emailed as you cross **80%** and **100%** of your included events, so a limit never arrives
+unannounced. Alerts go to the organization.
+
+## What happens at your cap
+
+When an organization reaches its limit, **capture pauses**:
+
+- New requests to your ingest URL get a **`429` response with `Retry-After`**, so a well-behaved
+  provider **holds the event and redelivers it later** instead of dropping it.
+- webhook.co does **not** queue paused requests itself — it relies on the provider's own retry — so
+  resume promptly to avoid a provider eventually giving up.
+- The dashboard shows a **"Capture is paused"** banner. Reading, inspecting, and replaying your
+  existing data all keep working.
+
+## How to resume
+
+<CardGroup cols={2}>
+  <Card title="Free plan" icon="gift">
+    The 5,000-event allowance is one-time and doesn't reset. [Upgrade to a paid
+    plan](/help/billing/manage-your-subscription) to keep capturing.
+  </Card>
+  <Card title="Paid plans" icon="arrow-up-right-dots">
+    Raise your limit by [changing plan](/help/billing/manage-your-subscription), or turn on
+    **overage** so capture continues and extra events are billed per million instead of pausing.
+  </Card>
+</CardGroup>
+
+<Note>
+  **Overage is a choice, not a default.** On paid plans you decide whether going past your included
+  volume **pauses** capture (the default) or **continues and bills** the extra. Set it on the
+  Billing page.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="What counts as an event" icon="calculator" href="/events-and-usage">
+    So you know what moves the number.
+  </Card>
+  <Card title="Endpoint paused (429)" icon="circle-question" href="/troubleshooting">
+    Troubleshooting a paused endpoint.
+  </Card>
+</CardGroup>
