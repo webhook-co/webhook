@@ -32,7 +32,8 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
+
+import { IGNORED_DIRS, isMain, walkDocs } from "./lib/docs-lib.mjs";
 
 const ROOT = process.cwd();
 
@@ -42,14 +43,14 @@ const ROOT = process.cwd();
 const SCANNED = ["apps/www/src", "apps/auth/src", "apps/web/src", "packages/ui/src"];
 
 // The knowledge base (apps/docs) is a user-facing surface too — the same SLA/cert/SSO/BAA boasts can
-// land in an MDX article as easily as in a marketing page, and until now nothing scanned it. MDX is
-// stripped by scanMdx (code fences + MDX/HTML comments), not by the JS stripper.
+// land in a doc as easily as in a marketing page, and until now nothing scanned it. Docs are stripped
+// by scanMdx (code fences + MDX/HTML comments), not by the JS stripper. Both .mdx and .md count —
+// the sibling docs-nav-guard treats .md as a page, so the honesty scan must not skip it (walkDocs
+// covers both, and scans snippets too: a boast in a reused fragment still ships).
 const SCANNED_MDX = ["apps/docs"];
 
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
-const MDX_FILE = /\.mdx$/;
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
-const IGNORED_DIRS = new Set(["node_modules", "dist", "build", ".next", "coverage", "out"]);
 
 /**
  * Each rule matches the SHAPE of an unbacked boast. The `why` is printed on failure so the next
@@ -284,9 +285,15 @@ export function stripMdx(src) {
     for (let i = start; i < end && i < out.length; i++) if (out[i] !== "\n") out[i] = " ";
   };
 
-  // 1) Fenced code blocks, line by line.
+  // 1) Fenced code blocks — only CLOSED pairs are blanked. An UNCLOSED fence (a mistyped or omitted
+  // closing ```) is left intact and scanned. This is the safe direction for an honesty guard: the
+  // earlier "blank to end-of-file" behaviour meant one malformed fence silently stripped — and thus
+  // hid from the scanner — every claim below it ("99.9% uptime SLA", "SOC 2 certified"), the exact
+  // boast SCANNED_MDX exists to catch. Erring toward over-scanning risks a false positive (CI fails,
+  // the author fences the block); erring toward blank-to-EOF risks a false negative (the claim ships).
   const FENCE_OPEN = /^(\s*)(`{3,}|~{3,})(.*)$/;
   let lineStart = 0;
+  let openAt = -1; // byte offset where the open fence line starts, or -1 when not in a fence
   let fence = null; // { char, len }
   while (lineStart <= src.length) {
     let lineEnd = src.indexOf("\n", lineStart);
@@ -296,16 +303,20 @@ export function stripMdx(src) {
       const m = FENCE_OPEN.exec(line);
       if (m) {
         fence = { char: m[2][0], len: m[2].length };
-        blank(lineStart, lineEnd);
+        openAt = lineStart;
       }
     } else {
-      blank(lineStart, lineEnd);
       const closeRe = new RegExp(`^\\s*${fence.char}{${fence.len},}\\s*$`);
-      if (closeRe.test(line)) fence = null;
+      if (closeRe.test(line)) {
+        blank(openAt, lineEnd); // blank the whole block, open and close fences included
+        fence = null;
+        openAt = -1;
+      }
     }
     if (lineEnd === src.length) break;
     lineStart = lineEnd + 1;
   }
+  // Unclosed fence at EOF: deliberately NOT blanked — leave it scannable.
 
   // 2..4) Comments and inline code, matched over the fence-blanked text so nothing inside a fence
   // can match. Double-backtick spans before single so `` `x` `` isn't split.
@@ -402,11 +413,7 @@ async function* walk(dir, match = SOURCE_FILE) {
   }
 }
 
-function isMain() {
-  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-}
-
-if (isMain()) {
+if (isMain(import.meta.url)) {
   const violations = [];
   let total = 0;
 
@@ -432,11 +439,11 @@ if (isMain()) {
     total += seen;
   }
 
-  // Same sweep, same per-tree floor, over the MDX docs — using scanMdx instead of scanSource.
+  // Same sweep, same per-tree floor, over the docs (.mdx + .md) — using scanMdx instead of scanSource.
   for (const tree of SCANNED_MDX) {
     let seen = 0;
     try {
-      for await (const file of walk(join(ROOT, tree), MDX_FILE)) {
+      for await (const file of walkDocs(join(ROOT, tree))) {
         seen++;
         violations.push(...scanMdx(await readFile(file, "utf8"), relative(ROOT, file)));
       }
@@ -446,7 +453,7 @@ if (isMain()) {
     }
     if (seen === 0) {
       console.error(
-        `✗ scanned 0 .mdx files in ${tree} — the tree moved. Refusing to pass vacuously.`,
+        `✗ scanned 0 doc files in ${tree} — the tree moved. Refusing to pass vacuously.`,
       );
       process.exit(1);
     }

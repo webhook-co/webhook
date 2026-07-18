@@ -301,6 +301,18 @@ test("scanMdx still catches a claim that follows a code fence", () => {
   );
 });
 
+// REGRESSION GUARD (code review finding): an UNCLOSED fence must NOT blank the rest of the file. The
+// earlier behaviour blanked to end-of-file, so one malformed fence silently hid every claim below it —
+// defeating the guard exactly where it matters. Only closed pairs are stripped; an unclosed fence
+// stays scannable, so the claim after it is still caught.
+test("scanMdx does not let an unclosed fence hide a later claim", () => {
+  assert.ok(
+    mdxIds(
+      ["```", "curl https://api.webhook.co/v1/events", "", "We are SOC 2 certified."].join("\n"),
+    ).includes("certification-claim"),
+  );
+});
+
 // The KB's honest security page MUST be able to say, in prose, exactly which certifications we do
 // NOT hold — same load-bearing invariant as the legal pages, now in MDX. (We do NOT publish articles
 // enumerating other absent features like SSO/2FA — the gap policy sends those to the backlog, not the

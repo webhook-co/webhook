@@ -13,44 +13,46 @@
 // that yields no nav pages, or a docs tree with no .mdx, fails rather than passing vacuously
 // (a-guards-tests-must-run-the-guard).
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
+
+import { isMain, walkDocs } from "./lib/docs-lib.mjs";
 
 const ROOT = process.cwd();
-const IGNORED_DIRS = new Set(["node_modules", "dist", "build", ".next", "coverage", "out"]);
 const REQUIRED_FRONTMATTER = ["title", "description"];
 
-/** Recursively collect every page-path STRING leaf from a Mintlify `pages` array. */
-function collectFromPages(pages, out) {
-  for (const entry of pages ?? []) {
-    if (typeof entry === "string") {
-      out.push(entry);
-    } else if (entry && typeof entry === "object") {
-      // A nested group carries its own `pages`. An `openapi` group or an external `href` entry
-      // generates/points elsewhere and has no local .mdx — skip it, don't treat it as a page.
-      if (entry.openapi || entry.href) continue;
-      if (Array.isArray(entry.pages)) collectFromPages(entry.pages, out);
-    }
-  }
-}
+// Static-asset extensions a doc may link to (images, downloads, media). A link ending in one of these
+// is a file, not a page, so the broken-link check must not demand a `.mdx` behind it.
+const ASSET_EXT =
+  /\.(png|jpe?g|gif|svg|webp|avif|ico|bmp|pdf|zip|gz|tgz|csv|txt|mp4|webm|mov|mp3|wav|woff2?|ttf|otf|eot)$/i;
 
-/** Every local page path referenced anywhere in the nav (openapi/href entries excluded). */
+/**
+ * Every local page path referenced anywhere in the nav. Walks the WHOLE `navigation` object rather
+ * than the three containers in use today (tabs/groups/pages): Mintlify also nests pages under
+ * `dropdowns`, `anchors`, `languages`, and `versions`, and reorganizing docs.json into any of those
+ * must not make every page beneath it look like an orphan. Any string that appears in a `pages` array
+ * anywhere is a page; `openapi` (generated) and `href` (external) entries are not.
+ */
 export function collectNavPages(config) {
   const out = [];
-  const nav = config?.navigation ?? {};
-  for (const tab of nav.tabs ?? []) {
-    if (Array.isArray(tab.pages)) collectFromPages(tab.pages, out);
-    for (const group of tab.groups ?? []) {
-      if (group.openapi) continue;
-      if (Array.isArray(group.pages)) collectFromPages(group.pages, out);
+  const visit = (node) => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
     }
-  }
-  if (Array.isArray(nav.pages)) collectFromPages(nav.pages, out);
-  for (const group of nav.groups ?? []) {
-    if (group.openapi) continue;
-    if (Array.isArray(group.pages)) collectFromPages(group.pages, out);
-  }
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node.pages)) {
+      for (const entry of node.pages) {
+        if (typeof entry === "string") out.push(entry);
+        else visit(entry);
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "pages" || key === "openapi" || key === "href") continue;
+      if (value && typeof value === "object") visit(value);
+    }
+  };
+  visit(config?.navigation ?? {});
   return out;
 }
 
@@ -94,24 +96,10 @@ export function extractInternalLinks(src) {
   return [...targets];
 }
 
-async function* walkMdx(dir) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return; // a missing tree yields nothing; the caller's floor turns that into a failure
-  }
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue;
-      yield* walkMdx(join(dir, entry.name));
-    } else if (entry.name.endsWith(".mdx") || entry.name.endsWith(".md")) {
-      // README.md is repo documentation ABOUT the docs, not a rendered page — never in the nav.
-      if (/^readme\.mdx?$/i.test(entry.name)) continue;
-      yield join(dir, entry.name);
-    }
-  }
-}
+// Mintlify `snippets/` holds reusable fragments that are imported into pages — they are not nav pages
+// and carry no frontmatter, so the page-level orphan/frontmatter checks must skip them. (The claims
+// guard still scans them; a boast in a reused fragment ships just the same.)
+const NON_PAGE_DIRS = ["snippets"];
 
 async function exists(p) {
   try {
@@ -136,7 +124,12 @@ async function pageFileExists(docsRoot, pagePath) {
  * operations) — links into them are not checked for a local file. `allowOrphans`: page paths that may
  * exist as files without a nav entry (e.g. intentionally unlisted snippets).
  */
-export async function auditDocs({ docsRoot, generatedPrefixes = [], allowOrphans = [] }) {
+export async function auditDocs({
+  docsRoot,
+  generatedPrefixes = [],
+  allowOrphans = [],
+  skipDirs = NON_PAGE_DIRS,
+}) {
   const config = JSON.parse(await readFile(join(docsRoot, "docs.json"), "utf8"));
   const navPages = collectNavPages(config);
   if (navPages.length === 0) {
@@ -160,9 +153,9 @@ export async function auditDocs({ docsRoot, generatedPrefixes = [], allowOrphans
     }
   }
 
-  // Collect the mdx tree once.
+  // Collect the doc tree once (pages only — snippets and other non-page dirs excluded).
   const files = [];
-  for await (const abs of walkMdx(docsRoot)) files.push(relative(docsRoot, abs));
+  for await (const abs of walkDocs(docsRoot, { skipDirs })) files.push(relative(docsRoot, abs));
 
   for (const file of files) {
     const pagePath = file.replace(/\.mdx?$/, "");
@@ -189,6 +182,7 @@ export async function auditDocs({ docsRoot, generatedPrefixes = [], allowOrphans
     for (const target of extractInternalLinks(src)) {
       const clean = target.replace(/^\//, "");
       if (!clean) continue; // bare "/"
+      if (ASSET_EXT.test(clean)) continue; // an image/download/media file, not a page
       const first = clean.split("/")[0];
       if (genPrefixes.has(first)) continue; // generated (e.g. openapi) — Mintlify owns these
       if (navSet.has(clean)) continue; // a nav page (may be generated/openapi-backed)
@@ -206,11 +200,7 @@ export async function auditDocs({ docsRoot, generatedPrefixes = [], allowOrphans
   return { pages: files.length, issues };
 }
 
-function isMain() {
-  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-}
-
-if (isMain()) {
+if (isMain(import.meta.url)) {
   const docsRoot = join(ROOT, "apps/docs");
   let result;
   try {

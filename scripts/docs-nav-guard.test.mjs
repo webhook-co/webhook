@@ -51,6 +51,19 @@ test("collectNavPages walks tabs, groups, nested groups, and tab.pages", () => {
   ]);
 });
 
+// Regression guard (code review): pages nested under dropdowns/anchors/versions — all valid Mintlify
+// containers — must be found, or reorganizing docs.json makes every page beneath one look orphaned.
+test("collectNavPages walks dropdowns, anchors, and versions containers too", () => {
+  const config = {
+    navigation: {
+      dropdowns: [{ dropdown: "More", groups: [{ group: "G", pages: ["extra/one"] }] }],
+      anchors: [{ anchor: "A", pages: ["extra/two"] }],
+      versions: [{ version: "v2", tabs: [{ tab: "T", pages: ["v2/intro"] }] }],
+    },
+  };
+  assert.deepEqual(collectNavPages(config).sort(), ["extra/one", "extra/two", "v2/intro"]);
+});
+
 test("collectNavPages ignores openapi groups and external href entries", () => {
   const config = {
     navigation: {
@@ -223,6 +236,40 @@ test("auditDocs does NOT flag links into a generated namespace (openapi)", async
     ),
   });
   const { issues } = await auditDocs({ docsRoot: root, generatedPrefixes: ["api-reference"] });
+  assert.deepEqual(issues, []);
+  await rm(root, { recursive: true, force: true });
+});
+
+// Regression guard (code review): an image/download link is a file, not a page — it must not be
+// reported as a broken page just because there's no `.mdx` behind it.
+test("auditDocs does NOT flag an image/asset link as a broken page", async () => {
+  const root = await scaffold({
+    "docs.json": JSON.stringify({
+      navigation: { tabs: [{ tab: "Help", groups: [{ group: "G", pages: ["intro"] }] }] },
+    }),
+    "intro.mdx": page(
+      "Intro",
+      "Welcome",
+      "![diagram](/images/flow.png) and a [spec](/files/x.pdf).",
+    ),
+  });
+  const { issues } = await auditDocs({ docsRoot: root });
+  assert.deepEqual(issues, []);
+  await rm(root, { recursive: true, force: true });
+});
+
+// Regression guard (code review): Mintlify snippets/ are reusable fragments, not pages — no
+// frontmatter, not in the nav. They must not be flagged as orphan/missing-frontmatter.
+test("auditDocs ignores files under snippets/ (reusable fragments)", async () => {
+  const root = await scaffold({
+    "docs.json": JSON.stringify({
+      navigation: { tabs: [{ tab: "Help", groups: [{ group: "G", pages: ["intro"] }] }] },
+    }),
+    "intro.mdx": page(),
+    "snippets/reused.mdx": "A shared fragment with no frontmatter and no nav entry.\n",
+  });
+  const { issues, pages } = await auditDocs({ docsRoot: root });
+  assert.equal(pages, 1); // snippet not counted, not an orphan, not missing-frontmatter
   assert.deepEqual(issues, []);
   await rm(root, { recursive: true, force: true });
 });
