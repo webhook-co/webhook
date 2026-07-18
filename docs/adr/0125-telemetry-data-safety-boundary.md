@@ -55,10 +55,12 @@ allowlist boundary; anything not on the list is dropped or redacted. Identifiers
    W3C propagation, the forced-100%-sampling cost-amplification risk must be re-evaluated (and is one reason a
    local library-side sampler is the only real DoS defence — deferred, ADR-0124 §4).
 
-4. **A parse-based CI guard enforces the boundary.** It parses the metric/label catalog (not a text scan) and
-   fails on any label key outside the allowlist, any id-shaped label *value*, and any tenant identifier declared
-   on an *exported* span. It carries a zero-input floor (an empty catalog fails, so "never ran" cannot read as
-   "passed") per the repo's guard-hardening precedent.
+4. **The bounded catalog is enforced by the type system plus a floor-checked validator run in CI.** The metric
+   catalog is a typed TS literal (not a JSON import — that broke Node's native-ESM consumers), so
+   `labels ⊆ allowlist` is a COMPILE-TIME error to violate. A `catalogViolations()` validator — exercised by the
+   test suite — covers the checks the types can't: no id-shaped label key, and a zero-input floor (an
+   empty/absent catalog is a violation, so "never checked" cannot read as "passed"). `assertBoundedMetricLabels`
+   is the runtime emit-site defense against an id/PII-shaped label *value*.
 
 ## Consequences
 
@@ -67,7 +69,8 @@ allowlist boundary; anything not on the list is dropped or redacted. Identifiers
   is removed (a mocked boundary would be an untested boundary).
 - **The URL-secret class is why native export is bounded, not filtered** — the boundary's inability to reach the
   managed span is a load-bearing reason for ADR-0124's worker split, recorded here so the two ADRs stay coherent.
-- **The guard is a parser with a floor**, so it cannot silently pass on malformed input or a missing catalog.
+- **Enforcement is the type system plus a floor-checked validator**, not a text scan — a bad label is a compile
+  error or a failing test, never a silent pass, and a missing/empty catalog fails closed.
 - **`data.mdc`'s "never log tenant identifiers" is reconciled, not overridden:** identifiers are permitted in
   **in-CF** sinks for triage and forbidden in **exported** spans and in **metric labels** — the distinction the
   original rule elided. This ADR is the record of that reconciliation.

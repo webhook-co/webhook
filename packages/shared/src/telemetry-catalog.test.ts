@@ -2,9 +2,14 @@ import { describe, expect, test } from "vitest";
 
 import {
   assertBoundedMetricLabels,
+  catalogViolations,
   METRIC_LABEL_ALLOWLIST,
+  METRIC_LABEL_KEYS,
   TELEMETRY_METRICS,
 } from "./telemetry-catalog.js";
+
+// The whole catalog as the guard consumes it — this is the check running against the real contract.
+const REAL_CATALOG = { labelAllowlist: METRIC_LABEL_KEYS, metrics: TELEMETRY_METRICS };
 
 describe("the metric catalog", () => {
   test("every declared metric's labels are a subset of the allowlist (bounded cardinality)", () => {
@@ -16,6 +21,55 @@ describe("the metric catalog", () => {
         ).toBe(true);
       }
     }
+  });
+});
+
+describe("catalogViolations (the enforcement CI runs)", () => {
+  test("the real committed catalog validates clean", () => {
+    expect(catalogViolations(REAL_CATALOG)).toEqual([]);
+  });
+
+  test("an empty/absent catalog is a violation (zero-input floor)", () => {
+    expect(catalogViolations({}).length).toBeGreaterThan(0);
+    expect(catalogViolations({ labelAllowlist: [], metrics: {} }).length).toBeGreaterThan(0);
+    expect(catalogViolations(null).length).toBeGreaterThan(0);
+  });
+
+  test("a metric declaring an id-shaped label key is a violation", () => {
+    const violations = catalogViolations({
+      labelAllowlist: ["outcome", "org_id"],
+      metrics: { "ingest.requests": { kind: "counter", help: "x", labels: ["org_id"] } },
+    });
+    expect(violations.some((v) => v.includes("org_id"))).toBe(true);
+  });
+
+  test("an ip / path / host / session label key is caught by the extended id-shape denylist", () => {
+    for (const idKey of ["client_ip", "request_path", "host", "session_id"]) {
+      const violations = catalogViolations({
+        labelAllowlist: ["outcome", idKey],
+        metrics: { "ingest.requests": { kind: "counter", help: "x", labels: [idKey] } },
+      });
+      expect(
+        violations.some((v) => v.includes(idKey)),
+        `expected a violation for ${idKey}`,
+      ).toBe(true);
+    }
+  });
+
+  test("a metric with a missing/non-array labels is a violation (fail closed, no throw)", () => {
+    const violations = catalogViolations({
+      labelAllowlist: ["outcome"],
+      metrics: { "ingest.requests": { kind: "counter", help: "x" } },
+    });
+    expect(violations.some((v) => /no labels array/.test(v))).toBe(true);
+  });
+
+  test("a metric label outside the allowlist is a violation", () => {
+    const violations = catalogViolations({
+      labelAllowlist: ["outcome"],
+      metrics: { "ingest.requests": { kind: "counter", help: "x", labels: ["method"] } },
+    });
+    expect(violations.some((v) => v.includes("method"))).toBe(true);
   });
 });
 
@@ -57,8 +111,7 @@ describe("assertBoundedMetricLabels", () => {
   });
 
   test("throws on a contiguous opaque token value (pins the opaque-run branch on its own)", () => {
-    // a value that ONLY the opaque-run alternative catches (not uuid/email/ip) — so deleting that
-    // branch can't stay green (a 22-char contiguous token)
+    // a value that ONLY the opaque-run alternative catches (not uuid/email/ip) — a 22-char contiguous token
     expect(() =>
       assertBoundedMetricLabels("ingest.requests", { outcome: "aB3xK9mZ2qL7wR4tP1nY6d" }),
     ).toThrow(/id-shaped|cardinality/i);
