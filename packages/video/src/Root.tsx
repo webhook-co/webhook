@@ -1,5 +1,6 @@
 import { Composition } from "remotion";
 import { Hello } from "./compositions/Hello";
+import "./index.css";
 
 export const RemotionRoot = () => (
   <Composition
