@@ -26,6 +26,13 @@
 // tuned for a near-black panel). A light white-on-off-white card needs a much
 // quieter elevation, so `CARD_SHADOW` is defined locally here rather than
 // stretched from a shadow tuned for the opposite theme.
+//
+// `CARD_PADDING`, `CARD_SHADOW`, and `cardShellStyle` (the container's
+// background/border/radius/shadow) are exported so any other scene rendering
+// this same card surface (e.g. S7's mutation frame, which needs its own JSON
+// body + badge-flip content but the identical shell) single-sources the shell
+// from here instead of re-deriving it — a future shell change (this file)
+// then can't silently desync from a scene that copy-pasted it.
 
 import { spring, useCurrentFrame, useVideoConfig } from "remotion";
 
@@ -39,10 +46,24 @@ import {
   type VerifiedState,
 } from "./VerifiedBadge";
 
-const CARD_PADDING = 28;
+/** The card's own inner padding — exported so a same-shell scene (S7) can scale it by its own format factor. */
+export const CARD_PADDING = 28;
 /** A quiet elevation for a white card on the off-white page — no token defines
  * a light-surface shadow (see file header), so this is tuned locally. */
-const CARD_SHADOW = "0 1px 2px rgba(11,13,16,0.04), 0 12px 32px rgba(11,13,16,0.08)";
+export const CARD_SHADOW = "0 1px 2px rgba(11,13,16,0.04), 0 12px 32px rgba(11,13,16,0.08)";
+
+/**
+ * The shared card shell — background/border/radius/shadow, single-sourced so
+ * every scene rendering this surface (this component's own view + S7's
+ * mutation frame) stays byte-identical. Deliberately excludes padding/layout
+ * (`CARD_PADDING` above) since callers scale that by their own format factor.
+ */
+export const cardShellStyle = {
+  borderRadius: radii.terminal,
+  border: `1px solid ${colors.pageBorder}`,
+  backgroundColor: colors.pagePanel,
+  boxShadow: CARD_SHADOW,
+} as const;
 
 export interface DashboardCardViewProps {
   provider: string;
@@ -76,10 +97,7 @@ export function DashboardCardView({
         flexDirection: "column",
         gap: 16,
         padding: CARD_PADDING,
-        borderRadius: radii.terminal,
-        border: `1px solid ${colors.pageBorder}`,
-        backgroundColor: colors.pagePanel,
-        boxShadow: CARD_SHADOW,
+        ...cardShellStyle,
         color: colors.pageInk,
         transform: `scale(${scale})`,
       }}

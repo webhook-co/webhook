@@ -122,10 +122,12 @@ export function S12({ format }: S12Props) {
               background: colors.termBg2,
             }}
           >
+            {/* HTTP method stays uppercase (not a brand name) — matches S2's POST chip. */}
             <span
               style={{
                 ...type.badge,
                 fontSize: type.badge.fontSize * s,
+                textTransform: "none",
                 fontFamily: mono,
                 color: colors.verified,
               }}

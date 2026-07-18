@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CAPTIONS, EVENTS_TABLE } from "./captions";
+import { FLOW_NODES_DEFAULT } from "./components/FlowDiagram";
 
 // These strings render on screen and must stay byte-for-byte with brief §6.1.
 // A drifted caption is a shipped typo, so the data itself is the unit under test.
@@ -48,5 +49,15 @@ describe("CAPTIONS data integrity", () => {
 
   it("renders the gitlab row with the amber authenticated state", () => {
     expect(EVENTS_TABLE[3]).toBe("2026-07-12T14:03:02.902Z  gitlab    authenticated  0197f0c3-...");
+  });
+
+  // Drift guard: the S16 "flow" caption is never consumed by <FlowDiagram> —
+  // that component independently hardcodes the same four words as
+  // FLOW_NODES_DEFAULT. Nothing wires them together, so a caption edit here
+  // could silently desync from what actually renders on screen. This test is
+  // the only thing keeping the two in sync.
+  it("keeps the S16 flow caption in sync with FlowDiagram's FLOW_NODES_DEFAULT", () => {
+    const s16 = CAPTIONS.find((c) => c.scene === "S16" && c.kind === "flow");
+    expect(s16?.text).toBe(FLOW_NODES_DEFAULT.join(" → "));
   });
 });

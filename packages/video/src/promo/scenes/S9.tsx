@@ -26,6 +26,8 @@ const STAGGER_START = 6; // local f6 (comp f636)
 const STAGGER_STEP = 4;
 // Legend presence: scale the fixed badge type up so the four states read large
 // and generously spaced (brief §5 S9), then ×verticalScale for the 9:16 cut.
+// 1.9 is tuned by eye against the composition (no formula) — big enough for
+// legend presence without the four stacked rows crowding the title-safe margins.
 const LEGEND_SCALE = 1.9;
 
 export function S9({ format }: S9Props) {

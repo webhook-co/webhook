@@ -13,10 +13,11 @@
 import { AbsoluteFill, Easing, interpolate, interpolateColors, useCurrentFrame } from "remotion";
 
 import { CAPTIONS } from "../captions";
+import { CARD_PADDING, cardShellStyle } from "../components/DashboardCard";
 import { DotsBackground } from "../components/DotsBackground";
 import { isCursorOn, revealedCharCount } from "../components/TypedLine";
 import { inter, mono } from "../fonts";
-import { colors, motion, radii, titleSafe, type, verticalScale } from "../tokens";
+import { colors, motion, titleSafe, type, verticalScale } from "../tokens";
 import type { Format } from "../tokens";
 
 interface S7Props {
@@ -25,12 +26,6 @@ interface S7Props {
 
 const CODE_TEXT = CAPTIONS.find((c) => c.scene === "S7" && c.kind === "code")?.text ?? "";
 const FIX_TEXT = CAPTIONS.find((c) => c.scene === "S7" && c.kind === "caption")?.text ?? "";
-
-// Mirrors DashboardCard's local light-card shadow (that constant isn't exported;
-// it's documented there as a deliberate light-theme local exception to
-// shadows.terminal, which is tuned for the dark panel). Kept in sync here so the
-// mutating S7 card reads as the same surface the S6 <DashboardCard> established.
-const CARD_SHADOW = "0 1px 2px rgba(11,13,16,0.04), 0 12px 32px rgba(11,13,16,0.08)";
 
 // Illustrative JSON body (brief §5 S5 precedent: illustrative payload, no
 // invented secrets). MUTATED_LINE is the re-serialized field that flips red.
@@ -72,7 +67,10 @@ export function S7({ format }: S7Props) {
     [BADGE_FLIP_START, BADGE_FLIP_MID, BADGE_FLIP_END],
     [colors.verified, colors.unattempted, colors.failed],
   );
-  const badgeState = frame < BADGE_FLIP_MID ? "verified" : "failed";
+  // Label flips in lockstep with the dot's color completing (BADGE_FLIP_END),
+  // not partway through the desaturation (BADGE_FLIP_MID) — otherwise the
+  // label would read "failed" over a not-yet-red dot.
+  const badgeState = frame < BADGE_FLIP_END ? "verified" : "failed";
 
   // RAW_BODY_MODIFIED types in 1 char/frame (mono).
   const codeRevealed = revealedCharCount(frame, TYPE_START, CODE_TEXT.length);
@@ -100,18 +98,17 @@ export function S7({ format }: S7Props) {
         <div
           style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 40 * s }}
         >
-          {/* The mutating card — same event, now failed. */}
+          {/* The mutating card — same event, now failed. Shell (background/
+              border/radius/shadow + padding) is single-sourced from
+              DashboardCard so it can't drift from S6's card. */}
           <div
             style={{
               width: cardWidth,
               display: "flex",
               flexDirection: "column",
               gap: 20 * s,
-              padding: 28 * s,
-              borderRadius: radii.terminal,
-              border: `1px solid ${colors.pageBorder}`,
-              background: colors.pagePanel,
-              boxShadow: CARD_SHADOW,
+              padding: CARD_PADDING * s,
+              ...cardShellStyle,
             }}
           >
             {/* Header: provider + the flipping badge. */}
