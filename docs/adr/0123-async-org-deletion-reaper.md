@@ -63,7 +63,22 @@ Postgres rows.
 - A short window exists where the org is `deleting` but not yet physically gone — invisible to users, the same
   shape as the R2 payload purge that already lingers post-delete.
 - `deleteOrgWithAudit` (the #635 synchronous delete) stays in the tree until the callers are flipped; it is the
-  fallback while the reaper is dark.
+  fallback while the reaper is dark. **Account deletion (`deleteAccount`) deliberately stays on it even when the
+  flag is on** — the async mark would leave the personal org lingering, and a subsequent identity-delete failure
+  would strand the surviving account with an unrecreatable `deleting` org (bootstrap's `on conflict do nothing`);
+  the sync hard-delete preserves the recreate-on-next-login self-heal. Only the dashboard org-delete goes async.
+- **WORM completion is asymmetric, by design.** The sync path closes the chain with a terminal `org.deleted`
+  entry; the async path writes only `org.deletion_requested` and the reaper — which holds NO `audit_log` grant
+  or key, by least-privilege — writes no completion entry. Physical destruction is instead proven durably by
+  `org_deletions.purge_completed_at` (the R2 purge job) plus the org row's absence, not by a WORM row. Granting
+  the reaper audit-append authority to symmetrize the log was rejected: it would widen a cross-org delete role's
+  blast radius onto the tamper-evident log for a record already provable from state.
+- **A deleting org is excluded from metering, matching the sync cascade.** `requestOrgDeletion` drops the org's
+  `usage` rows in its transaction (the metering roles hold no `orgs` grant to filter on `status`, but
+  `webhook_app` owns a `delete` on `usage`), and `runUsageRollup` skips a `deleting` org so it never re-rolls
+  the still-draining events. Without this the reaper deleting counted events out from under a frozen `usage`
+  snapshot would false-trip the F6 reconcile oracle every pass, and meter-reporter would bill a just-deleted
+  org. Final-window usage is WAIVED (the sync path already discarded it), never billed post-request.
 
 ## Rollout (activation is gated)
 

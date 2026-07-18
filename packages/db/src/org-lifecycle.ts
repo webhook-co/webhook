@@ -864,15 +864,22 @@ export async function requestOrgDeletion(
     // (those are the reaper's bounded job). The eventual `delete from orgs` hard-deletes the endpoint rows.
     await tx`update endpoints set deleted_at = now() where org_id = ${input.orgId} and deleted_at is null`;
 
-    // Revoke ALL of the org's credentials immediately, mirroring removeMember EXACTLY (the sync
-    // deleteOrgWithAudit cascaded api_keys + auth_grant away with the org row; the async mark leaves them
-    // alive until the reaper, so a live credential would keep authenticating for the whole reaper window).
-    // ORDER IS LOAD-BEARING: revoke GRANTS FIRST — the UPDATE takes the auth_grant row locks
-    // mintKeyForGrant's `FOR UPDATE` contends on, so a concurrent refresh either already committed its key
-    // (the sweep below catches it) or blocks then refuses on the now-revoked grant. Sweeping keys first would
-    // let a racing mint slip an unrevoked key past the sweep that authenticates forever (the cold lookup
-    // checks only `revoked_at is null`, never grant status). A `for update` on ALL the org's grants is the
-    // belt-and-braces for grants the UPDATE's `status <> 'revoked'` filter skipped.
+    // Revoke ALL of the org's credentials immediately (the sync deleteOrgWithAudit cascaded api_keys +
+    // auth_grant away with the org row; the async mark leaves them alive until the reaper, so a live
+    // credential would keep authenticating for the whole reaper window).
+    //
+    // This is the ORG-WIDE twin of members.ts's lockUserGrants + revokeUserKeysInTx (which are USER-scoped:
+    // `and user_id = $2`, plus a created_by/grant_id key filter). They cannot share one helper — the WHERE
+    // clauses are genuinely different (revoke EVERY grant/key here vs one member's there) — but they share ONE
+    // LOAD-BEARING INVARIANT that must stay identical across both: revoke/lock GRANTS FIRST, sweep keys SECOND.
+    // If you change the race protocol in one, change it in the other (members.ts:143-184).
+    //
+    // Why the order: revoke GRANTS FIRST — the UPDATE takes the auth_grant row locks mintKeyForGrant's
+    // `FOR UPDATE` contends on, so a concurrent refresh either already committed its key (the sweep below
+    // catches it) or blocks then refuses on the now-revoked grant. Sweeping keys first would let a racing mint
+    // slip an unrevoked key past the sweep that authenticates forever (the cold lookup checks only
+    // `revoked_at is null`, never grant status). A `for update` on ALL the org's grants is the belt-and-braces
+    // for grants the UPDATE's `status <> 'revoked'` filter skipped.
     const revokedBy = input.actor.kind === "user" ? input.actor.id : null;
     await tx`
       update auth_grant
@@ -885,6 +892,20 @@ export async function requestOrgDeletion(
        where org_id = ${input.orgId} and revoked_at is null
       returning key_hash`;
     const revokedKeyHashes = keyRows.map((r) => Buffer.from(r.key_hash));
+
+    // WAIVE the org's metering snapshot NOW, matching the sync cascade. The sync deleteOrgWithAudit dropped
+    // the org row and cascaded `usage` away atomically; the async mark leaves the org row alive for the whole
+    // reaper window. If the frozen `usage` rows survived, then as the reaper deletes the counted `events` the
+    // F6 metering-reconcile oracle (meter-reconcile.ts) would recount fewer events than the frozen
+    // `event_count` and false-alarm (up to its `limit` MeterUsageDrift pages EVERY pass — the exact noise that
+    // trains a team to ignore the one guard over live money), and meter-reporter (which reads finalized
+    // `usage`) would report a just-deleted org to Stripe. Dropping the rows here — the metering roles have no
+    // `orgs` grant to filter on `status`, but webhook_app owns a `delete` on `usage` — makes the deleting org
+    // invisible to every metering cron, exactly as the sync delete did. runUsageRollup separately skips a
+    // `deleting` org so it does not re-roll these from the still-draining events. `stripe_meter_reports` +
+    // `billing_subscriptions` need no such drop: with no finalized `usage`, meter-reporter produces nothing,
+    // and both cascade at finalize.
+    await tx`delete from usage where org_id = ${input.orgId}`;
 
     // Close out the tamper-evident chain (this is where the advisory lock is taken — held only through this
     // small write + commit). audit_log has no FK to orgs (0051), so the row survives the eventual reap. The

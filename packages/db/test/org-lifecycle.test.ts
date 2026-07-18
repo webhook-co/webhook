@@ -512,6 +512,33 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     expect(await countIn(org, "org_deletions")).toBe(1);
   });
 
+  it("waives the org's usage snapshot at request time — the metering crons see a deleted org, not drift", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-usage-waive", ownerId);
+    await seedEventsWithAttempts(org, 3);
+    // The frozen billing snapshots the metering crons read. The sync deleteOrgWithAudit cascaded `usage`
+    // away with the org row; the async mark leaves it alive for the whole reaper window. As the reaper then
+    // deletes the counted events, the F6 reconcile oracle would recount fewer events than the frozen
+    // `event_count` and false-alarm (up to `limit` MeterUsageDrift pages every pass), and meter-reporter
+    // would report a just-deleted org's usage to Stripe. So the request must drop the usage rows too (a
+    // finalized day AND an open day), matching the sync cascade — the founder's WAIVE decision.
+    await withTenant(app, org, async (tx) => {
+      await tx`insert into usage (org_id, window_start, event_count, finalized_at)
+               values (${org}, ${"2026-07-05T00:00:00Z"}, ${3}, ${"2026-07-06T02:00:00Z"})`;
+      await tx`insert into usage (org_id, window_start, event_count, finalized_at)
+               values (${org}, ${"2026-07-06T00:00:00Z"}, ${5}, ${null})`;
+    });
+    expect(await countIn(org, "usage")).toBe(2);
+
+    await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+
+    // Usage is gone — nothing for the reconcile oracle to drift against, nothing for meter-reporter to bill.
+    expect(await countIn(org, "usage")).toBe(0);
+    // The events themselves still await the reaper: the usage waive is independent of the row drain.
+    expect(await countIn(org, "events")).toBe(3);
+  });
+
   it("is idempotent — a second request is a no-op (no duplicate audit row or purge job)", async () => {
     const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
     await seedUser(ownerId);
