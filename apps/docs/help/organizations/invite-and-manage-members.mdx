@@ -1,0 +1,58 @@
+---
+title: "Invite & manage members"
+sidebarTitle: "Invite & manage members"
+description: "Invite people to your organization by email, assign their role, and remove them when they leave."
+icon: "user-plus"
+---
+
+Owners and admins add people to an organization from the **Team** page. Invitations go out by email and
+are tied to the exact address you invite.
+
+## Invite someone
+
+<Steps>
+  <Step title="Send an invite">
+    On the **Team** page, enter the person's email and choose their
+    [role](/help/organizations/roles-and-permissions). You can only invite someone at a role **at or
+    below your own** — an admin can invite admins and members, but not owners.
+  </Step>
+  <Step title="They accept">
+    They get an email with an invite link. The link is **single-use** and expires after **7 days**.
+    To accept, they sign in as the **exact email** you invited — an invite for one address can't be
+    accepted by another. New to webhook.co? Signing in creates their account, then lands them on the
+    invitation.
+  </Step>
+</Steps>
+
+<Note>
+  An invite grants the role it was created with. If you need to change someone's role, do it from
+  the **Team** page after they've joined — see [roles &
+  permissions](/help/organizations/roles-and-permissions).
+</Note>
+
+## Manage members
+
+From the **Team** page, owners and admins can change a member's role or remove them. A few guardrails
+keep an organization safe:
+
+- The **last owner** can't be removed or demoted — an organization always has at least one owner.
+- You can only grant or change a role **up to your own** — admins can't create owners.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card
+    title="Roles & permissions"
+    icon="user-shield"
+    href="/help/organizations/roles-and-permissions"
+  >
+    What each role can do.
+  </Card>
+  <Card
+    title="Delete an organization"
+    icon="trash"
+    href="/help/organizations/delete-an-organization"
+  >
+    Remove a whole organization.
+  </Card>
+</CardGroup>
