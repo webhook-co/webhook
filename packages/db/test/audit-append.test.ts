@@ -9,7 +9,12 @@ import {
 } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { appendAuditEntry, listAuditEntries, readAuditChain } from "../src/audit-append";
+import {
+  appendAuditEntry,
+  listAuditEntries,
+  readAuditChain,
+  verifyAuditChainPaged,
+} from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
@@ -24,6 +29,8 @@ import { setupHookTimeoutMs } from "./pg-timing";
 
 let pg: EphemeralPostgres;
 let app: Sql;
+let owner: Sql; // table owner — ALTERs schema (constraints/triggers) the app role can't
+let admin: Sql; // bootstrap superuser — BYPASSES RLS, so it can remove a forged WORM row during cleanup
 let key: CryptoKey;
 
 async function seedOrg(slug: string): Promise<string> {
@@ -38,12 +45,16 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  admin = createClient(pg.providerUrl);
   // A fixed test key — in prod this comes from a runtime binding, never the DB.
   key = await importAuditKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)));
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
+  await owner?.end();
+  await admin?.end();
   await pg?.stop();
 });
 
@@ -289,5 +300,136 @@ describe("listAuditEntries", () => {
 
     const inB = await withTenant(app, b, (tx) => listAuditEntries(tx, { limit: 50 }));
     expect(inB.items).toEqual([]);
+  });
+});
+
+describe("verifyAuditChainPaged (streaming verification, #636)", () => {
+  async function seedChain(orgId: string, n: number): Promise<void> {
+    await withTenant(app, orgId, async (tx) => {
+      for (let i = 0; i < n; i++) {
+        await appendAuditEntry(tx, key, {
+          orgId,
+          actor: i % 2 === 0 ? userActor("u") : SYSTEM_ACTOR,
+          action: `action.${i + 1}`,
+          target: i === 0 ? null : `t_${i}`,
+        });
+      }
+    });
+  }
+
+  it("verifies an intact chain across MANY pages (a tiny pageSize forces the boundaries)", async () => {
+    const orgId = await seedOrg("audit-paged-ok");
+    await seedChain(orgId, 5);
+    // pageSize 2 → pages [1,2] [3,4] [5]: the prev_hash link at seq 3 and seq 5 is checked across a boundary.
+    const result = await verifyAuditChainPaged(app, orgId, key, 2);
+    expect(result.ok).toBe(true);
+    expect(result.rowsVerified).toBe(5);
+  });
+
+  it("matches the whole-chain verifier exactly (same ok + rowsVerified) at any pageSize", async () => {
+    const orgId = await seedOrg("audit-paged-match");
+    await seedChain(orgId, 7);
+    const whole = await withTenant(app, orgId, (tx) => readAuditChain(tx, orgId)).then((rows) =>
+      verifyAuditChain(key, orgId, rows),
+    );
+    for (const pageSize of [1, 3, 7, 100]) {
+      const paged = await verifyAuditChainPaged(app, orgId, key, pageSize);
+      expect(paged).toEqual(whole);
+    }
+  });
+
+  it("still catches tampering (a wrong key) through the paged reader", async () => {
+    const orgId = await seedOrg("audit-paged-key");
+    await seedChain(orgId, 4);
+    const wrongKey = await importAuditKey(new Uint8Array(32).fill(9));
+    const result = await verifyAuditChainPaged(app, orgId, wrongKey, 2);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.break.kind).toBe("hash_mismatch");
+    expect(result.break.seq).toBe(1); // the genesis row already fails to recompute
+  });
+
+  it("an empty chain is vacuously valid (no page read past the first)", async () => {
+    const orgId = await seedOrg("audit-paged-empty");
+    const result = await verifyAuditChainPaged(app, orgId, key, 10);
+    expect(result).toEqual({ ok: true, rowsVerified: 0 });
+  });
+
+  it("rejects a non-positive pageSize rather than silently certifying an unread chain (#636 review)", async () => {
+    const orgId = await seedOrg("audit-paged-badsize");
+    await seedChain(orgId, 2);
+    // A pageSize <= 0 would read `limit 0`, get an empty first page, and FALSELY report ok — refuse it.
+    await expect(verifyAuditChainPaged(app, orgId, key, 0)).rejects.toBeInstanceOf(RangeError);
+    await expect(verifyAuditChainPaged(app, orgId, key, -5)).rejects.toBeInstanceOf(RangeError);
+  });
+
+  // #636 review: the first version paged with a seq-only keyset seeded at `seq > 0`. A forged pre-genesis row
+  // at seq <= 0 is a valid unique (seq 0 is otherwise unused) but an ILLEGAL genesis — the whole-chain
+  // verifier flags bad_genesis_seq, but a `seq > 0` first page skipped it and reported the chain intact.
+  it("catches a forged pre-genesis row (seq 0) a seq>0 first page would skip (#636 review)", async () => {
+    const orgId = await seedOrg("audit-paged-genesis");
+    await seedChain(orgId, 3); // real rows at seq 1,2,3
+    // Forge the row past the append-validation trigger — the DB-side tamper the verifier exists to detect.
+    // owner does the DDL (disable trigger); the insert itself runs under the org's RLS context via app.
+    await owner`alter table audit_log disable trigger audit_log_chain_biu`;
+    try {
+      await withTenant(
+        app,
+        orgId,
+        (tx) => tx`
+        insert into audit_log (org_id, seq, action, prev_hash, row_hash)
+        values (${orgId}, ${0}, ${"forged.genesis"}, ${null}, ${Buffer.from(new Uint8Array(32))})`,
+      );
+    } finally {
+      await owner`alter table audit_log enable trigger audit_log_chain_biu`;
+    }
+    // pageSize 2 → first page (no lower bound) is [seq0, seq1]; the true minimum is seen.
+    const result = await verifyAuditChainPaged(app, orgId, key, 2);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.break.kind).toBe("bad_genesis_seq");
+    expect(result.break.seq).toBe(0);
+  });
+
+  // #636 review: the seq-only keyset skipped a FORKED duplicate seq whenever the page boundary fell between
+  // the two rows sharing that seq — losing the whole-chain verifier's duplicate_seq detection. The compound
+  // (seq, id) keyset never skips a boundary row. This forces exactly that boundary by temporarily bypassing
+  // both DB guards (the unique(org_id, seq) constraint + the append trigger) — the compromised-DB state the
+  // app-side verifier exists to catch — then RESTORES them so a later-added test never runs on weakened schema.
+  it("catches a forked duplicate seq split across a page boundary (#636 review)", async () => {
+    const orgId = await seedOrg("audit-paged-fork");
+    await seedChain(orgId, 4); // real rows at seq 1,2,3,4
+    const [uniq] = await owner<{ conname: string }[]>`
+      select conname from pg_constraint
+      where conrelid = 'audit_log'::regclass and contype = 'u'`;
+    await owner`alter table audit_log drop constraint ${owner(uniq!.conname)}`;
+    await owner`alter table audit_log disable trigger audit_log_chain_biu`;
+    try {
+      // A second row at seq 2 — inserted AFTER the real rows, so its bigserial id is the largest. Under
+      // (seq, id) order it sits immediately after the real seq-2 row: [1, 2real, 2forged, 3, 4].
+      await withTenant(
+        app,
+        orgId,
+        (tx) => tx`
+        insert into audit_log (org_id, seq, action, prev_hash, row_hash)
+        values (${orgId}, ${2}, ${"forged.fork"}, ${null}, ${Buffer.from(new Uint8Array(32).fill(7))})`,
+      );
+      // pageSize 2 → pages [1, 2real] | [2forged, 3] | [4]: 2forged is the FIRST row of page 2, so the carried
+      // cursor (seq 2) catches it. A seq>2 keyset would have skipped straight to [3, 4].
+      const result = await verifyAuditChainPaged(app, orgId, key, 2);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.break.kind).toBe("duplicate_seq");
+      expect(result.break.seq).toBe(2);
+    } finally {
+      // Restore the schema: drop the forged row (via the superuser, which bypasses RLS — audit_log is WORM
+      // and has no DELETE policy — with the no_delete trigger temporarily off), then re-enable the append
+      // trigger and re-add the unique constraint (which holds again once the duplicate is gone).
+      await owner`alter table audit_log disable trigger audit_log_no_delete`;
+      await admin`delete from audit_log where action = ${"forged.fork"}`;
+      await owner`alter table audit_log enable trigger audit_log_no_delete`;
+      await owner`alter table audit_log enable trigger audit_log_chain_biu`;
+      await owner`alter table audit_log add constraint ${owner(uniq!.conname)} unique (org_id, seq)`;
+    }
   });
 });
