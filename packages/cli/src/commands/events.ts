@@ -177,7 +177,7 @@ export const eventsListCommand = buildCommand<ListFlags, [string | undefined], A
           return value;
         },
         brief:
-          "case-insensitive substring over the raw request headers — a SEPARATE, unindexed scan, SLOWER than --search, so pair it with --after/--before",
+          "case-insensitive substring over request header names + values (not a full 'name: value' line) — a SEPARATE, unindexed scan, SLOWER than --search, so pair it with --after/--before",
         optional: true,
       },
       method: {

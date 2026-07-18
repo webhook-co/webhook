@@ -188,7 +188,7 @@ const EVENT_FILTER_QUERY: readonly QueryParamDef[] = [
   {
     name: "headerSearch",
     description:
-      "Case-insensitive substring over the raw request headers. A SEPARATE, deliberately-unindexed residual scan — SLOWER than `search` (which is trigram-indexed), so best combined with a date range. AND-composes with `search`; never OR'd into it.",
+      "Case-insensitive substring match over request header names and values (matches a single name OR a single value — NOT a wire-form `Name: Value` line). A SEPARATE, deliberately-unindexed residual scan — SLOWER than `search` (which is trigram-indexed), so best combined with a date range. AND-composes with `search`; never OR'd into it.",
     schemaFrom: "filter.headerSearch",
   },
 ];

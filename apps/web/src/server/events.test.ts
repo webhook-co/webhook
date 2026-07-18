@@ -103,7 +103,7 @@ describe("loadEvents", () => {
     expect(r.firstPage).toHaveBeenCalledWith("o", ENDPOINT_ID, filters);
   });
 
-  it("surfaces a db fault as the error state (no throw)", async () => {
+  it("surfaces a db fault as the error state (no throw), reason=unknown", async () => {
     const result = await loadEvents(
       "o",
       ENDPOINT_ID,
@@ -114,7 +114,26 @@ describe("loadEvents", () => {
         }),
       }),
     );
-    expect(result).toEqual({ status: "error" });
+    expect(result).toEqual({ status: "error", reason: "unknown" });
+  });
+
+  // #24 follow-up: the per-endpoint page browses ALL-TIME (no 7d default), so the new unindexed headerSearch
+  // residual can DETERMINISTICALLY blow the 5s browse timeout — Postgres cancels with 57014. Like loadOrgEvents,
+  // loadEvents must preserve that signal so the page can advise "narrow the date range" instead of a useless
+  // "Refresh" (which re-runs the identical timeout).
+  it("reports reason=timeout when Postgres cancels the statement (57014)", async () => {
+    const pgError = (code: string) => Object.assign(new Error("canceling statement"), { code });
+    const result = await loadEvents(
+      "o",
+      ENDPOINT_ID,
+      undefined,
+      readers({
+        firstPage: vi.fn(async () => {
+          throw pgError("57014");
+        }),
+      }),
+    );
+    expect(result).toEqual({ status: "error", reason: "timeout" });
   });
 });
 

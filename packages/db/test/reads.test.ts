@@ -478,6 +478,11 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect((await headerSearch("X-SHOPIFY-TOPIC")).items.map((e) => e.id)).toEqual([shopify]);
     // a term in no row's headers → empty
     expect((await headerSearch("stripe-signature")).items).toEqual([]);
+    // HONESTY PIN (#24, review): headers are stored as a jsonb ARRAY of [name, value] pairs, so `headers::text`
+    // serializes to `[["x-shopify-topic", "orders/create"]]` — NOT wire form. A user pasting a wire-form header
+    // LINE (`name: value`) matches NOTHING, because that `: ` separator isn't in the serialized text. The copy
+    // everywhere says "names and values", never "paste a header line" — this asserts the residual is honest.
+    expect((await headerSearch("x-shopify-topic: orders/create")).items).toEqual([]);
   });
 
   it("headerSearch AND-composes with search — an event matching search but NOT headerSearch is excluded", async () => {

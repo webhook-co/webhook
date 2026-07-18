@@ -239,7 +239,9 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     render(<EventsFilterBar providers={["stripe"]} />);
     const input = screen.getByLabelText("Search request headers");
     expect(input).not.toHaveAttribute("aria-describedby");
-    expect(screen.queryByText(/scans the raw request headers/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Matches a substring of request header names and values/),
+    ).not.toBeInTheDocument();
   });
 
   it("the slower-scan hint is announced once a header search is applied", () => {
@@ -247,7 +249,9 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     render(<EventsFilterBar providers={["stripe"]} />);
     const input = screen.getByLabelText("Search request headers");
     expect(input).toHaveAttribute("aria-describedby", "events-headersearch-hint");
-    expect(screen.getByText(/scans the raw request headers/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Matches a substring of request header names and values/),
+    ).toBeInTheDocument();
   });
 
   it("commits a header search on blur (NOT debounced-as-you-type), as its own ?headerSearch= facet", async () => {

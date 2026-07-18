@@ -110,6 +110,69 @@ function FilterHint({
   );
 }
 
+/** The state + methods a {@link useCommitOnBlurFilter} box exposes to its `<Input>` and to Clear. */
+interface CommitOnBlurFilter {
+  /** The current box text (optimistic — may be ahead of the URL between a commit and its RSC round trip). */
+  readonly value: string;
+  /** onChange handler backing — updates the box text without navigating. */
+  readonly setValue: (value: string) => void;
+  /** Commit on Enter/blur: normalize to what the parser would apply, then push it (a no-op if unchanged). */
+  readonly commit: () => void;
+  /** Clear's reset — empties the box AND its committed ref (typed-but-uncommitted text has no URL to sync from). */
+  readonly reset: () => void;
+}
+
+/**
+ * A free-text filter box that commits on Enter/blur — NOT debounced-as-you-type like the search box. Used by
+ * BOTH the eventType facet (an exact match — `charge` never equals `charge.succeeded`, so a partial push is
+ * wrong) and the headerSearch facet (#24 — each scan is a SLOW unindexed header read, so it must not fire on
+ * every keystroke). Extracted so the two can't drift: the discipline below is load-bearing and was hard-won.
+ *
+ * The URL-sync strategy is DELIBERATELY different from the search box's (which self-heals via its always-running
+ * debounce timer, an equivalent this box has none of). We compare the incoming URL value against what WE last
+ * pushed (`committedRef`) to tell our own commit's lagging echo apart from a genuine external navigation:
+ *  - adopt the URL value into the box ONLY when it DIFFERS from committedRef — an EXTERNAL change (back/forward,
+ *    Clear, a shared link), so the box must reflect where the reader landed;
+ *  - when it EQUALS committedRef it's merely our own commit's navigation catching up, and the box may hold
+ *    characters typed during that round trip — adopting would clobber them.
+ * This one comparison replaces a "pending" latch that (unlike search's timer-reset one) never self-healed: a
+ * stuck latch left the box stale over freshly-navigated data and re-pushed the stale value on the next blur.
+ *
+ * `toEffective` is the SAME predicate the URL parser uses, so only a value the server would actually apply
+ * reaches the URL — a whitespace-only / over-long term collapses to "" (no filter), keeping the box, the URL,
+ * Clear, and the hint in agreement (never lighting the filter UI over an unfiltered list). `push` receives that
+ * effective value and writes it through the shared applyPatch.
+ */
+function useCommitOnBlurFilter(
+  urlValue: string,
+  toEffective: (raw: string | null | undefined) => string,
+  push: (effective: string) => void,
+): CommitOnBlurFilter {
+  const [value, setValue] = React.useState(urlValue);
+  // What we last PUSHED (kept current as the URL commits). Two jobs: (1) makes commit idempotent — the URL lags
+  // a commit by one RSC round trip, so Enter-then-blur would otherwise re-push the same value; and (2)
+  // discriminates, in the effect below, our own commit's echo from an external change.
+  const committedRef = React.useRef(urlValue);
+  React.useEffect(() => {
+    if (urlValue !== committedRef.current) setValue(urlValue);
+    committedRef.current = urlValue;
+  }, [urlValue]);
+  function commit() {
+    const effective = toEffective(value);
+    // Normalize the displayed value even on a no-op commit, so trailing whitespace / an over-long paste doesn't
+    // linger in the box after blur.
+    setValue(effective);
+    if (effective === committedRef.current) return;
+    committedRef.current = effective;
+    push(effective);
+  }
+  function reset() {
+    setValue("");
+    committedRef.current = "";
+  }
+  return { value, setValue, commit, reset };
+}
+
 export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -271,65 +334,16 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   // (correctly) not to push a term that cannot run.
   const tooShort = searchTooShort({ search: searchInput });
 
-  // eventType is an EXACT match, so it commits on Enter/blur — NOT debounced-as-you-type like search, which
-  // would query partial types (`charge` never equals `charge.succeeded`). This box therefore uses a DIFFERENT
-  // URL-sync strategy from the search box, by design (not a copy that drifted): search self-heals via its
-  // always-running debounce timer, which this box has no equivalent of. Instead we compare the incoming URL
-  // value against what WE last pushed (committedEventTypeRef) to tell our own commit's lagging echo apart from
-  // a genuine external navigation — see the effect below.
-  const [eventTypeInput, setEventTypeInput] = React.useState(eventType);
-  // What we last PUSHED (kept current as the URL commits). It does two jobs: (1) makes commit idempotent — the
-  // URL lags a commit by one RSC round trip, so Enter-then-blur would otherwise re-push the same value; and
-  // (2) discriminates, in the effect, our own commit's echo from an external change.
-  const committedEventTypeRef = React.useRef(eventType);
-  React.useEffect(() => {
-    // Adopt the URL value into the box ONLY when it differs from what we last pushed — i.e. an EXTERNAL change
-    // (back/forward, Clear, a shared link): the reader navigated, so the box must reflect where they landed.
-    // When it EQUALS the committed value it's merely our own commit's navigation catching up, and the box may
-    // hold characters typed during that round trip — adopting here would clobber them. This one comparison
-    // replaces a "pending" latch that (unlike search's timer-reset one) never self-healed: a stuck latch left
-    // the box stale over freshly-navigated data and re-pushed the stale value on the next blur.
-    if (eventType !== committedEventTypeRef.current) setEventTypeInput(eventType);
-    committedEventTypeRef.current = eventType;
-  }, [eventType]);
-  function commitEventType() {
-    // Only a value the parser would actually APPLY reaches the URL — mirrors the search path. A whitespace-only
-    // or over-long term is dropped by the parser, so pushing it would light Clear + the coverage hint over a
-    // fully UNFILTERED list (the silent-drop cliff). effectiveEventType — the exact predicate the parser uses —
-    // collapses those to "" (no filter), so the box, the URL, and the server always agree.
-    const effective = effectiveEventType(eventTypeInput);
-    // Normalize the displayed value even on a no-op commit, so trailing whitespace / an over-long paste doesn't
-    // linger in the box after blur.
-    setEventTypeInput(effective);
-    if (effective === committedEventTypeRef.current) return;
-    committedEventTypeRef.current = effective;
-    applyPatch({ eventType: effective });
-  }
-
-  // headerSearch (#24) — a SLOW, unindexed substring over the raw headers. It commits on Enter/blur, NOT
-  // debounced-as-you-type like `search`: each header search is an expensive scan, so it must not fire on every
-  // keystroke. It therefore uses the SAME commit-on-Enter/blur URL-sync strategy as eventType (compare the
-  // incoming URL value against what WE last pushed to tell our own commit's lagging echo apart from an external
-  // navigation), not search's always-running debounce. Wired through the SAME applyPatch as the other facets.
-  const [headerSearchInput, setHeaderSearchInput] = React.useState(headerSearch);
-  const committedHeaderSearchRef = React.useRef(headerSearch);
-  React.useEffect(() => {
-    // Adopt the URL value into the box ONLY on an EXTERNAL change (back/forward, Clear, a shared link); when it
-    // equals what we last pushed it's just our own commit's navigation catching up, and the box may hold
-    // characters typed during that round trip — adopting here would clobber them. Same discipline as eventType.
-    if (headerSearch !== committedHeaderSearchRef.current) setHeaderSearchInput(headerSearch);
-    committedHeaderSearchRef.current = headerSearch;
-  }, [headerSearch]);
-  function commitHeaderSearch() {
-    // Only a value the parser would actually APPLY reaches the URL (effectiveHeaderSearch — the exact predicate
-    // the parser uses), so a whitespace-only / over-long term can't light Clear + the hint over an unfiltered
-    // list. Normalize the box even on a no-op so trailing whitespace / an over-long paste doesn't linger.
-    const effective = effectiveHeaderSearch(headerSearchInput);
-    setHeaderSearchInput(effective);
-    if (effective === committedHeaderSearchRef.current) return;
-    committedHeaderSearchRef.current = effective;
-    applyPatch({ headerSearch: effective });
-  }
+  // eventType (exact match — `charge` never equals `charge.succeeded`) and headerSearch (#24 — a SLOW unindexed
+  // header scan) both commit on Enter/blur rather than as-you-type. ONE shared hook carries the hard-won
+  // URL-sync discipline so the two can't drift (see useCommitOnBlurFilter). Each pushes through the SAME
+  // applyPatch as the other facets, under its own key.
+  const eventTypeFilter = useCommitOnBlurFilter(eventType, effectiveEventType, (v) =>
+    applyPatch({ eventType: v }),
+  );
+  const headerSearchFilter = useCommitOnBlurFilter(headerSearch, effectiveHeaderSearch, (v) =>
+    applyPatch({ headerSearch: v }),
+  );
 
   const searchPendingRef = React.useRef(false);
   React.useEffect(() => {
@@ -375,12 +389,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     // otherwise lingers (its URL value never changed, so the URL→input sync effect wouldn't fire).
     setSearchInput("");
     searchPendingRef.current = false;
-    setEventTypeInput("");
-    committedEventTypeRef.current = "";
-    // Reset the header-search box + its committed ref too (same reasoning as eventType: typed-but-uncommitted
-    // text otherwise lingers, since its URL value never changed so the URL→input sync effect wouldn't fire).
-    setHeaderSearchInput("");
-    committedHeaderSearchRef.current = "";
+    // Reset the commit-on-blur boxes + their committed refs too (typed-but-uncommitted text otherwise lingers,
+    // since its URL value never changed so the URL→input sync effect wouldn't fire).
+    eventTypeFilter.reset();
+    headerSearchFilter.reset();
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
     // apply() pins this (empty) query as the snapshot and bumps, so viewParams reads empty on the next render:
@@ -465,11 +477,11 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
             about coverage — event type is only parsed for some providers, so a "no results" here can mean
             "we don't extract this provider's type", not "no such events". */}
         <Input
-          value={eventTypeInput}
-          onChange={(e) => setEventTypeInput(e.target.value)}
-          onBlur={commitEventType}
+          value={eventTypeFilter.value}
+          onChange={(e) => eventTypeFilter.setValue(e.target.value)}
+          onBlur={eventTypeFilter.commit}
           onKeyDown={(e) => {
-            if (e.key === "Enter") commitEventType();
+            if (e.key === "Enter") eventTypeFilter.commit();
           }}
           placeholder="Event type (e.g. charge.succeeded)"
           aria-label="Filter by event type"
@@ -487,11 +499,11 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
             is expensive, so it must not fire on every keystroke. The hint is honest about the cost — it's
             slower than search, so pair it with a date range. */}
         <Input
-          value={headerSearchInput}
-          onChange={(e) => setHeaderSearchInput(e.target.value)}
-          onBlur={commitHeaderSearch}
+          value={headerSearchFilter.value}
+          onChange={(e) => headerSearchFilter.setValue(e.target.value)}
+          onBlur={headerSearchFilter.commit}
           onKeyDown={(e) => {
-            if (e.key === "Enter") commitHeaderSearch();
+            if (e.key === "Enter") headerSearchFilter.commit();
           }}
           placeholder="Search headers (e.g. x-shopify-topic)"
           aria-label="Search request headers"
@@ -536,11 +548,11 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
       </FilterHint>
 
       {/* Visible + announced only while a header search is set. Header search runs an unindexed scan over the
-          raw headers, so it's slower than the id/dedup-key search above — say so, and nudge toward a date
-          range, which keeps it fast. */}
+          stored headers, so it's slower than the id/dedup-key search above — say so, nudge toward a date range,
+          and be honest that it matches header names and values (not a full `name: value` line). */}
       <FilterHint id="events-headersearch-hint" active={headerSearch !== ""}>
-        Header search scans the raw request headers, so it’s slower than the search above — pair it
-        with a date range to keep it fast.
+        Matches a substring of request header names and values (not a full “name: value” line). This
+        scan is slower than the search above — pair it with a date range to keep it fast.
       </FilterHint>
     </div>
   );
