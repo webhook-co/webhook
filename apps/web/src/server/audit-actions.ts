@@ -93,6 +93,10 @@ export async function loadMoreAuthAuditAction(
 /**
  * Recompute the governance chain. Until Lane 2.10 `aae1` had only a per-ROW verifier — which cannot see the
  * attacks a chain exists to detect (a deleted row's seq gap, a rewritten link, a forked seq). This walks it.
+ *
+ * NOTE: this still loads the whole chain (readAuthAuditChain) — the same OOM shape #636 paged away for the
+ * MAIN chain. Generalizing the paged verifier to this parallel chain (own table + HMAC) is tracked as its
+ * own PR in issue #663, kept out of #636 to keep that change focused on the main chain.
  */
 export async function verifyAuthAuditChainAction(slug: string): Promise<VerifyChainResult> {
   const { orgId, role } = await requireOrgAccess(slug);

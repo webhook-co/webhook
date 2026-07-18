@@ -29,7 +29,8 @@ import { setupHookTimeoutMs } from "./pg-timing";
 
 let pg: EphemeralPostgres;
 let app: Sql;
-let owner: Sql; // superuser locally — used ONLY to forge tamper the append service can't (bypassed constraints)
+let owner: Sql; // table owner — ALTERs schema (constraints/triggers) the app role can't
+let admin: Sql; // bootstrap superuser — BYPASSES RLS, so it can remove a forged WORM row during cleanup
 let key: CryptoKey;
 
 async function seedOrg(slug: string): Promise<string> {
@@ -45,6 +46,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  admin = createClient(pg.providerUrl);
   // A fixed test key — in prod this comes from a runtime binding, never the DB.
   key = await importAuditKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)));
 }, setupHookTimeoutMs());
@@ -52,6 +54,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.end();
   await owner?.end();
+  await admin?.end();
   await pg?.stop();
 });
 
@@ -390,34 +393,43 @@ describe("verifyAuditChainPaged (streaming verification, #636)", () => {
 
   // #636 review: the seq-only keyset skipped a FORKED duplicate seq whenever the page boundary fell between
   // the two rows sharing that seq — losing the whole-chain verifier's duplicate_seq detection. The compound
-  // (seq, id) keyset never skips a boundary row. This forces exactly that boundary. Runs LAST: it drops the
-  // unique(org_id, seq) constraint (a superuser tamper the verifier exists to catch) and does not restore it.
+  // (seq, id) keyset never skips a boundary row. This forces exactly that boundary by temporarily bypassing
+  // both DB guards (the unique(org_id, seq) constraint + the append trigger) — the compromised-DB state the
+  // app-side verifier exists to catch — then RESTORES them so a later-added test never runs on weakened schema.
   it("catches a forked duplicate seq split across a page boundary (#636 review)", async () => {
     const orgId = await seedOrg("audit-paged-fork");
     await seedChain(orgId, 4); // real rows at seq 1,2,3,4
     const [uniq] = await owner<{ conname: string }[]>`
       select conname from pg_constraint
       where conrelid = 'audit_log'::regclass and contype = 'u'`;
-    // Bypass BOTH DB guards the way a superuser tamper would: the unique(org_id, seq) constraint and the
-    // append-validation trigger. This is precisely the compromised-DB state the app-side verifier defends
-    // against (the HMAC key lives outside the DB). Left disabled — this is the file's last test.
     await owner`alter table audit_log drop constraint ${owner(uniq!.conname)}`;
     await owner`alter table audit_log disable trigger audit_log_chain_biu`;
-    // A second row at seq 2 — inserted AFTER the real rows, so its bigserial id is the largest. Under
-    // (seq, id) order it sits immediately after the real seq-2 row: [1, 2real, 2forged, 3, 4].
-    await withTenant(
-      app,
-      orgId,
-      (tx) => tx`
-      insert into audit_log (org_id, seq, action, prev_hash, row_hash)
-      values (${orgId}, ${2}, ${"forged.fork"}, ${null}, ${Buffer.from(new Uint8Array(32).fill(7))})`,
-    );
-    // pageSize 2 → pages [1, 2real] | [2forged, 3] | [4]: 2forged is the FIRST row of page 2, so the carried
-    // cursor (seq 2) catches it. A seq>2 keyset would have skipped straight to [3, 4].
-    const result = await verifyAuditChainPaged(app, orgId, key, 2);
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
-    expect(result.break.kind).toBe("duplicate_seq");
-    expect(result.break.seq).toBe(2);
+    try {
+      // A second row at seq 2 — inserted AFTER the real rows, so its bigserial id is the largest. Under
+      // (seq, id) order it sits immediately after the real seq-2 row: [1, 2real, 2forged, 3, 4].
+      await withTenant(
+        app,
+        orgId,
+        (tx) => tx`
+        insert into audit_log (org_id, seq, action, prev_hash, row_hash)
+        values (${orgId}, ${2}, ${"forged.fork"}, ${null}, ${Buffer.from(new Uint8Array(32).fill(7))})`,
+      );
+      // pageSize 2 → pages [1, 2real] | [2forged, 3] | [4]: 2forged is the FIRST row of page 2, so the carried
+      // cursor (seq 2) catches it. A seq>2 keyset would have skipped straight to [3, 4].
+      const result = await verifyAuditChainPaged(app, orgId, key, 2);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.break.kind).toBe("duplicate_seq");
+      expect(result.break.seq).toBe(2);
+    } finally {
+      // Restore the schema: drop the forged row (via the superuser, which bypasses RLS — audit_log is WORM
+      // and has no DELETE policy — with the no_delete trigger temporarily off), then re-enable the append
+      // trigger and re-add the unique constraint (which holds again once the duplicate is gone).
+      await owner`alter table audit_log disable trigger audit_log_no_delete`;
+      await admin`delete from audit_log where action = ${"forged.fork"}`;
+      await owner`alter table audit_log enable trigger audit_log_no_delete`;
+      await owner`alter table audit_log enable trigger audit_log_chain_biu`;
+      await owner`alter table audit_log add constraint ${owner(uniq!.conname)} unique (org_id, seq)`;
+    }
   });
 });

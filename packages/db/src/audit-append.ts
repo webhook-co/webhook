@@ -258,6 +258,14 @@ export const AUDIT_CHAIN_PAGE_SIZE = 1000;
  * the pooled connection is RELEASED between pages instead of being pinned open across the whole (CPU-bound)
  * per-row HMAC verification — which, on a long chain, could exceed an idle-in-transaction/statement timeout
  * or starve concurrent tenant requests (#636 review). The HMAC walk runs between reads, outside any tx.
+ *
+ * The whole-chain form read every row in ONE MVCC snapshot; paging spans several. That does NOT weaken the
+ * verdict here, because `audit_log` is append-only WORM: the `no_update`/`no_delete`/`no_truncate` triggers
+ * make mid-chain rows immutable, so the ONLY concurrent change to an org's chain is a new row appended at the
+ * TAIL. A tail append between two page reads simply lets the walk verify a longer (still-contiguous) prefix —
+ * it can neither delete a row already read nor insert one before the cursor, so no page boundary can tear.
+ * (A superuser tamper that bypasses the WORM triggers is exactly what a verify is meant to CATCH; racing one
+ * mid-verify is no different from verifying a millisecond before or after it.)
  */
 export async function verifyAuditChainPaged(
   app: Sql,
