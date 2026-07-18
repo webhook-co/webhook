@@ -249,6 +249,40 @@ describe("verifyAuthAuditChainChunk (resumable paged walk, #663)", () => {
     expect(second.break.seq).toBe(2);
   });
 
+  it("catches a cross-page broken_link even for a CONSISTENTLY RE-HASHED forgery — only the carried cursor can", async () => {
+    const key = await testKey();
+    const rows = await buildChain(key, ORG, 4);
+    // The forgery hash_mismatch CANNOT catch: give seq 3 (the FIRST row of page 2) a WRONG prev_hash AND
+    // recompute its row_hash under that wrong prev, so the row is internally self-consistent. The only thing
+    // that rejects it is the cross-page link check — prev_hash vs page 1's tail row_hash, carried in the
+    // cursor. This is the regression guard for that check: drop the carried-cursor link and this forged chain
+    // would verify as VALID (the seq-only-keyset / dropped-link failure mode #663 exists to prevent).
+    const wrongPrev = new Uint8Array(32).fill(0xff);
+    const seq3 = rows[2]!;
+    const forged: StoredAuthAuditRow = {
+      ...seq3,
+      prevHash: wrongPrev,
+      rowHash: await computeAuthAuditRowHash(key, wrongPrev, seq3),
+    };
+
+    const first = await verifyAuthAuditChainChunk(key, ORG, rows.slice(0, 2), null, 0);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    const second = await verifyAuthAuditChainChunk(
+      key,
+      ORG,
+      [forged, rows[3]!],
+      first.tail,
+      first.rowsVerified,
+    );
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("unreachable");
+    expect(second.break.kind).toBe("broken_link");
+    expect(second.break.seq).toBe(3);
+    expect(second.rowsVerified).toBe(2); // seqs 1 + 2 verified before the boundary break
+  });
+
   it("applies genesis rules on the FIRST chunk (prior === null): a chunk starting past seq 1 is bad_genesis_seq", async () => {
     const key = await testKey();
     const rows = await buildChain(key, ORG, 3);
