@@ -1,0 +1,33 @@
+---
+title: "The audit log"
+sidebarTitle: "The audit log"
+description: "webhook.co keeps a tamper-evident, append-only audit log for your organization that you can cryptographically verify yourself."
+icon: "list-check"
+---
+
+**Security- and account-relevant actions** in your organization — like plan and role changes,
+invitations, and email changes — are recorded in an **append-only audit log**. It's
+**tamper-evident**: each entry is chained to the one before it, so a record can't be quietly altered or
+removed after the fact without breaking the chain.
+
+## Verify it yourself
+
+You don't have to take our word that the log is intact — you can **check the chain yourself**:
+
+```sh
+wbhk audit verify
+```
+
+If any entry had been changed or dropped, verification would fail. This is a stronger guarantee than a
+log you simply trust: the integrity is something you can prove.
+
+<Note>
+  Reading the audit log is available to **owners and admins**. See [roles &
+  permissions](/help/organizations/roles-and-permissions).
+</Note>
+
+## Related
+
+<Card title="Security & architecture" icon="shield-halved" href="/concepts/security">
+  How the hash chain works.
+</Card>

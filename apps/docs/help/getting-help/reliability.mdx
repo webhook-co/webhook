@@ -1,0 +1,54 @@
+---
+title: "Reliability"
+sidebarTitle: "Reliability"
+description: "How webhook.co protects your events end to end — durable capture, at-least-once delivery, automatic retries, and dead-lettering."
+icon: "shield-halved"
+---
+
+Here's how webhook.co is built to hold onto your events, so a hiccup on any side doesn't lose them.
+
+<CardGroup cols={2}>
+  <Card title="Durable before anything else" icon="floppy-disk">
+    A request that reaches your ingest URL is written down **before** it's verified or processed. A
+    bad signature, an unknown provider, or a downstream outage labels an event — it doesn't discard
+    it.
+  </Card>
+  <Card title="At-least-once delivery" icon="paper-plane">
+    Outbound events are delivered at least once, with automatic retries on a fixed schedule and
+    **dead-lettering** when a receiver stays down — so a brief outage on your side doesn't drop
+    events.
+  </Card>
+  <Card title="Retries that don't cost you" icon="rotate">
+    A delivery counts once, when first dispatched — however many retry attempts it takes. A
+    receiver's downtime is never your cost.
+  </Card>
+  <Card title="Replay whatever you've captured" icon="clock-rotate-left">
+    Every captured event stays replayable within your [retention window](/help/usage/data-retention)
+    — recover from an outage by replaying, instead of asking the provider to resend.
+  </Card>
+</CardGroup>
+
+<Note>
+  webhook.co runs on a best-effort basis and doesn't publish an uptime or service-level guarantee.
+  What it does provide is the durability model above: your captured events are safe to inspect and
+  replay, and delivery keeps retrying rather than dropping.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card
+    title="Delivery, retries & signing"
+    icon="paper-plane"
+    href="/concepts/delivery-retry-signing"
+  >
+    The retry schedule and dead-lettering in detail.
+  </Card>
+  <Card
+    title="Delivery failures"
+    icon="triangle-exclamation"
+    href="/help/troubleshooting/delivery-failures"
+  >
+    When something doesn't get through.
+  </Card>
+</CardGroup>

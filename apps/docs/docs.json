@@ -207,6 +207,39 @@
               "help/usage/alerts-and-caps",
               "help/usage/data-retention"
             ]
+          },
+          {
+            "group": "Security & privacy",
+            "icon": "shield-check",
+            "pages": [
+              "help/security/overview",
+              "help/security/how-we-protect-your-data",
+              "help/security/the-audit-log",
+              "help/security/your-data-and-privacy",
+              "help/security/compliance",
+              "help/security/report-a-vulnerability"
+            ]
+          },
+          {
+            "group": "Troubleshooting & FAQ",
+            "icon": "circle-question",
+            "pages": [
+              "help/troubleshooting/overview",
+              "help/troubleshooting/webhooks-not-arriving",
+              "help/troubleshooting/delivery-failures",
+              "help/troubleshooting/signature-verification",
+              "help/troubleshooting/duplicates-ordering-and-retries",
+              "help/troubleshooting/common-errors-and-faq"
+            ]
+          },
+          {
+            "group": "Getting help",
+            "icon": "life-ring",
+            "pages": [
+              "help/getting-help/overview",
+              "help/getting-help/contact-support",
+              "help/getting-help/reliability"
+            ]
           }
         ]
       },

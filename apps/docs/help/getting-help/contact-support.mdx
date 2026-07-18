@@ -1,0 +1,38 @@
+---
+title: "Contact us"
+sidebarTitle: "Contact us"
+description: "How to reach webhook.co for help, and what to include so we can resolve your issue quickly."
+icon: "envelope"
+---
+
+## How to reach us
+
+<CardGroup cols={2}>
+  <Card title="General help" icon="envelope" href="mailto:hello@webhook.co">
+    Questions about your account, billing, or using webhook.co — email **hello@webhook.co**.
+  </Card>
+  <Card title="Security issues" icon="bug" href="/help/security/report-a-vulnerability">
+    Found a vulnerability? Report it privately — see [report a
+    vulnerability](/help/security/report-a-vulnerability).
+  </Card>
+  <Card title="Enterprise & sales" icon="building" href="mailto:sales@webhook.co">
+    Committed volume or custom terms — email **sales@webhook.co**.
+  </Card>
+  <Card title="Privacy & data requests" icon="user-shield" href="mailto:privacy@webhook.co">
+    Data-protection questions or requests — email **privacy@webhook.co**.
+  </Card>
+</CardGroup>
+
+## What to include
+
+The more of this you can share, the faster we can help:
+
+- **The request id.** Every error response carries one in the `x-request-id` header — it lets us trace
+  exactly what happened.
+- **What you expected vs. what happened**, and when.
+- **The endpoint, event, or delivery id** involved, if it's about a specific one.
+
+<Note>
+  Please don't paste secrets or full payloads that contain sensitive data into an email — a request
+  id and the ids of the affected resources are usually enough for us to investigate.
+</Note>
