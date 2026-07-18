@@ -60,6 +60,24 @@ async function planOf(
   return acc;
 }
 
+/**
+ * Run `explain (format json)` WITHOUT forcing seqscan/sort off — the honest guard. `planOf` proves an
+ * ordered path EXISTS (by forbidding every alternative); this proves the planner PICKS it on its own cost
+ * estimate. That distinction is only meaningful at realistic volume: on a 300-row table a seq scan + sort is
+ * cheap, so a no-force EXPLAIN there would pass on a bad index too. Runs after ANALYZE so the estimate is real.
+ */
+async function planNoForce(
+  tx: TenantTx,
+  q: (t: TenantTx) => ReturnType<TenantTx>,
+): Promise<{ types: Set<string>; indexes: Set<string> }> {
+  const rows = await tx<{ "QUERY PLAN": unknown }[]>`explain (format json) ${q(tx)}`;
+  const raw = rows[0]!["QUERY PLAN"];
+  const plan = (typeof raw === "string" ? JSON.parse(raw) : raw) as [{ Plan: PlanNode }];
+  const acc = { types: new Set<string>(), indexes: new Set<string>() };
+  walk(plan[0].Plan, acc);
+  return acc;
+}
+
 const usesIndexNoSort = (p: { types: Set<string>; indexes: Set<string> }, index: string): boolean =>
   p.indexes.has(index) && [...p.types].some((t) => t.includes("Index")) && !p.types.has("Sort");
 
@@ -227,6 +245,71 @@ describe("reveal rate-limit COUNT rides the audit_log action-window index (migra
   });
 });
 
+// The REALISTIC-VOLUME guard the ~300-row fixture above cannot be: seed enough events in one org that a seq
+// scan + sort is genuinely the expensive option, ANALYZE so the planner's estimate is real, then EXPLAIN
+// WITHOUT forcing any GUC and assert the planner PICKS the org index on its own — no Sort, no Seq Scan on
+// events. This is the honest answer to "does the consolidated events page's read stay index-usable at scale?"
+// that `enable_seqscan=off` on 300 rows can only pretend to give (the header + the trigram note below say why).
+describe("realistic-volume plan guard — the planner CHOOSES the org index (no forcing GUCs)", () => {
+  // Enough that scanning + sorting the whole org dwarfs an ordered index read of LIMIT+1 rows — well past the
+  // few-thousand-row threshold where the planner flips, with margin so the choice is unambiguous. Seeded once.
+  const VOL = 50_000;
+  let volOrg: string;
+  let volEp: string;
+
+  beforeAll(async () => {
+    volOrg = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Vol" })).id;
+    volEp = (await createEndpoint(app, { orgId: volOrg, name: "vol-ep" }, hasher)).id;
+    await withTenant(app, volOrg, async (tx) => {
+      // One bulk statement (NOT a per-row loop): gen_random_uuid for the PK, a unique dedup key per row.
+      await tx`
+        insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+        select gen_random_uuid(), ${volOrg}, ${volEp}, 'k/' || g, 1, 'dk_' || g, 'content_hash'
+        from generate_series(1, ${VOL}) as g`;
+      // Backdate below the watermark and SPREAD over time so the ordered scan is realistic (not 50k ties);
+      // `- 1 day` floors it well under the 5s watermark so the ASC tail's range predicate matches every row.
+      await tx`
+        update events set received_at = now() - interval '1 day' - (random() * interval '30 days')
+        where org_id = ${volOrg}`;
+    });
+    // ANALYZE must run as the table OWNER (webhook_app holds no MAINTAIN privilege); a separate short-lived
+    // owner connection updates pg_class stats that the app-role planner then reads.
+    const owner = createClient(pg.ownerUrl);
+    try {
+      await owner`analyze events`;
+    } finally {
+      await owner.end();
+    }
+  }, setupHookTimeoutMs());
+
+  it("the org-wide browse (DESC) rides events_org_ordered_idx with no Sort and no Seq Scan", async () => {
+    await withTenant(app, volOrg, async (tx) => {
+      // Mirrors listOrgEvents/browseEvents org-wide: no endpoint predicate (RLS supplies org_id), newest-first.
+      const p = await planNoForce(
+        tx,
+        (t) =>
+          t`select id from events where deleted_at is null order by received_at desc, id desc limit 51`,
+      );
+      expect(usesIndexNoSort(p, "events_org_ordered_idx")).toBe(true);
+      expect(p.types.has("Seq Scan")).toBe(false);
+    });
+  });
+
+  it("the org-wide tail (ASC, watermark-bounded) rides events_org_ordered_idx with no Sort and no Seq Scan", async () => {
+    await withTenant(app, volOrg, async (tx) => {
+      // Mirrors tailOrgEventsWithCursors/tailEventRows org-wide: watermark range on received_at, oldest-first.
+      const p = await planNoForce(
+        tx,
+        (t) =>
+          t`select id from events where deleted_at is null and received_at <= now()
+            order by received_at asc, id asc limit 51`,
+      );
+      expect(usesIndexNoSort(p, "events_org_ordered_idx")).toBe(true);
+      expect(p.types.has("Seq Scan")).toBe(false);
+    });
+  });
+});
+
 // NO trigram-plan assertion here, deliberately — and the absence is the honest answer, not an omission.
 //
 // Dropping the `headers::text` and dead `external_id` branches makes the search disjunction BITMAP-ABLE for
@@ -239,8 +322,7 @@ describe("reveal rate-limit COUNT rides the audit_log action-window index (migra
 // (enable_seqscan/indexscan off) and got a Bitmap Index Scan on events_org_ordered_idx: still the org index.
 //
 // Coaxing GUCs until an assertion goes green would manufacture a plan production never runs — precisely the
-// "green and worthless" failure this file already carries (see the header: enable_seqscan=off on 300 rows
-// proves an ordered path EXISTS, never that the planner PICKS it). So the trigram-vs-org-index question is
-// NOT answered anywhere yet, and saying otherwise would be the same overclaim in a different costume: a
-// realistic-volume guard that runs without forcing GUCs is owed work, tracked in this lane, not something
-// this file can point at today. What IS pinned here, above, is every plan this fixture can honestly show.
+// "green and worthless" failure the 300-row fixture guards against (enable_seqscan=off proves an ordered path
+// EXISTS, never that the planner PICKS it). The ordered-scan question IS now answered honestly — by the
+// realistic-volume, no-GUC guard above — for the browse + tail; the trigram-vs-org-index search question
+// stays open (the org index legitimately wins there at every size, so there is no trigram plan to pin).
