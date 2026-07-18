@@ -260,11 +260,20 @@ describe("makeDrainDeps — outcome → lifecycle-write mapping (the DO's pure w
       scheduleRetry: async (a) => void retried.push(a),
       markTerminal: async (a) => void terminal.push(a),
       now: () => NOW,
+      log: () => {},
+      metric: () => {},
       delivered,
       retried,
       terminal,
     };
   }
+
+  it("makeDrainDeps threads the log + metric sinks straight through to the DrainDeps", async () => {
+    const i = io();
+    const deps = makeDrainDeps(i);
+    expect(deps.log).toBe(i.log); // the 100% correlation-log sink reaches runDeliveryDrain
+    expect(deps.metric).toBe(i.metric); // the bounded RED-metric sink too
+  });
 
   it("recordRetry advances attempt by EXACTLY 1 and threads the schedule + status/error", async () => {
     const i = io();
@@ -423,6 +432,17 @@ describe("runDeliveryDrain — received→delivered correlation log + RED metric
       "refused",
     );
     expect(d.metrics.some((m) => m.name === "delivery.duration_ms")).toBe(false); // no POST → no latency
+  });
+
+  it("a network fault (no HTTP status) buckets status_class=error and still counts a retry", async () => {
+    const d = deps([due({ id: "a", attempt: 1 })], () => fail(null)); // conn error — status null
+    await runDeliveryDrain(d);
+    expect(d.metrics.find((m) => m.name === "delivery.attempts")?.labels.status_class).toBe(
+      "error",
+    );
+    expect(
+      d.metrics.some((m) => m.name === "delivery.retries" && m.labels.status_class === "error"),
+    ).toBe(true);
   });
 
   it("attempt 8 buckets into '4-8' (never the raw, unbounded count)", async () => {
