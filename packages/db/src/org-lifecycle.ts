@@ -658,6 +658,21 @@ export async function isPersonalOrg(app: Sql, orgId: string): Promise<boolean> {
  * Runs as `webhook_app` under RLS pinned to `orgId`. AUTHZ is the caller's responsibility: verify
  * the principal is an owner (`isOrgOwner`) BEFORE calling — RLS proves the caller is *in* the org,
  * never that they may delete it.
+ *
+ * WHY the ORDER inside the transaction matters (#635). The per-org audit advisory lock that
+ * `appendAuditEntry` takes is `pg_advisory_xact_lock` — released only at commit. If the audit append ran
+ * first (as it used to), the lock would then be held across the unbounded `delete from orgs` cascade over
+ * `events` + `delivery_attempts` (both `on delete cascade`), blocking every concurrent audited write for
+ * the org for minutes. So the two UNBOUNDED child tables are deleted EXPLICITLY and FIRST — before the
+ * audit append acquires the lock — leaving the finalize's `delete from orgs` cascade small. The lock is
+ * therefore held only for the short finalize, not the bulk delete.
+ *
+ * This stays ONE transaction, so it keeps the original all-or-nothing atomicity: if any step of the
+ * finalize fails, the whole thing — including the two big deletes — rolls back, and a still-live org is
+ * never left stripped of its history. (Chunking the deletes into separate committed transactions would
+ * lose that, and also could never terminate while the org keeps ingesting.) `delivery_attempts` is deleted
+ * before `events` because it FK-cascades from `events`; deleting `events` first would fire that per-event
+ * child cascade instead of one bounded statement.
  */
 export async function deleteOrgWithAudit(
   app: Sql,
@@ -665,9 +680,19 @@ export async function deleteOrgWithAudit(
   auditKey: CryptoKey,
 ): Promise<{ orgId: string; deletedAt: string }> {
   return withTenant(app, input.orgId, async (tx) => {
-    // Close out the tamper-evident chain first. audit_log has no FK to orgs (0051), so this row
-    // survives the delete below — and if the delete finds nothing, the throw rolls the whole
-    // transaction back, leaving no orphan audit row or purge job.
+    // Delete the two UNBOUNDED cascade tables explicitly and FIRST — before appendAuditEntry takes the
+    // per-org audit advisory lock — so that lock never spans the bulk delete (#635). Still one transaction,
+    // so a later finalize failure rolls these back too: atomicity is preserved. delivery_attempts before
+    // events (it FK-cascades from events). A snapshot delete; any row ingested mid-delete is swept by the
+    // small `delete from orgs` cascade below. These are the only two per-event-volume child tables today; a
+    // NEW unbounded org_id child table must be added here too, or it would re-widen the locked cascade.
+    await tx`delete from delivery_attempts where org_id = ${input.orgId}`;
+    await tx`delete from events where org_id = ${input.orgId}`;
+
+    // Close out the tamper-evident chain. This is where the advisory lock is acquired — held only through
+    // the short finalize + commit that follow, never the bulk delete above. audit_log has no FK to orgs
+    // (0051), so this row survives the delete below — and if the delete finds nothing, the throw rolls the
+    // whole transaction back, leaving no orphan audit row or purge job.
     await appendAuditEntry(tx, auditKey, {
       orgId: input.orgId,
       actor: input.actor,
@@ -709,7 +734,14 @@ export async function deleteOrgWithAudit(
         values (${input.orgId}, ${sub.stripeSubscriptionId})
         on conflict (org_id) do nothing`;
     }
-    // Hard-delete: every org_id child cascades; the two WORM audit tables + org_deletions persist.
+    // Hard-delete: every org_id child cascades — but events + delivery_attempts were bulk-deleted above, so
+    // this cascade is mostly the SMALL remainder (endpoints, memberships, billing rows, …) plus only the
+    // rows that arrived AFTER the bulk delete's snapshot (the org is still live and can still ingest until
+    // commit). That residual is bounded by the ingest rate over the bulk-delete window, not the org's whole
+    // history — a large reduction from the original, which held the lock across the ENTIRE event cascade,
+    // but NOT zero under active ingest. Fully eliminating it (and the extreme-scale timeout of the bulk
+    // delete itself) needs an async, chunked drain — tracked in #665. The two WORM audit tables +
+    // org_deletions persist (FK-decoupled).
     const [row] = await tx<{ deletedAt: string }[]>`
       delete from orgs where id = ${input.orgId} returning now()::text as "deletedAt"`;
     if (!row) {

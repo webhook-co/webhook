@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { importAuditKey, userActor, verifyAuditChain } from "@webhook-co/shared";
+import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { appendAuditEntry, readAuditChain } from "../src/audit-append";
@@ -66,6 +67,23 @@ const countIn = (orgId: string, table: string) =>
     async (tx) => (await tx<{ n: number }[]>`select count(*)::int as n from ${tx(table)}`)[0].n,
   );
 
+/** Give an org an endpoint plus `n` events, each with one delivery attempt — the two unbounded cascade
+ *  tables an org delete must clear (#635). */
+async function seedEventsWithAttempts(orgId: string, n: number): Promise<void> {
+  const endpointId = randomUUID();
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
+             values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
+    for (let i = 0; i < n; i++) {
+      const eid = randomUUID();
+      await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+               values (${eid}, ${orgId}, ${endpointId}, ${`k-${eid}`}, ${10}, ${`d-${eid}`}, ${"content_hash"})`;
+      await tx`insert into delivery_attempts (id, org_id, event_id, target, status)
+               values (${randomUUID()}, ${orgId}, ${eid}, ${"https://x.test"}, ${"pending"})`;
+    }
+  });
+}
+
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
@@ -130,6 +148,91 @@ describe("deleteOrgWithAudit", () => {
     ).rejects.toBeInstanceOf(OrgNotFoundError);
     expect(await countIn(ghost, "org_deletions")).toBe(0);
     expect(await countIn(ghost, "audit_log")).toBe(0);
+  });
+
+  // #635: the delete runs in ONE tenant transaction — `appendAuditEntry` takes the per-org audit advisory
+  // lock (`pg_advisory_xact_lock`, released only at commit). Previously that append ran FIRST, so the lock
+  // was held across the unbounded `delete from orgs` cascade over events + delivery_attempts, blocking every
+  // concurrent audited write for the org for minutes. The fix deletes those two unbounded tables EXPLICITLY
+  // and FIRST — before the audit append takes the lock — so the lock spans only the small finalize.
+  it("deletes events + delivery_attempts BEFORE the audit lock, in one transaction (#635)", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-order", ownerId);
+    await seedEventsWithAttempts(org, 5);
+
+    // Record the ORDER of every statement the delete issues, on its own throwaway pool.
+    const statements: string[] = [];
+    const countingApp = postgres(pg.urlFor({ role: DB_ROLES.app }), {
+      prepare: false,
+      fetch_types: false,
+      max: 2,
+      debug: (_conn, query) => statements.push(query),
+    });
+    try {
+      await deleteOrgWithAudit(countingApp, { orgId: org, actor: userActor(ownerId) }, key);
+    } finally {
+      await countingApp.end();
+    }
+
+    const deliveryDeleteIdx = statements.findIndex((s) =>
+      /delete\s+from\s+"?delivery_attempts"?/i.test(s),
+    );
+    const eventsDeleteIdx = statements.findIndex((s) => /delete\s+from\s+"?events"?/i.test(s));
+    const lockIdx = statements.findIndex((s) => s.includes("pg_advisory_xact_lock"));
+    // delivery_attempts is deleted before events (it FK-cascades from events)...
+    expect(deliveryDeleteIdx).toBeGreaterThan(-1);
+    expect(eventsDeleteIdx).toBeGreaterThan(deliveryDeleteIdx);
+    // ...and BOTH before the audit advisory lock, so the lock never spans the bulk delete.
+    expect(lockIdx).toBeGreaterThan(eventsDeleteIdx);
+    // One bulk statement per table — not a chunk loop (the drain-then-finalize approach that lost atomicity).
+    expect(statements.filter((s) => /delete\s+from\s+"?events"?/i.test(s)).length).toBe(1);
+    expect(statements.filter((s) => /delete\s+from\s+"?delivery_attempts"?/i.test(s)).length).toBe(
+      1,
+    );
+
+    // End state identical to the original single-tx delete: org + both big tables gone, chain verifies.
+    expect(await countIn(org, "orgs")).toBe(0);
+    expect(await countIn(org, "events")).toBe(0);
+    expect(await countIn(org, "delivery_attempts")).toBe(0);
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.map((r) => r.action)).toEqual(["org.created", "endpoint.created", "org.deleted"]);
+    expect((await verifyAuditChain(key, org, chain)).ok).toBe(true);
+  });
+
+  // The single-transaction property is load-bearing: because the two bulk deletes run in the SAME
+  // transaction as the finalize, a finalize failure rolls them back too. A drain-then-finalize design would
+  // have COMMITTED the deletes first, so a routine transient finalize failure (deadlock, timeout, a
+  // concurrent delete) would leave a still-live, still-billable org permanently stripped of its history.
+  it("rolls the WHOLE delete back on a finalize failure — a live org is never stripped of history (#635)", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-atomic", ownerId);
+    await seedEventsWithAttempts(org, 4);
+
+    // Poison the finalize: a BEFORE INSERT trigger on org_deletions raises, so the delete fails AFTER the two
+    // bulk deletes + the audit append have executed (but not committed) in the same transaction.
+    await owner`create or replace function tf_poison_635() returns trigger language plpgsql as $$
+      begin raise exception 'tf_poison_635'; end $$`;
+    await owner`create trigger tf_poison_635_trg before insert on org_deletions
+      for each row execute function tf_poison_635()`;
+    try {
+      await expect(
+        deleteOrgWithAudit(app, { orgId: org, actor: userActor(ownerId) }, key),
+      ).rejects.toThrow(/tf_poison_635/);
+    } finally {
+      await owner`drop trigger tf_poison_635_trg on org_deletions`;
+      await owner`drop function tf_poison_635()`;
+    }
+
+    // Atomic rollback: the org is STILL LIVE and its events + delivery_attempts are fully intact — no loss.
+    expect(await countIn(org, "orgs")).toBe(1);
+    expect(await countIn(org, "events")).toBe(4);
+    expect(await countIn(org, "delivery_attempts")).toBe(4);
+    // No partial finalize side-effects either: the org.deleted audit row and the purge job rolled back too.
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.map((r) => r.action)).toEqual(["org.created", "endpoint.created"]);
+    expect(await countIn(org, "org_deletions")).toBe(0);
   });
 });
 
