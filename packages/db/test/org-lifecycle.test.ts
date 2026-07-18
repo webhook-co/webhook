@@ -463,6 +463,8 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     const res = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
     expect(res.orgId).toBe(org);
     expect(res.deletingAt).toEqual(expect.any(String));
+    // The revoked key hashes are returned so the web-action caller can evict them from KV_AUTHZ.
+    expect(res.revokedKeyHashes).toHaveLength(1);
 
     // The org is MARKED, not gone — its events + attempts are untouched (the reaper drains them later).
     const [row] = await withTenant(

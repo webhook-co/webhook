@@ -27,12 +27,15 @@ Postgres rows.
 
 2. **The sync request (`requestOrgDeletion`), one atomic transaction.** Mark `deleting` (+ `deleting_at`,
    clearing suspension + free-org-cap columns), soft-delete the org's endpoints (ingest 404s at once via the
-   existing `deleted_at is null` cold-lookup — ADR-0076, no new grant), revoke ALL of the org's credentials —
-   both `api_keys` (the cold lookup rejects a revoked key) AND `auth_grant` (status→revoked; else a live
-   refresh token would re-mint a fresh key), append the WORM **`org.deletion_requested`** audit row (NOT
-   `org.deleted` — the org still exists; the reaper completes it later, so logging a completed deletion here
-   would make the append-only log assert something that hasn't happened), enqueue the R2 purge job, and
-   capture any live Stripe cancellation. The audit advisory lock is held only for this small write. Idempotent.
+   existing `deleted_at is null` cold-lookup — ADR-0076, no new grant), revoke ALL of the org's credentials
+   mirroring `removeMember` EXACTLY — GRANTS FIRST (the UPDATE takes the row locks `mintKeyForGrant` contends
+   on, so a racing refresh can't slip an unrevoked key past), then `api_keys` **returning the key hashes**.
+   The DB stamp alone isn't enough — a cached principal authenticates for the ~5-min KV TTL — so the activation
+   web-action MUST `evictRevokedKeyHashes(KV_AUTHZ, revokedKeyHashes)`; a DB function can't touch KV. Then
+   append the WORM **`org.deletion_requested`** audit row (NOT `org.deleted` — the org still exists; the reaper
+   completes it later, so logging a completed deletion here would make the append-only log assert something
+   that hasn't happened), enqueue the R2 purge job, and capture any live Stripe cancellation. The audit
+   advisory lock is held only for this small write. Idempotent.
 
    `deleting` is a new lifecycle STATE, so it is handled at every gate `suspended` is, plus stronger: the web
    READ/auth gate resolves through `user_org_directory()` which filters it (→ 404, no per-page change); and the

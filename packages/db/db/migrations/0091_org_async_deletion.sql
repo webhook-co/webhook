@@ -189,13 +189,16 @@ create function user_org_directory()
   $$;
 grant execute on function user_org_directory() to webhook_app;
 
--- Any org left in `deleting` can't stay in a status the restored 2-state CHECK forbids. REVERT it to `active`
--- (deleting_at cleared; suspension metadata was already cleared on the deleting transition, so this satisfies
--- the restored orgs_suspension_coherent). Deliberately NOT `delete from orgs` — that would re-introduce the
--- unbounded synchronous cascade the reaper exists to avoid, and a timeout mid-rollback would leave the schema
--- half-reverted. Reverting is non-destructive and cheap. (In practice there are none: the feature ships inert;
--- its endpoints/credentials were revoked, so a reverted org is inert until an operator restores it.)
-update orgs set status = 'active', deleting_at = null where status = 'deleting';
+-- Any org left in `deleting` can't stay in a status the restored 2-state CHECK forbids. Revert it to
+-- `suspended` (NOT `active`): requestOrgDeletion already soft-deleted its endpoints and revoked its
+-- credentials, so an `active` org would reappear in every owner's directory looking live while silently
+-- rejecting all traffic and keys — with no marker why. `suspended` routes it to the read-only /suspended
+-- screen instead, an honest signal that an operator must restore it. Deliberately NOT `delete from orgs`
+-- (that re-introduces the unbounded synchronous cascade the reaper exists to avoid — a timeout mid-rollback
+-- would leave the schema half-reverted). Non-destructive. (In practice there are none: the feature ships inert.)
+update orgs
+   set status = 'suspended', suspended_reason = 'deletion_rolled_back', suspended_at = now(), deleting_at = null
+ where status = 'deleting';
 
 alter table orgs drop constraint orgs_lifecycle_coherent;
 alter table orgs add constraint orgs_suspension_coherent check (

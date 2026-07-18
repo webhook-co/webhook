@@ -822,13 +822,20 @@ export async function advancePurgeJob(
  * for the reaper. Idempotent: a second request on an already-`deleting` org is a no-op that returns the
  * original `deletingAt` without re-auditing. Throws OrgNotFoundError if the org does not exist.
  *
+ * It also revokes the org's credentials (grants + keys) in the DB and RETURNS the revoked key hashes.
+ * IMPORTANT — the CALLER (a web action with the KV_AUTHZ binding) MUST then evict those hashes from the
+ * credential cache via evictRevokedKeyHashes, exactly as removeMemberAction does: the DB stamp alone lets a
+ * cached principal keep authenticating for the ~5-min KV TTL. A DB function cannot touch KV, so this is the
+ * activation slice's responsibility when it wires the caller. (Endpoint ingest quiescing here relies on the
+ * KV TTL self-heal per ADR-0015, matching the existing endpoint-delete contract.)
+ *
  * AUTHZ is the caller's responsibility (verify owner via isOrgOwner) — as with deleteOrgWithAudit.
  */
 export async function requestOrgDeletion(
   app: Sql,
   input: { orgId: string; actor: AuditActorInput },
   auditKey: CryptoKey,
-): Promise<{ orgId: string; deletingAt: string }> {
+): Promise<{ orgId: string; deletingAt: string; revokedKeyHashes: Buffer[] }> {
   return withTenant(app, input.orgId, async (tx) => {
     // Transition active|suspended -> deleting, clearing suspension metadata (the lifecycle coherence check
     // forbids carrying it into `deleting`) AND the free-org-cap management columns (grace/reminded/keep) — a
@@ -847,7 +854,8 @@ export async function requestOrgDeletion(
       const [existing] = await tx<{ deletingAt: string | null }[]>`
         select deleting_at::text as "deletingAt" from orgs where id = ${input.orgId}`;
       if (!existing) throw new OrgNotFoundError(input.orgId);
-      return { orgId: input.orgId, deletingAt: existing.deletingAt! };
+      // Already deleting — its credentials were revoked on the first request; nothing new to evict.
+      return { orgId: input.orgId, deletingAt: existing.deletingAt!, revokedKeyHashes: [] };
     }
 
     // Quiesce INGEST immediately: soft-delete the org's endpoints. The ingest cold-lookup already 404s on
@@ -856,19 +864,27 @@ export async function requestOrgDeletion(
     // (those are the reaper's bounded job). The eventual `delete from orgs` hard-deletes the endpoint rows.
     await tx`update endpoints set deleted_at = now() where org_id = ${input.orgId} and deleted_at is null`;
 
-    // Revoke ALL CREDENTIALS immediately (mirrors removeMember): the synchronous deleteOrgWithAudit cascaded
-    // both api_keys and auth_grant away with the org row; the async mark leaves the org row alive until the
-    // reaper finalizes, so a live credential would keep authenticating for the whole reaper window. Revoke the
-    // api_keys (the cold lookup rejects `revoked_at is not null`) AND the OAuth grants (status='revoked') —
-    // otherwise a still-active refresh token would just re-mint a fresh, unrevoked api_key. Both are bounded
-    // (a handful per org). Web sessions need no action: a deleting org is absent from user_org_directory().
+    // Revoke ALL of the org's credentials immediately, mirroring removeMember EXACTLY (the sync
+    // deleteOrgWithAudit cascaded api_keys + auth_grant away with the org row; the async mark leaves them
+    // alive until the reaper, so a live credential would keep authenticating for the whole reaper window).
+    // ORDER IS LOAD-BEARING: revoke GRANTS FIRST — the UPDATE takes the auth_grant row locks
+    // mintKeyForGrant's `FOR UPDATE` contends on, so a concurrent refresh either already committed its key
+    // (the sweep below catches it) or blocks then refuses on the now-revoked grant. Sweeping keys first would
+    // let a racing mint slip an unrevoked key past the sweep that authenticates forever (the cold lookup
+    // checks only `revoked_at is null`, never grant status). A `for update` on ALL the org's grants is the
+    // belt-and-braces for grants the UPDATE's `status <> 'revoked'` filter skipped.
     const revokedBy = input.actor.kind === "user" ? input.actor.id : null;
-    await tx`update api_keys set revoked_at = now() where org_id = ${input.orgId} and revoked_at is null`;
     await tx`
       update auth_grant
          set status = 'revoked', revoked_by = ${revokedBy}, revoked_at = now(),
              revocation_reason = 'org_deletion_requested'
        where org_id = ${input.orgId} and status <> 'revoked'`;
+    await tx`select id from auth_grant where org_id = ${input.orgId} for update`;
+    const keyRows = await tx<{ key_hash: Buffer }[]>`
+      update api_keys set revoked_at = now(), updated_at = now()
+       where org_id = ${input.orgId} and revoked_at is null
+      returning key_hash`;
+    const revokedKeyHashes = keyRows.map((r) => Buffer.from(r.key_hash));
 
     // Close out the tamper-evident chain (this is where the advisory lock is taken — held only through this
     // small write + commit). audit_log has no FK to orgs (0051), so the row survives the eventual reap. The
@@ -883,7 +899,7 @@ export async function requestOrgDeletion(
     // Enqueue the durable R2 payload purge + capture any live Stripe cancellation (shared with the
     // synchronous deleteOrgWithAudit — see enqueueOrgDeletionSideEffects).
     await enqueueOrgDeletionSideEffects(tx, input.orgId, input.actor);
-    return { orgId: input.orgId, deletingAt: marked.deletingAt };
+    return { orgId: input.orgId, deletingAt: marked.deletingAt, revokedKeyHashes };
   });
 }
 
