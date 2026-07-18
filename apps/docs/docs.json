@@ -145,6 +145,16 @@
         ]
       },
       {
+        "tab": "Help",
+        "groups": [
+          {
+            "group": "Help center",
+            "icon": "life-ring",
+            "pages": ["help/overview"]
+          }
+        ]
+      },
+      {
         "tab": "Changelog",
         "pages": ["changelog"]
       }

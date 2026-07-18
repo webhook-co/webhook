@@ -32,7 +32,8 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { pathToFileURL } from "node:url";
+
+import { IGNORED_DIRS, isMain, walkDocs } from "./lib/docs-lib.mjs";
 
 const ROOT = process.cwd();
 
@@ -41,9 +42,15 @@ const ROOT = process.cwd();
 // apps/web is in scope because the BAA claim was repeated INSIDE the authenticated product.
 const SCANNED = ["apps/www/src", "apps/auth/src", "apps/web/src", "packages/ui/src"];
 
+// The knowledge base (apps/docs) is a user-facing surface too — the same SLA/cert/SSO/BAA boasts can
+// land in a doc as easily as in a marketing page, and until now nothing scanned it. Docs are stripped
+// by scanMdx (code fences + MDX/HTML comments), not by the JS stripper. Both .mdx and .md count —
+// the sibling docs-nav-guard treats .md as a page, so the honesty scan must not skip it (walkDocs
+// covers both, and scans snippets too: a boast in a reused fragment still ships).
+const SCANNED_MDX = ["apps/docs"];
+
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
-const IGNORED_DIRS = new Set(["node_modules", "dist", "build", ".next", "coverage", "out"]);
 
 /**
  * Each rule matches the SHAPE of an unbacked boast. The `why` is printed on failure so the next
@@ -260,12 +267,87 @@ export function normalize(src) {
 }
 
 /**
- * The pure core, run over a WHOLE FILE — the same way production runs it. (The previous test suite
- * exercised a per-line helper with a defaulted context argument, which is to say: it tested a code
- * path the scanner never took. Every denial test passed against a window production doesn't use.)
+ * Blank out MDX code and comments while PRESERVING byte offsets (spaces for content, newlines kept),
+ * so line reporting still maps. MDX — not JavaScript — is what the knowledge base is written in, so
+ * this is deliberately NOT `stripComments`: prose is full of apostrophes and quotes ("we're",
+ * "don't", a quoted phrase) that a JS string-literal scanner would mis-read, and code fences hold
+ * example payloads whose numbers must never be mistaken for a boast.
+ *
+ * Removed, in order: fenced code blocks (``` or ~~~, 3+, through their closing fence), then MDX
+ * expression comments `{/* *\/}`, HTML comments `<!-- -->`, and inline code spans. Fences go first so
+ * a stray backtick or brace inside a code sample can't be re-interpreted afterwards. An UNCLOSED
+ * fence blanks to end-of-file — the conservative choice: it can only hide a claim (a false negative
+ * a reviewer still sees in the diff), never invent one.
  */
-export function scanSource(src, file = "x.tsx") {
-  const stripped = stripComments(src);
+export function stripMdx(src) {
+  const out = src.split("");
+  const blank = (start, end) => {
+    for (let i = start; i < end && i < out.length; i++) if (out[i] !== "\n") out[i] = " ";
+  };
+
+  // 1) Fenced code blocks — only CLOSED pairs are blanked. An UNCLOSED fence (a mistyped or omitted
+  // closing ```) is left intact and scanned. This is the safe direction for an honesty guard: the
+  // earlier "blank to end-of-file" behaviour meant one malformed fence silently stripped — and thus
+  // hid from the scanner — every claim below it ("99.9% uptime SLA", "SOC 2 certified"), the exact
+  // boast SCANNED_MDX exists to catch. Erring toward over-scanning risks a false positive (CI fails,
+  // the author fences the block); erring toward blank-to-EOF risks a false negative (the claim ships).
+  const FENCE_OPEN = /^(\s*)(`{3,}|~{3,})(.*)$/;
+  let lineStart = 0;
+  let openAt = -1; // byte offset where the open fence line starts, or -1 when not in a fence
+  let fence = null; // { char, len }
+  while (lineStart <= src.length) {
+    let lineEnd = src.indexOf("\n", lineStart);
+    if (lineEnd === -1) lineEnd = src.length;
+    const line = src.slice(lineStart, lineEnd);
+    if (!fence) {
+      const m = FENCE_OPEN.exec(line);
+      if (m) {
+        fence = { char: m[2][0], len: m[2].length };
+        openAt = lineStart;
+      }
+    } else {
+      const closeRe = new RegExp(`^\\s*${fence.char}{${fence.len},}\\s*$`);
+      if (closeRe.test(line)) {
+        blank(openAt, lineEnd); // blank the whole block, open and close fences included
+        fence = null;
+        openAt = -1;
+      }
+    }
+    if (lineEnd === src.length) break;
+    lineStart = lineEnd + 1;
+  }
+  // Unclosed fence at EOF: deliberately NOT blanked — leave it scannable.
+
+  // 2..4) Comments and inline code, matched over the fence-blanked text so nothing inside a fence
+  // can match. Double-backtick spans before single so `` `x` `` isn't split.
+  const stripPattern = (re) => {
+    const text = out.join("");
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      blank(m.index, m.index + m[0].length);
+    }
+  };
+  stripPattern(/\{\/\*[\s\S]*?\*\/\}/g); // {/* MDX expression comment */}
+  stripPattern(/<!--[\s\S]*?-->/g); // <!-- HTML comment -->
+  stripPattern(/``[^`\n]+``/g); // ``inline code``
+  stripPattern(/`[^`\n]+`/g); // `inline code`
+
+  return out.join("");
+}
+
+/**
+ * The pure core: given source ALREADY stripped of its comments/code, find every claim. Runs over a
+ * WHOLE FILE — the same way production runs it. (The previous test suite exercised a per-line helper
+ * with a defaulted context argument, which is to say: it tested a code path the scanner never took.
+ * Every denial test passed against a window production doesn't use.) `scanSource` and `scanMdx` share
+ * this so the rules and clause-scoped denial are identical across TSX and MDX.
+ */
+export function scanStripped(stripped, src, file) {
   const { text, map } = normalize(stripped);
   const lineAt = (srcOffset) => {
     let n = 1;
@@ -309,23 +391,29 @@ export function scanSource(src, file = "x.tsx") {
   return hits.sort((a, b) => a.line - b.line);
 }
 
-async function* walk(dir) {
+/** Scan a JS/TS/TSX source file: strip JS comments, then run the shared core. */
+export function scanSource(src, file = "x.tsx") {
+  return scanStripped(stripComments(src), src, file);
+}
+
+/** Scan an MDX doc (apps/docs): strip MDX code + comments, then run the SAME rules as scanSource. */
+export function scanMdx(src, file = "x.mdx") {
+  return scanStripped(stripMdx(src), src, file);
+}
+
+async function* walk(dir, match = SOURCE_FILE) {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (IGNORED_DIRS.has(entry.name)) continue;
-      yield* walk(join(dir, entry.name));
-    } else if (SOURCE_FILE.test(entry.name) && !TEST_FILE.test(entry.name)) {
+      yield* walk(join(dir, entry.name), match);
+    } else if (match.test(entry.name) && !TEST_FILE.test(entry.name)) {
       yield join(dir, entry.name);
     }
   }
 }
 
-function isMain() {
-  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-}
-
-if (isMain()) {
+if (isMain(import.meta.url)) {
   const violations = [];
   let total = 0;
 
@@ -346,6 +434,27 @@ if (isMain()) {
     }
     if (seen === 0) {
       console.error(`✗ scanned 0 files in ${tree} — the tree moved. Refusing to pass vacuously.`);
+      process.exit(1);
+    }
+    total += seen;
+  }
+
+  // Same sweep, same per-tree floor, over the docs (.mdx + .md) — using scanMdx instead of scanSource.
+  for (const tree of SCANNED_MDX) {
+    let seen = 0;
+    try {
+      for await (const file of walkDocs(join(ROOT, tree))) {
+        seen++;
+        violations.push(...scanMdx(await readFile(file, "utf8"), relative(ROOT, file)));
+      }
+    } catch (err) {
+      console.error(`✗ cannot scan ${tree}: ${err.message}`);
+      process.exit(1);
+    }
+    if (seen === 0) {
+      console.error(
+        `✗ scanned 0 doc files in ${tree} — the tree moved. Refusing to pass vacuously.`,
+      );
       process.exit(1);
     }
     total += seen;
