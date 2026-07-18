@@ -156,3 +156,38 @@ BENCH_URL=https://webhook-bench.<acct>.workers.dev BENCH_VARIANTS=R COLD_VARIANT
 # tear down: wrangler delete; wrangler hyperdrive delete <id>; empty + delete the R2 bucket;
 #            delete the Neon branch.
 ```
+
+---
+
+# Variant I — the FULL handleIngest orchestration (S6 OFF baseline)
+
+Variants A–D measure the insert; **R** adds the R2 PUT in front. Neither exercises the in-isolate
+compute that also sits on the ACK path: `readCappedBody` (the streamed body read), `deriveDedup`
+(SHA-256), and `payloadR2Key` (SHA-256). **Variant I closes that gap** — it routes the real
+`handleIngest` end to end with faked `resolve`/`verify` (no KV/KMS latency) but the real read + both
+hashes + R2 PUT + `ingest_event` insert. `dedupConfig` is OFF, so every request mints a `unique:<uuid>`
+dedup key and is a real INSERT, never an ON-CONFLICT no-op.
+
+**Why it exists:** S6 (OpenTelemetry) adds per-step timings (Slice 2) and Analytics-Engine metrics
+(Slice 3) on the ingest hot path. The founder's bar is "measure, don't assume" no p99 regression — and
+the pre-S6 bench measured only R2+insert, so an OFF-vs-ON comparison on it would miss the orchestration
+the instrumentation actually wraps. Variant I is the **OFF baseline**: deploy the engine with the
+Slice-2/3 instrumentation compiled out (or flag-off), record variant I's p99; then ON; the delta must
+stay inside I's own run-to-run noise band. The instrumentation added is `performance.now()` calls +
+one `writeDataPoint` — expected to be unmeasurable against the ~250–850 ms network-bound path, but this
+is the harness that proves it rather than asserts it.
+
+## Running it (numbers pending — requires the deployed bench Worker + Neon branch)
+
+```sh
+# Steps 1–3 as in the R run (Neon branch + Hyperdrive + R2 binding + `wrangler deploy -c wrangler.bench.jsonc`), then:
+BENCH_URL=https://webhook-bench.<acct>.workers.dev BENCH_VARIANTS=I COLD_VARIANTS=I R_SIZE=5120 \
+  node apps/engine/bench/driver.mjs
+# The reported worker-internal `totalMs` p99 is the full-orchestration ACK budget (DB + R2 splits shown).
+# tear down as in the R run.
+```
+
+The variant + its worker route are unit-pinned (`apps/engine/test/bench-variant-ingest.test.ts`: it
+routes through `handleIngest` to a real R2 put + `ingest_event` insert), so a load run measures the whole
+ACK budget, not a shortcut. The load run itself is a deploy-gated step (a background agent can't deploy
+the bench Worker) — run it to fill in the OFF baseline before enabling Slice-2/3 on the engine.

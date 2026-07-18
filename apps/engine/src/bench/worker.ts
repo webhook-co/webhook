@@ -1,6 +1,13 @@
 import { createClient } from "@webhook-co/db";
 
-import { VARIANT_FNS, VARIANTS, variantR, type BenchInsert, type Variant } from "./variants";
+import {
+  VARIANT_FNS,
+  VARIANTS,
+  variantI,
+  variantR,
+  type BenchInsert,
+  type Variant,
+} from "./variants";
 
 // The p99 ingest benchmark Worker. A throwaway, separately-deployed Worker
 // (wrangler.bench.jsonc) that reuses the production-shaped Hyperdrive config (query caching OFF,
@@ -27,17 +34,20 @@ const MAX_BODY_BYTES = 1_000_000;
 export default {
   async fetch(request: Request, env: BenchEnv): Promise<Response> {
     const url = new URL(request.url);
-    // A-D run the DB-insert variants; R adds the R2 PUT in front (durable-before-ACK).
-    const variantRaw = /^\/run\/([A-DR])$/.exec(url.pathname)?.[1];
+    // A-D run the DB-insert variants; R adds the R2 PUT in front (durable-before-ACK); I runs the FULL
+    // handleIngest orchestration (readCappedBody + deriveDedup + payloadR2Key + R2 PUT + insert).
+    const variantRaw = /^\/run\/([A-DRI])$/.exec(url.pathname)?.[1];
     if (variantRaw === undefined) {
       return new Response("not found", { status: 404 });
     }
 
-    // Variant R sweeps a realistic body size (?size=, default 5 KB ~ the PRD avg payload); the
+    // Variants R and I sweep a realistic body size (?size=, default 5 KB ~ the PRD avg payload); the
     // DB-only variants keep the original small body so their numbers stay comparable to WS-E.
     const sizeParam = Number.parseInt(url.searchParams.get("size") ?? "5120", 10);
     const bodyBytes =
-      variantRaw === "R" ? Math.min(Math.max(sizeParam || 5120, 1), MAX_BODY_BYTES) : 128;
+      variantRaw === "R" || variantRaw === "I"
+        ? Math.min(Math.max(sizeParam || 5120, 1), MAX_BODY_BYTES)
+        : 128;
 
     // A fresh id per request → a unique dedup_key → a real INSERT (not an ON CONFLICT dedup no-op).
     const id = crypto.randomUUID();
@@ -59,9 +69,11 @@ export default {
       const result =
         variantRaw === "R"
           ? await variantR(sql, env.R2, payload)
-          : isVariant(variantRaw)
-            ? await VARIANT_FNS[variantRaw](sql, payload)
-            : null;
+          : variantRaw === "I"
+            ? await variantI(sql, env.R2, payload)
+            : isVariant(variantRaw)
+              ? await VARIANT_FNS[variantRaw](sql, payload)
+              : null;
       if (result === null) return new Response("not found", { status: 404 });
       return Response.json({
         variant: variantRaw,
