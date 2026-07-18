@@ -23,9 +23,14 @@ describe("promoSchema", () => {
     expect(result.success && result.data.theme).toBe("dark");
   });
 
-  it("accepts an explicit light theme and rejects an invalid theme", () => {
-    expect(promoSchema.safeParse({ headline: "H", tagline: "T", theme: "light" }).success).toBe(
+  it("accepts an explicit dark theme and rejects light/invalid themes", () => {
+    // v1 is dark-only: BrandLockup (the intro scene) hardcodes data-theme="dark", so
+    // "light" must be rejected rather than silently rendering a contradictory promo.
+    expect(promoSchema.safeParse({ headline: "H", tagline: "T", theme: "dark" }).success).toBe(
       true,
+    );
+    expect(promoSchema.safeParse({ headline: "H", tagline: "T", theme: "light" }).success).toBe(
+      false,
     );
     expect(promoSchema.safeParse({ headline: "H", tagline: "T", theme: "neon" }).success).toBe(
       false,

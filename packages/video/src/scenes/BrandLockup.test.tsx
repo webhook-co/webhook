@@ -26,8 +26,11 @@ describe("BrandLockupView", () => {
     expect(mark).not.toBeNull();
   });
 
-  it("clamps opacity to the wordmark's fully-visible state once enter reaches 1", () => {
-    render(<BrandLockupView enter={1} />);
+  it("clamps opacity to the wordmark's fully-visible state once enter exceeds 1", () => {
+    // enter=1.5 is out of the interpolate() input range [0, 1]. Without
+    // extrapolateRight: "clamp" this would extrapolate past 1 (opacity 1.5); asserting
+    // it still reads "1" is what actually exercises the clamp option.
+    render(<BrandLockupView enter={1.5} />);
     const wordmark = screen.getByText(/webhook/).closest("[style]") as HTMLElement | null;
     expect(wordmark).not.toBeNull();
     expect(wordmark?.style.opacity).toBe("1");
