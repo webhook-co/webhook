@@ -46,6 +46,8 @@ export * from "./kms/aws";
 export * from "./kms/lru";
 export * from "./secret-store";
 export * from "./redaction";
+export * from "./telemetry-safety";
+export * from "./telemetry-catalog";
 export * from "./metering";
 export * from "./secrets";
 export * from "./ssrf";

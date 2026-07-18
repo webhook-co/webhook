@@ -1,0 +1,54 @@
+{
+  "$comment": "The bounded metric catalog (ADR-0125). Single source of truth: the runtime imports it (telemetry-catalog.ts) and the CI guard (scripts/telemetry-label-guard.mjs) JSON-parses it. Every metric's labels MUST be a subset of labelAllowlist, and NO label key may be id-shaped (tenant/org/endpoint/event/url/...) — that is what keeps metric cardinality, and cost, bounded independent of tenant count. Slice 3 wires emission to these names; this file is the contract.",
+  "labelAllowlist": [
+    "outcome",
+    "method",
+    "verified",
+    "status_class",
+    "attempt_bucket",
+    "result",
+    "job"
+  ],
+  "metrics": {
+    "ingest.requests": {
+      "kind": "counter",
+      "help": "Ingest requests by outcome (rate + errors).",
+      "labels": ["outcome", "method", "verified"]
+    },
+    "ingest.duration_ms": {
+      "kind": "distribution",
+      "help": "Worker-internal ingest ACK-budget duration.",
+      "labels": ["outcome"]
+    },
+    "delivery.attempts": {
+      "kind": "counter",
+      "help": "Outbound delivery attempts by response class and attempt bucket.",
+      "labels": ["status_class", "attempt_bucket"]
+    },
+    "delivery.duration_ms": {
+      "kind": "distribution",
+      "help": "Outbound delivery attempt duration by response class.",
+      "labels": ["status_class"]
+    },
+    "delivery.retries": {
+      "kind": "counter",
+      "help": "Outbound delivery retries scheduled by response class.",
+      "labels": ["status_class"]
+    },
+    "delivery.backlog": {
+      "kind": "gauge",
+      "help": "Due-but-undelivered backlog (DO-alarm saturation).",
+      "labels": []
+    },
+    "cron.runs": {
+      "kind": "counter",
+      "help": "Scheduled cron/job runs by job and result.",
+      "labels": ["job", "result"]
+    },
+    "cron.duration_ms": {
+      "kind": "distribution",
+      "help": "Scheduled cron/job duration by job.",
+      "labels": ["job"]
+    }
+  }
+}
