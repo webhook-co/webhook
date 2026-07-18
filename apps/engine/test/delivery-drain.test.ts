@@ -18,7 +18,7 @@ function due(over: Partial<DueDelivery> = {}): DueDelivery {
   return {
     id: over.id ?? "del_1",
     attempt: over.attempt ?? 1,
-    eventId: "ev_1",
+    eventId: over.eventId ?? "ev_1",
     endpointId: "ep_1",
     payloadR2Key: "org/org_x/ep/ep_1/" + "a".repeat(64),
     headers: [],
@@ -58,6 +58,8 @@ function deps(
   blockedRec: string[];
   blockedReasons: [string, string | null][];
   delivers: string[];
+  logs: { event: string; fields: Record<string, unknown> }[];
+  metrics: { name: string; labels: Record<string, string>; value?: number }[];
 } {
   const delivered: [string, number][] = [];
   const retried: [string, number][] = [];
@@ -65,6 +67,8 @@ function deps(
   const blockedRec: string[] = [];
   const blockedReasons: [string, string | null][] = [];
   const delivers: string[] = [];
+  const logs: { event: string; fields: Record<string, unknown> }[] = [];
+  const metrics: { name: string; labels: Record<string, string>; value?: number }[] = [];
   return {
     listDue: async () => list,
     signingSecrets: async () => [],
@@ -81,12 +85,16 @@ function deps(
       blockedReasons.push([d.id, error]);
     },
     now: () => NOW,
+    log: (event, fields) => void logs.push({ event, fields }),
+    metric: (name, labels, value) => void metrics.push({ name, labels, value }),
     delivered,
     retried,
     dead,
     blockedRec,
     blockedReasons,
     delivers,
+    logs,
+    metrics,
   };
 }
 
@@ -353,5 +361,82 @@ describe("buildDeliverArgs — stable webhook-id + signing gate", () => {
     });
     expect(args.signing!.timestamp).toBe(5); // floor(5000ms / 1000) = 5s
     expect(args.signing!.secrets).toBe(sealed);
+  });
+});
+
+describe("runDeliveryDrain — received→delivered correlation log + RED metrics (Slice 3.5)", () => {
+  it("a delivered attempt logs delivery.attempt{eventId, delivered} + emits delivery.attempts{2xx,1} + duration", async () => {
+    const d = deps([due({ id: "a", attempt: 1, eventId: "ev_42" })], () => ok(200));
+    await runDeliveryDrain(d);
+    const log = d.logs.find((l) => l.event === "delivery.attempt");
+    expect(log?.fields).toMatchObject({
+      eventId: "ev_42",
+      deliveryId: "a",
+      attempt: 1,
+      outcome: "delivered",
+      statusCode: 200,
+    });
+    expect(d.metrics.find((m) => m.name === "delivery.attempts")?.labels).toEqual({
+      status_class: "2xx",
+      attempt_bucket: "1",
+    });
+    expect(d.metrics.find((m) => m.name === "delivery.duration_ms")?.labels).toEqual({
+      status_class: "2xx",
+    });
+    expect(d.metrics.find((m) => m.name === "delivery.duration_ms")?.value).toBe(1); // ok() latencyMs = 1
+  });
+
+  it("a dead-letter (attempt 8, 500) logs outcome=dead + delivery.attempts{5xx,4-8}, counts NO retry", async () => {
+    const d = deps([due({ id: "a", attempt: 8 })], () => fail(500));
+    await runDeliveryDrain(d);
+    expect(d.logs.find((l) => l.event === "delivery.attempt")?.fields.outcome).toBe("dead");
+    const attempts = d.metrics.find((m) => m.name === "delivery.attempts");
+    expect(attempts?.labels).toEqual({ status_class: "5xx", attempt_bucket: "4-8" });
+    expect(d.metrics.some((m) => m.name === "delivery.retries")).toBe(false); // dead is NOT a retry
+  });
+
+  it("a retryable 503 emits delivery.retries{5xx} + delivery.attempts{5xx}, log outcome=retry", async () => {
+    const d = deps([due({ id: "a", attempt: 1 })], () => fail(503));
+    await runDeliveryDrain(d);
+    expect(d.logs.find((l) => l.event === "delivery.attempt")?.fields.outcome).toBe("retry");
+    expect(d.metrics.find((m) => m.name === "delivery.attempts")?.labels.status_class).toBe("5xx");
+    expect(
+      d.metrics.some((m) => m.name === "delivery.retries" && m.labels.status_class === "5xx"),
+    ).toBe(true);
+  });
+
+  it("an SSRF block emits delivery.attempts{blocked} and counts NO retry", async () => {
+    const d = deps([due({ id: "a" })], () => blocked());
+    await runDeliveryDrain(d);
+    expect(d.logs.find((l) => l.event === "delivery.attempt")?.fields.outcome).toBe("blocked");
+    expect(d.metrics.find((m) => m.name === "delivery.attempts")?.labels.status_class).toBe(
+      "blocked",
+    );
+    expect(d.metrics.some((m) => m.name === "delivery.retries")).toBe(false);
+  });
+
+  it("a non-deliverable row is refused (no POST) — delivery.attempts{refused}, no duration metric", async () => {
+    const d = deps([due({ id: "a", deliverable: false })], () => ok());
+    await runDeliveryDrain(d);
+    expect(d.logs.find((l) => l.event === "delivery.attempt")?.fields.outcome).toBe("refused");
+    expect(d.metrics.find((m) => m.name === "delivery.attempts")?.labels.status_class).toBe(
+      "refused",
+    );
+    expect(d.metrics.some((m) => m.name === "delivery.duration_ms")).toBe(false); // no POST → no latency
+  });
+
+  it("attempt 8 buckets into '4-8' (never the raw, unbounded count)", async () => {
+    const d = deps([due({ id: "a", attempt: 8 })], () => ok());
+    await runDeliveryDrain(d);
+    expect(d.metrics.find((m) => m.name === "delivery.attempts")?.labels.attempt_bucket).toBe(
+      "4-8",
+    );
+  });
+
+  it("no delivery metric label is an id/uuid (bounded enums only)", async () => {
+    const d = deps([due({ id: "a" })], () => ok());
+    await runDeliveryDrain(d);
+    for (const m of d.metrics)
+      for (const v of Object.values(m.labels)) expect(v).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
   });
 });

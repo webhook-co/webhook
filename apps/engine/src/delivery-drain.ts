@@ -8,9 +8,29 @@ import {
   nextRetryDelayMs,
   type DeliverArgs,
   type DeliverResult,
+  type MetricName,
   type SealedSigningSecret,
 } from "@webhook-co/shared";
 import type { DueDelivery } from "@webhook-co/db";
+
+/** A drain outcome, for the correlation log + the delivery.attempts status_class. */
+type DeliveryOutcome = "delivered" | "blocked" | "retry" | "dead" | "refused";
+
+/** Bounded status_class for the delivery RED metrics — the HTTP class, or the non-HTTP outcome. */
+function deliveryStatusClass(outcome: DeliveryOutcome, statusCode: number | null): string {
+  if (outcome === "blocked") return "blocked"; // SSRF refusal
+  if (outcome === "refused") return "refused"; // pre-delivery terminal (deleted source / verification reject)
+  if (statusCode === null) return "error"; // network / timeout — no HTTP status
+  if (statusCode >= 200 && statusCode < 300) return "2xx";
+  if (statusCode >= 300 && statusCode < 400) return "3xx";
+  if (statusCode >= 400 && statusCode < 500) return "4xx";
+  return "5xx";
+}
+
+/** Bounded attempt bucket (1 / 2 / 3 / 4-8) — never the raw unbounded count. */
+function attemptBucket(attempt: number): string {
+  return attempt <= 3 ? String(attempt) : "4-8";
+}
 
 export interface DrainDeps {
   /** The destination's due deliveries, FIFO (oldest first). */
@@ -54,6 +74,10 @@ export interface DrainDeps {
     durationMs: number | null,
   ) => Promise<void>;
   readonly now: () => number;
+  /** 100% structured log per attempt, keyed by the event id — the received→delivered correlation (Slice 3.5). */
+  readonly log: (event: string, fields: Record<string, unknown>) => void;
+  /** Bounded RED-metric sink (Analytics Engine). Best-effort/optional; labels are bounded enums only. */
+  readonly metric?: (name: MetricName, labels: Record<string, string>, value?: number) => void;
 }
 
 /**
@@ -69,6 +93,31 @@ export async function runDeliveryDrain(deps: DrainDeps): Promise<void> {
     deps.signingSecrets(),
     deps.ordered(),
   ]);
+  // 100% correlation log (keyed by eventId — received→delivered) + bounded RED metrics per attempt
+  // (Slice 3.5). Best-effort: never gates a lifecycle write; labels are bounded enums (no id/URL).
+  const observe = (
+    d: DueDelivery,
+    outcome: DeliveryOutcome,
+    statusCode: number | null,
+    durationMs: number | null,
+  ): void => {
+    deps.log("delivery.attempt", {
+      eventId: d.eventId,
+      deliveryId: d.id,
+      attempt: d.attempt,
+      outcome,
+      statusCode,
+      durationMs,
+    });
+    const sc = deliveryStatusClass(outcome, statusCode);
+    deps.metric?.("delivery.attempts", {
+      status_class: sc,
+      attempt_bucket: attemptBucket(d.attempt),
+    });
+    if (durationMs !== null)
+      deps.metric?.("delivery.duration_ms", { status_class: sc }, durationMs);
+    if (outcome === "retry") deps.metric?.("delivery.retries", { status_class: sc });
+  };
   for (const d of due) {
     // SECURITY GATE (S8-remainder Slice 3 / ADR-0103), defense in depth. A `failed`-verification event (a
     // signature WAS checked and REJECTED — forged/tampered) is never forwardable. The enqueue gate already
@@ -88,21 +137,25 @@ export async function runDeliveryDrain(deps: DrainDeps): Promise<void> {
           : "verification failed: source signature was checked and rejected",
         null, // no POST was made, so there is no latency to record
       );
+      observe(d, "refused", null, null);
       continue;
     }
     const result = await deps.deliver(d, secrets);
     if (result.outcome === "delivered") {
       await deps.recordDelivered(d, result.status ?? 0, result.latencyMs);
+      observe(d, "delivered", result.status ?? 0, result.latencyMs);
       continue;
     }
     if (result.outcome === "blocked") {
       await deps.recordBlocked(d, result.status, result.error, result.latencyMs);
+      observe(d, "blocked", result.status, result.latencyMs);
       continue;
     }
     // failed = retryable: schedule the next attempt, or dead-letter once the schedule is exhausted.
     const delay = nextRetryDelayMs(d.attempt);
     if (delay === null) {
       await deps.recordDead(d, result.status, result.error, result.latencyMs);
+      observe(d, "dead", result.status, result.latencyMs);
       continue;
     }
     await deps.recordRetry(
@@ -112,6 +165,7 @@ export async function runDeliveryDrain(deps: DrainDeps): Promise<void> {
       result.error,
       result.latencyMs,
     );
+    observe(d, "retry", result.status, result.latencyMs);
     if (ordered) break; // strict-FIFO: a retrying head blocks newer deliveries this drain
   }
 }
@@ -154,6 +208,10 @@ export interface DrainIo {
     durationMs: number | null;
   }) => Promise<void>;
   readonly now: () => number;
+  /** Injected log sink (the DO wires console.log). */
+  readonly log: (event: string, fields: Record<string, unknown>) => void;
+  /** Injected bounded RED-metric sink (the DO wires emitMetric(env.METRICS)); optional/best-effort. */
+  readonly metric?: (name: MetricName, labels: Record<string, string>, value?: number) => void;
 }
 
 /**
@@ -202,6 +260,8 @@ export function makeDrainDeps(io: DrainIo): DrainDeps {
         durationMs,
       }),
     now: io.now,
+    log: io.log,
+    metric: io.metric,
   };
 }
 
