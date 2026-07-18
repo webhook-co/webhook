@@ -1,0 +1,56 @@
+---
+title: "Roles & permissions"
+sidebarTitle: "Roles & permissions"
+description: "webhook.co has three roles — owner, admin, and member. What each can do, and how role changes are governed."
+icon: "user-shield"
+---
+
+Every member of an organization has one of **three roles**: **owner**, **admin**, or **member**, from
+most to least privileged. There's no separate read-only role.
+
+## What each role can do
+
+| Capability                                  | Member | Admin | Owner |
+| ------------------------------------------- | :----: | :---: | :---: |
+| Endpoints, events, deliveries, destinations |   ✓    |   ✓   |   ✓   |
+| Replay events                               |   ✓    |   ✓   |   ✓   |
+| Create, rotate, and revoke API keys         |   ✓    |   ✓   |   ✓   |
+| Invite and remove members, change roles     |        |   ✓   |   ✓   |
+| Manage billing and the plan                 |        |   ✓   |   ✓   |
+| Read the audit log                          |        |   ✓   |   ✓   |
+| Rename the organization and change its URL  |        |   ✓   |   ✓   |
+| Delete the organization                     |        |       |   ✓   |
+
+**Members** have full **operational** access — everything to do with receiving, inspecting, replaying,
+and delivering webhooks. Team, billing, and organization settings are visible to them but read-only.
+
+**Admins** add everything about running the organization: members, billing, the audit log, and the
+organization's name and URL.
+
+**Owners** can do everything an admin can, plus **delete the organization**.
+
+## How role changes are governed
+
+<Note>
+  You can only grant or change a role **up to your own** — an admin can promote someone to admin or
+  member, but only an owner can make another owner. And the **last owner** can't be demoted or
+  removed, so an organization always has an owner.
+</Note>
+
+An **API key** you create is capped at your own role: a key can never do more than the person who
+minted it. See [authentication](/authentication) for key scopes.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card
+    title="Invite & manage members"
+    icon="user-plus"
+    href="/help/organizations/invite-and-manage-members"
+  >
+    Add people and set their roles.
+  </Card>
+  <Card title="Security & your data" icon="shield-check" href="/concepts/security">
+    How organizations are isolated from each other.
+  </Card>
+</CardGroup>

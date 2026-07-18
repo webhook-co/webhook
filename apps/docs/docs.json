@@ -175,6 +175,19 @@
               "help/your-account/connected-apps",
               "help/your-account/delete-your-account"
             ]
+          },
+          {
+            "group": "Organizations & members",
+            "icon": "building",
+            "pages": [
+              "help/organizations/overview",
+              "help/organizations/organizations-and-teams",
+              "help/organizations/create-an-organization",
+              "help/organizations/invite-and-manage-members",
+              "help/organizations/roles-and-permissions",
+              "help/organizations/rename-and-url",
+              "help/organizations/delete-an-organization"
+            ]
           }
         ]
       },
