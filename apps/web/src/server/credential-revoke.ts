@@ -70,7 +70,7 @@ async function defaultDeps(): Promise<{ deps: RevokeDeps; close: () => Promise<v
 async function evictBestEffort(
   evict: (keyHash: Buffer) => Promise<void>,
   hashes: readonly Buffer[],
-  ctx: { kind: "key" | "grant" | "member"; id: string },
+  ctx: { kind: "key" | "grant" | "member" | "org"; id: string },
 ): Promise<void> {
   if (hashes.length === 0) return;
   const settled = await Promise.allSettled(hashes.map((hash) => evict(hash)));
@@ -129,7 +129,7 @@ export async function revokeGrantById(
  */
 export async function evictRevokedKeyHashes(
   hashes: readonly Buffer[],
-  ctx: { kind: "member"; id: string },
+  ctx: { kind: "member" | "org"; id: string },
 ): Promise<void> {
   if (hashes.length === 0) return;
   const { env } = await getCloudflareContext({ async: true });

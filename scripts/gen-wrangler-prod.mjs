@@ -83,6 +83,8 @@ const TOKEN = {
   // empty price/meter → disabled). An empty var is a valid wrangler var, so — unlike the optional Hyperdrive
   // bindings — these substitute in unconditionally. No price/tier figure lives here (ids/names only).
   "<BILLING_MODE>": process.env.BILLING_MODE ?? "",
+  // ASYNC_ORG_DELETION (#665) — "true" routes org deletes through the async reaper; else the sync path.
+  "<ASYNC_ORG_DELETION>": process.env.ASYNC_ORG_DELETION ?? "",
   // ORPHAN_SWEEP_DELETE (S6c-iii) — "true" enables the orphan-sweep delete; anything else = count-only.
   "<ORPHAN_SWEEP_DELETE>": process.env.ORPHAN_SWEEP_DELETE ?? "",
   "<STRIPE_METER_EVENT_NAME>": process.env.STRIPE_METER_EVENT_NAME ?? "",
@@ -147,6 +149,10 @@ const APPS = {
       // strips the @gen-optional block and the engine deploys dark until the role + Hyperdrive are
       // provisioned (which also clamps the meter-reconcile lookback — they activate together).
       "HYPERDRIVE_RETENTION_ID",
+      // #665: the async org-deletion reaper's cross-org role. Unset for now, so the overlay strips the
+      // @gen-optional block and the engine deploys dark until the role + Hyperdrive are provisioned; the
+      // reaper cron then skips.
+      "HYPERDRIVE_REAPER_ID",
       // PR2b: the free-org-cap reconciler's cross-USER role. Unset for now, so the overlay strips the
       // @gen-optional block and the engine deploys dark until the role + Hyperdrive are provisioned; the
       // reconcile cron then skips.
@@ -289,6 +295,7 @@ const APPS = {
       // FREE_EVENT_CAP (S4.3b) — the usage view shows a rowless org the cap it is enforced at; same optional
       // GH var as engine (unset → "" → uncapped). Identical across every worker rendering usage.
       "<FREE_EVENT_CAP>",
+      "<ASYNC_ORG_DELETION>",
       "<BILLING_MODE>",
       "<STRIPE_PLANS>",
       "<STRIPE_PORTAL_CONFIGURATION_ID>",

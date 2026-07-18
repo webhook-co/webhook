@@ -24,12 +24,16 @@ const requireOrgAccess = vi.fn(async () => ({
 }));
 vi.mock("./org-access", () => ({ requireOrgAccess: () => requireOrgAccess() }));
 
-const deleteOrgWithAudit = vi.fn(async () => ({ orgId: "org_1", deletedAt: "now" }));
+// The delete now routes through deleteOrRequestOrg (sync or async per the flag) — that's the seam here; the
+// flag-branching + credential eviction are covered in org-delete.test.ts.
+const deleteOrRequestOrg = vi.fn(async () => {});
+vi.mock("./org-delete", () => ({
+  deleteOrRequestOrg: (...a: unknown[]) => deleteOrRequestOrg(...a),
+}));
 // isPersonalOrg(app, orgId) — default false, so a normal org delete proceeds; the personal-org test
 // overrides it to true. It's an org-centric DB read in production; here it's the seam under test.
 const isPersonalOrg = vi.fn(async () => false);
 vi.mock("@webhook-co/db/org-lifecycle", () => ({
-  deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
   isPersonalOrg: (...a: unknown[]) => isPersonalOrg(...a),
 }));
 const renameOrg = vi.fn();
@@ -84,7 +88,7 @@ describe("deleteOrganization", () => {
       `NEXT_REDIRECT:${LOGOUT_URL}`,
     );
 
-    expect(deleteOrgWithAudit).toHaveBeenCalledOnce();
+    expect(deleteOrRequestOrg).toHaveBeenCalledOnce();
     expect(cookieStore.delete).toHaveBeenCalledWith({
       name: SESSION_COOKIE,
       ...sessionCookieOptions(),
@@ -96,7 +100,7 @@ describe("deleteOrganization", () => {
 
   it("refuses without the typed DELETE acknowledgement, and never touches the org or the cookie", async () => {
     await expect(deleteOrganization("acme", form("nope"))).rejects.toThrow(/not confirmed/);
-    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(deleteOrRequestOrg).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
 
@@ -110,7 +114,7 @@ describe("deleteOrganization", () => {
     await expect(deleteOrganization("acme", form("DELETE"))).rejects.toThrow(
       /only an organization owner/,
     );
-    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(deleteOrRequestOrg).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
 
@@ -121,7 +125,7 @@ describe("deleteOrganization", () => {
     await expect(deleteOrganization("acme", form("DELETE"))).rejects.toThrow(
       /personal organization cannot be deleted/,
     );
-    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(deleteOrRequestOrg).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
 });

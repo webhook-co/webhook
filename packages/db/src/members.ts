@@ -153,6 +153,10 @@ async function readTargetAndCensus(
  * grant (its next refresh legitimately re-mints, narrowed to the new role), so it must take the locks
  * EXPLICITLY — otherwise a refresh that read the pre-demotion role commits a key carrying the old, higher
  * scopes and escapes the sweep entirely.
+ *
+ * The ORG-WIDE twin of this protocol lives in org-lifecycle.ts `requestOrgDeletion` (#665) — it revokes
+ * EVERY grant/key in the org, not one user's, so it can't share this helper, but it shares the same
+ * revoke/lock-grants-FIRST-then-sweep-keys invariant. Change the race protocol in one → change it in both.
  */
 async function lockUserGrants(tx: TenantTx, orgId: string, userId: string): Promise<void> {
   await tx`

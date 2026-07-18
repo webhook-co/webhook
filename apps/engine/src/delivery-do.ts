@@ -19,7 +19,7 @@ import {
   createClient,
   getActiveSigningSecrets,
   isDestinationOrdered,
-  isOrgSuspended,
+  isOrgDeliveryHeld,
   listDueDeliveries,
   markDeliveryDelivered,
   markDeliveryTerminalFailure,
@@ -139,17 +139,22 @@ export class DeliveryDO extends DurableObject<Env> {
   protected async drainOnce(orgId: string, destinationId: string): Promise<Date | null> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
-      const { due, secrets, ordered, suspended } = await withTenant(tenant, orgId, async (tx) => ({
-        due: await listDueDeliveries(tx, destinationId, MAX_PER_DRAIN),
-        secrets: await getActiveSigningSecrets(tx, destinationId),
-        ordered: await isDestinationOrdered(tx, destinationId),
-        suspended: await isOrgSuspended(tx),
-      }));
-      // A SUSPENDED org (free-org-cap overflow) holds ALL outbound delivery: return idle (null) so the DO stops
-      // re-arming and the due deliveries stay DURABLY OWED — nothing is dropped or dead-lettered. When the org
-      // is restored the DO is poked again (like enabling a destination) and drains the backlog. Checked before
-      // any POST, so a suspended org never delivers even one held event.
-      if (suspended) return null;
+      const { due, secrets, ordered, deliveryHeld } = await withTenant(
+        tenant,
+        orgId,
+        async (tx) => ({
+          due: await listDueDeliveries(tx, destinationId, MAX_PER_DRAIN),
+          secrets: await getActiveSigningSecrets(tx, destinationId),
+          ordered: await isDestinationOrdered(tx, destinationId),
+          deliveryHeld: await isOrgDeliveryHeld(tx),
+        }),
+      );
+      // A non-ACTIVE org holds ALL outbound delivery: a SUSPENDED org (free-org-cap overflow — durably owed
+      // until restored) or a DELETING org (requested for deletion, #665 — it must egress nothing more). Return
+      // idle (null) so the DO stops re-arming and the due deliveries stay durably owed — nothing is dropped or
+      // dead-lettered. A restored org is poked again and drains its backlog; a deleting org's rows are reaped.
+      // Checked before any POST, so a held org never delivers even one event.
+      if (deliveryHeld) return null;
       // The auto-disable trigger (PR3c) records a tamper-evident `replay_destination.disabled` audit row + an
       // owner-notification intent when the DEAD tally crosses the threshold. Build the audit key LAZILY (+
       // FAIL-SOFT): only a dead delivery that crosses the threshold needs it, so an all-success / below-

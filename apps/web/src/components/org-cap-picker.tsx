@@ -1,5 +1,6 @@
 "use client";
 
+import type { OrgStatus } from "@webhook-co/db";
 import { Badge, Banner, Card, CardContent, Checkbox } from "@webhook-co/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -12,7 +13,9 @@ export interface OrgCapPickerOrg {
   readonly slug: string;
   readonly name: string;
   readonly isFree: boolean;
-  readonly status: "active" | "suspended";
+  // OrgStatus includes 'deleting', but a deleting org is filtered out of user_org_directory() (0091), so one
+  // never reaches this picker; the wider type just keeps it assignable from the directory-typed source.
+  readonly status: OrgStatus;
   readonly keepRequestedAt: Date | null;
   /**
    * Did THIS user mark it? Not "did anyone". The mark lives on the org and is visible to every co-owner, but

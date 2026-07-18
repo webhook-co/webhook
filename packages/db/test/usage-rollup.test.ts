@@ -148,6 +148,25 @@ describe("runUsageRollup", () => {
     expect(await usageAt(b.orgId, dayIso(1))).toBeNull();
   });
 
+  it("skips a `deleting` org — never re-rolls usage the reaper is about to contradict (#665)", async () => {
+    const { orgId, endpointId } = await seedOrg("roll-deleting");
+    await seedEvents(orgId, endpointId, 4, 1, "del-yest"); // yesterday — would roll into a usage row
+    // Mark it deleting, as requestOrgDeletion does (coherence CHECK: deleting_at set, no suspension meta).
+    // requestOrgDeletion already WAIVED its usage; the reaper then drains its events over many hourly ticks.
+    // A rollup pass in between must NOT re-create a frozen usage snapshot from those draining events — that
+    // is exactly what would false-trip the F6 reconcile oracle. The metering roles hold no `orgs` grant, so
+    // the guard is a per-org status read under webhook_app (which the withTenant rollup already runs as).
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update orgs set status = 'deleting', deleting_at = now() where id = ${orgId}`;
+    });
+
+    await run();
+
+    // No usage row was rolled or frozen for the deleting org, though its events are still present.
+    expect(await usageAt(orgId, dayIso(1))).toBeNull();
+    expect(await usageAt(orgId, dayIso(0))).toBeNull();
+  });
+
   it("re-rolls the just-closed day so a late pre-midnight event is not lost (F2)", async () => {
     const { orgId, endpointId } = await seedOrg("roll-tail");
     await seedEvents(orgId, endpointId, 4, 1, "tail-a"); // yesterday

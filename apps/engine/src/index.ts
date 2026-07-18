@@ -2,6 +2,7 @@ import { authorizeBearer, type BearerAuthzDeps } from "@webhook-co/contract";
 import {
   advancePurgeJob,
   API_RESOURCE,
+  claimDeletingOrgs,
   claimEventPurgeJobs,
   claimPurgeJobs,
   completeEventPurgeJob,
@@ -37,9 +38,11 @@ import {
   listDestinationsWithDueDeliveries,
   looksLikeCredential,
   makeApiKeyAuthDeps,
+  finalizeReapedOrg,
   makeApiKeyLastUsedStamper,
   readAuditChainHeads,
   readSealedIngestToken,
+  reapOrgEventsChunk,
   revealIngestTokenCore,
   runUsageRollup,
   withTenant,
@@ -89,6 +92,7 @@ import { existingPayloadKeys } from "@webhook-co/db/orphan-sweep";
 import { runAnchorCron } from "./anchor-cron";
 import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
 import { parseOrphanSweepDelete, runOrphanSweep } from "./orphan-sweep-cron";
+import { runOrgReaperCron } from "./org-reaper-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
 import { isTotalRetentionFailure, runRetentionPruneCron } from "./retention-prune-cron";
@@ -170,6 +174,9 @@ export interface Env {
    *  Its presence ALSO clamps the meter-reconcile lookback strictly inside the Free window (they must
    *  activate together — see runMeteringReconcileCron + reconcileLookbackDays). */
   HYPERDRIVE_RETENTION?: Hyperdrive;
+  /** Hyperdrive config for the webhook_reaper cross-org async-deletion drain (query caching off).
+   *  Optional: absent until the reaper role + Hyperdrive are provisioned, so the reaper ships dark (#665). */
+  HYPERDRIVE_REAPER?: Hyperdrive;
   /** Hyperdrive config for the webhook_meter cross-org metering-enumeration read (query caching off). */
   HYPERDRIVE_METER: Hyperdrive;
   /** Hyperdrive config for the webhook_capreconciler cross-user free-org-cap reconcile (query caching off).
@@ -955,6 +962,14 @@ export default {
         console.log(JSON.stringify({ message: "retention prune cron failed", error: String(err) })),
       ),
     );
+    // Async org-deletion reaper (#665): drain a requested-for-deletion org's events in bounded chunks, then
+    // drop the org row — the async twin of the synchronous deleteOrgWithAudit. Dark until the reaper role +
+    // Hyperdrive are provisioned. Independent — a failure must not sink the other hourly jobs.
+    ctx.waitUntil(
+      runOrgReaperDrainCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "org reaper cron failed", error: String(err) })),
+      ),
+    );
     // R2 orphan-reconcile sweep (S6c-iii): delete R2 payload objects with NO events row (an insert that
     // failed after the durable-before-ACK PUT, or a prune that crashed before its R2 delete). Bounded per
     // tick, cursor-resumed, triple-fenced (age + shape + anti-join). Reuses the retention Hyperdrive; dark
@@ -1484,6 +1499,33 @@ async function runReconcilerCron(env: Env): Promise<void> {
         );
       },
       limit: RECONCILE_LIMIT,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+    });
+  } finally {
+    await sql.end();
+  }
+}
+
+// Async org-deletion reaper budget (#665): deleting orgs to service and event-chunks per org per tick.
+// Bounded so a large backlog never blows the Workers subrequest/CPU ceiling — the rest resumes next tick.
+const REAPER_ORG_LIMIT = 20;
+const REAPER_CHUNKS_PER_ORG = 40;
+const REAPER_CHUNK_SIZE = 1000;
+
+// Drain outstanding async org deletions: mark-deleting orgs whose tenant rows the reaper clears in chunks.
+async function runOrgReaperDrainCron(env: Env): Promise<void> {
+  if (!env.HYPERDRIVE_REAPER) return; // dark until the reaper role + Hyperdrive are provisioned
+  // A short-lived connection as webhook_reaper: its role-targeted SELECT + status-fenced DELETE on
+  // orgs/events are the sole bound. Caching off on this Hyperdrive (RLS-scoped reads).
+  const sql = createClient(env.HYPERDRIVE_REAPER.connectionString);
+  try {
+    await runOrgReaperCron({
+      claim: (n) => claimDeletingOrgs(sql, n),
+      reapChunk: (orgId) => reapOrgEventsChunk(sql, orgId, REAPER_CHUNK_SIZE),
+      finalize: (orgId) => finalizeReapedOrg(sql, orgId),
+      jobLimit: REAPER_ORG_LIMIT,
+      chunksPerJob: REAPER_CHUNKS_PER_ORG,
+      chunkSize: REAPER_CHUNK_SIZE,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
   } finally {

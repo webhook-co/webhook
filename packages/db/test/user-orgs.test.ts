@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, withUser, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { createOrgWithOwner, isOrgSuspended, listUserOrgs, readUserProfile } from "../src/orgs";
+import { createOrgWithOwner, isOrgDeliveryHeld, listUserOrgs, readUserProfile } from "../src/orgs";
 import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -125,15 +125,31 @@ describe("listUserOrgs", () => {
     const seen = (await listUserOrgs(app, uid)).find((o) => o.orgId === org);
     expect(seen).toMatchObject({ status: "suspended", suspendedReason: "free_org_cap" });
   });
+
+  it("HIDES a deleting org — user_org_directory filters status='deleting', so the read gate 404s it (#665)", async () => {
+    const uid = `u_del_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const active = await seedOrg("Active Org", uid);
+    const deleting = await seedOrg("Deleting Org", uid);
+    await withTenant(
+      app,
+      deleting,
+      (tx) => tx`update orgs set status = 'deleting', deleting_at = now() where id = ${deleting}`,
+    );
+
+    const orgIds = (await listUserOrgs(app, uid)).map((o) => o.orgId);
+    expect(orgIds).toContain(active);
+    expect(orgIds).not.toContain(deleting); // vanished from the directory the read gate resolves through
+  });
 });
 
-describe("isOrgSuspended — the outbound-delivery gate reads it under the tenant GUC", () => {
+describe("isOrgDeliveryHeld — the outbound-delivery gate reads it under the tenant GUC", () => {
   it("is false for an active org and true once suspended", async () => {
     const uid = `u_gate_${randomUUID().slice(0, 8)}`;
     await seedUser(uid);
     const org = await seedOrg("Gate Org", uid);
 
-    expect(await withTenant(app, org, (tx) => isOrgSuspended(tx))).toBe(false);
+    expect(await withTenant(app, org, (tx) => isOrgDeliveryHeld(tx))).toBe(false);
 
     await withTenant(
       app,
@@ -143,7 +159,20 @@ describe("isOrgSuspended — the outbound-delivery gate reads it under the tenan
         where id = ${org}`,
     );
 
-    expect(await withTenant(app, org, (tx) => isOrgSuspended(tx))).toBe(true);
+    expect(await withTenant(app, org, (tx) => isOrgDeliveryHeld(tx))).toBe(true);
+  });
+
+  it("is true for a DELETING org, so it egresses nothing while being reaped (#665)", async () => {
+    const uid = `u_gate_del_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const org = await seedOrg("Gate Del Org", uid);
+
+    await withTenant(
+      app,
+      org,
+      (tx) => tx`update orgs set status = 'deleting', deleting_at = now() where id = ${org}`,
+    );
+    expect(await withTenant(app, org, (tx) => isOrgDeliveryHeld(tx))).toBe(true);
   });
 });
 

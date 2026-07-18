@@ -9,12 +9,16 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import {
   advancePurgeJob,
+  claimDeletingOrgs,
   claimPurgeJobs,
   deleteOrgWithAudit,
+  finalizeReapedOrg,
   isOrgOwner,
   lastOwnerWouldOrphan,
   OrgNotFoundError,
   readOrgMembershipCensus,
+  reapOrgEventsChunk,
+  requestOrgDeletion,
 } from "../src/org-lifecycle";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -30,6 +34,7 @@ let pg: EphemeralPostgres;
 let app: Sql;
 let owner: Sql;
 let purge: Sql;
+let reaper: Sql;
 let key: CryptoKey;
 
 async function seedUser(id: string): Promise<void> {
@@ -90,6 +95,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   purge = createClient(pg.urlFor({ role: DB_ROLES.purge }));
+  reaper = createClient(pg.urlFor({ role: DB_ROLES.reaper }));
   key = await importAuditKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)));
 }, setupHookTimeoutMs());
 
@@ -97,6 +103,7 @@ afterAll(async () => {
   await app?.end();
   await owner?.end();
   await purge?.end();
+  await reaper?.end();
   await pg?.stop();
 });
 
@@ -434,5 +441,187 @@ describe("org_deletions RLS boundary (the anti-forgery gate)", () => {
         has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'UPDATE') as upd,
         has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'DELETE') as del`;
     expect(g).toEqual({ ins: true, sel: true, upd: false, del: false });
+  });
+});
+
+describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
+  it("marks the org deleting, appends the audit row + purge job, and does NOT delete the tenant rows", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-async", ownerId);
+    await seedEventsWithAttempts(org, 4);
+    // A live API key AND a live OAuth grant (for the org owner) — BOTH must be revoked at request time; the
+    // org row lives through the reaper window, so a still-active grant could re-mint a fresh key otherwise.
+    const keyId = randomUUID();
+    await withTenant(app, org, async (tx) => {
+      await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
+               values (${keyId}, ${org}, ${randomBytes(32)}, ${"whk_"}, ${"whk_x"}, ${"k"}, ${tx.json(["events:read"])})`;
+      await tx`insert into auth_grant (id, org_id, user_id, status, auth_method)
+               values (${randomUUID()}, ${org}, ${ownerId}, ${"active"}, ${"pkce_loopback"})`;
+    });
+
+    const res = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+    expect(res.orgId).toBe(org);
+    expect(res.deletingAt).toEqual(expect.any(String));
+    // The revoked key hashes are returned so the web-action caller can evict them from KV_AUTHZ.
+    expect(res.revokedKeyHashes).toHaveLength(1);
+
+    // The org is MARKED, not gone — its events + attempts are untouched (the reaper drains them later).
+    const [row] = await withTenant(
+      app,
+      org,
+      (tx) => tx<{ status: string; at: string | null }[]>`
+      select status, deleting_at::text as at from orgs where id = ${org}`,
+    );
+    expect(row.status).toBe("deleting");
+    expect(row.at).toEqual(expect.any(String));
+    expect(await countIn(org, "events")).toBe(4);
+    expect(await countIn(org, "delivery_attempts")).toBe(4);
+
+    // Ingest is quiesced: the org's endpoints are soft-deleted, so their tokens 404 (ADR-0076) — but the
+    // rows (and events) survive for the reaper.
+    const [ep] = await withTenant(
+      app,
+      org,
+      (tx) => tx<{ live: number }[]>`
+      select count(*)::int as live from endpoints where org_id = ${org} and deleted_at is null`,
+    );
+    expect(ep.live).toBe(0);
+    // Credentials are revoked: no live api_key (cold lookup rejects `revoked_at`) AND no active OAuth grant
+    // (a live grant would re-mint a fresh key via its refresh token otherwise).
+    const [cred] = await withTenant(
+      app,
+      org,
+      (tx) => tx<{ liveKeys: number; activeGrants: number }[]>`
+      select
+        (select count(*)::int from api_keys where org_id = ${org} and revoked_at is null) as "liveKeys",
+        (select count(*)::int from auth_grant where org_id = ${org} and status = 'active') as "activeGrants"`,
+    );
+    expect(cred.liveKeys).toBe(0);
+    expect(cred.activeGrants).toBe(0);
+
+    // The WORM audit chain gained org.deletion_requested (NOT org.deleted — the org still exists), and the R2
+    // purge job was enqueued.
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.map((r) => r.action)).toEqual([
+      "org.created",
+      "endpoint.created",
+      "org.deletion_requested",
+    ]);
+    expect((await verifyAuditChain(key, org, chain)).ok).toBe(true);
+    expect(await countIn(org, "org_deletions")).toBe(1);
+  });
+
+  it("waives the org's usage snapshot at request time — the metering crons see a deleted org, not drift", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-usage-waive", ownerId);
+    await seedEventsWithAttempts(org, 3);
+    // The frozen billing snapshots the metering crons read. The sync deleteOrgWithAudit cascaded `usage`
+    // away with the org row; the async mark leaves it alive for the whole reaper window. As the reaper then
+    // deletes the counted events, the F6 reconcile oracle would recount fewer events than the frozen
+    // `event_count` and false-alarm (up to `limit` MeterUsageDrift pages every pass), and meter-reporter
+    // would report a just-deleted org's usage to Stripe. So the request must drop the usage rows too (a
+    // finalized day AND an open day), matching the sync cascade — the founder's WAIVE decision.
+    await withTenant(app, org, async (tx) => {
+      await tx`insert into usage (org_id, window_start, event_count, finalized_at)
+               values (${org}, ${"2026-07-05T00:00:00Z"}, ${3}, ${"2026-07-06T02:00:00Z"})`;
+      await tx`insert into usage (org_id, window_start, event_count, finalized_at)
+               values (${org}, ${"2026-07-06T00:00:00Z"}, ${5}, ${null})`;
+    });
+    expect(await countIn(org, "usage")).toBe(2);
+
+    await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+
+    // Usage is gone — nothing for the reconcile oracle to drift against, nothing for meter-reporter to bill.
+    expect(await countIn(org, "usage")).toBe(0);
+    // The events themselves still await the reaper: the usage waive is independent of the row drain.
+    expect(await countIn(org, "events")).toBe(3);
+  });
+
+  it("is idempotent — a second request is a no-op (no duplicate audit row or purge job)", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-async-idem", ownerId);
+
+    const first = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+    const second = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+    expect(second.deletingAt).toBe(first.deletingAt); // same timestamp — not re-marked
+
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.filter((r) => r.action === "org.deletion_requested")).toHaveLength(1);
+    expect(await countIn(org, "org_deletions")).toBe(1);
+  });
+
+  it("throws OrgNotFoundError for an org that does not exist", async () => {
+    const ghost = randomUUID();
+    await expect(
+      requestOrgDeletion(app, { orgId: ghost, actor: userActor("x") }, key),
+    ).rejects.toBeInstanceOf(OrgNotFoundError);
+  });
+
+  it("the coherence CHECK forbids a deleting org from carrying suspension metadata", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-coherent", ownerId);
+    // status='deleting' MUST NOT keep suspended_reason/suspended_at — the invariant the CHECK enforces.
+    await expect(
+      withTenant(
+        app,
+        org,
+        (tx) => tx`
+        update orgs set status = 'deleting', deleting_at = now(),
+                        suspended_reason = 'free_org_cap', suspended_at = now()
+        where id = ${org}`,
+      ),
+    ).rejects.toThrow(/orgs_lifecycle_coherent/);
+  });
+
+  it("reaper claims deleting orgs oldest-first, drains events in chunks (cascading attempts), then finalizes", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-reap", ownerId);
+    await seedEventsWithAttempts(org, 5);
+    await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
+
+    // The reaper sees exactly this deleting org (cross-org claim under its role policy).
+    const claimed = await claimDeletingOrgs(reaper, 10);
+    expect(claimed).toContain(org);
+
+    // Chunked drain of events; deleting an event cascades its delivery_attempt via the composite FK.
+    const first = await reapOrgEventsChunk(reaper, org, 2);
+    expect(first).toBe(2);
+    const second = await reapOrgEventsChunk(reaper, org, 2);
+    expect(second).toBe(2);
+    const third = await reapOrgEventsChunk(reaper, org, 2);
+    expect(third).toBe(1); // < chunkSize → drained
+    expect(await countIn(org, "events")).toBe(0);
+    expect(await countIn(org, "delivery_attempts")).toBe(0); // cascaded away, no reaper grant needed
+
+    // Finalize drops the org row; the WORM audit chain survives (FK-decoupled).
+    expect(await finalizeReapedOrg(reaper, org)).toBe(true);
+    expect(await countIn(org, "orgs")).toBe(0);
+    expect(await finalizeReapedOrg(reaper, org)).toBe(false); // idempotent — already gone
+    const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
+    expect(chain.map((r) => r.action)).toEqual([
+      "org.created",
+      "endpoint.created",
+      "org.deletion_requested",
+    ]);
+  });
+
+  it("SECURITY: the reaper cannot touch a LIVE (non-deleting) org's data (the status fence)", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const live = await seedOrg("del-live", ownerId);
+    await seedEventsWithAttempts(live, 3);
+
+    // A live org is never claimed...
+    expect(await claimDeletingOrgs(reaper, 10)).not.toContain(live);
+    // ...and even if the reaper is pointed straight at it, RLS deletes nothing (fenced on status='deleting').
+    expect(await reapOrgEventsChunk(reaper, live, 100)).toBe(0);
+    expect(await finalizeReapedOrg(reaper, live)).toBe(false);
+    expect(await countIn(live, "events")).toBe(3);
+    expect(await countIn(live, "orgs")).toBe(1);
   });
 });
