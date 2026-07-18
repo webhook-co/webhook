@@ -1,0 +1,36 @@
+---
+title: "Compliance"
+sidebarTitle: "Compliance"
+description: "webhook.co's compliance posture, stated plainly — a GDPR Data Processing Agreement and SCCs, and an honest list of the certifications we do not hold."
+icon: "clipboard-check"
+---
+
+We'd rather tell you our compliance posture straight than have you discover a gap in a questionnaire.
+Here it is.
+
+## What we have
+
+- A **GDPR Article 28 Data Processing Agreement (DPA)** and **Standard Contractual Clauses (SCCs)** —
+  see the [DPA](https://www.webhook.co/dpa).
+- A published **sub-processors** list (in the DPA), so you know who touches your data.
+- A **tamper-evident, verifiable [audit log](/help/security/the-audit-log)**.
+- The engineering described in [security & architecture](/concepts/security) — encryption, sealed
+  secrets, database-enforced tenant isolation, SSRF-safe egress.
+
+## What we don't have — and won't pretend to
+
+<Warning>
+  webhook.co holds **no SOC 2, ISO 27001, HIPAA, or PCI certification**. We are **not** end-to-end
+  encrypted, and we **store request bodies and headers unredacted** because inspecting them is the
+  product.
+</Warning>
+
+If your risk assessment requires any of those, we're **not the right processor for that workload yet**.
+Please don't use webhook.co for data that legally requires those certifications — for example regulated
+health (HIPAA) or cardholder (PCI) data.
+
+## Need a specific statement?
+
+The [DPA](https://www.webhook.co/dpa) and [privacy policy](https://www.webhook.co/privacy) are the
+authoritative documents. If your evaluation needs a compliance statement not covered there,
+[contact us](mailto:security@webhook.co) rather than inferring one from the defenses above.

@@ -1,0 +1,48 @@
+---
+title: "Your data & privacy"
+sidebarTitle: "Your data & privacy"
+description: "How webhook.co stores your payloads, where your data lives, and your privacy rights — including the parts you should know before sending sensitive data."
+icon: "user-shield"
+---
+
+Inspecting webhooks is the whole point of webhook.co, so it's important you know exactly how your
+payload data is handled — including the trade-offs.
+
+## Payloads are stored so you can inspect them
+
+<Warning>
+  webhook.co **stores request bodies and headers unredacted**, because being able to inspect them is
+  the product. Anything a provider sends — including secrets, tokens, or personal data in a payload
+  — is stored as received. Treat your captured events as sensitive, and only send data you're
+  comfortable storing here.
+</Warning>
+
+Two things soften this:
+
+- **Application logs are scrubbed.** Our own logs redact secrets and keep only an allowlist of headers.
+  It's the stored **events** (for you to inspect) that hold the raw payload — not our logs.
+- **You can delete an event.** Deleting a captured event redacts its content immediately and purges the
+  stored payload shortly after. (It doesn't lower your usage — the event was already counted.) See
+  [events & usage](/events-and-usage).
+
+## Where your data lives
+
+Your data at rest is **region-pinned to the EU**. Note that webhook.co does **not** offer a formal
+**EU-only data-residency guarantee** — requests can be received at edge locations worldwide before
+landing in EU storage. If your compliance needs a contractual residency commitment, we're not the right
+fit for that workload yet, and we'd rather say so up front.
+
+## Your privacy rights
+
+- **Erasure.** [Deleting your account](/help/your-account/delete-your-account) or an
+  [organization](/help/organizations/delete-an-organization) erases its data. You can also delete
+  individual events at any time.
+- **The details.** Our [privacy policy](https://www.webhook.co/privacy) and
+  [data processing agreement](https://www.webhook.co/dpa) are the authoritative statements of how we
+  handle your data, including our sub-processors.
+
+## Related
+
+<Card title="Compliance" icon="clipboard-check" href="/help/security/compliance">
+  What we're certified for — and honestly, what we're not.
+</Card>

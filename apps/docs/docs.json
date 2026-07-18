@@ -207,6 +207,18 @@
               "help/usage/alerts-and-caps",
               "help/usage/data-retention"
             ]
+          },
+          {
+            "group": "Security & privacy",
+            "icon": "shield-check",
+            "pages": [
+              "help/security/overview",
+              "help/security/how-we-protect-your-data",
+              "help/security/the-audit-log",
+              "help/security/your-data-and-privacy",
+              "help/security/compliance",
+              "help/security/report-a-vulnerability"
+            ]
           }
         ]
       },
