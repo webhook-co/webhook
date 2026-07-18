@@ -450,6 +450,15 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     await seedUser(ownerId);
     const org = await seedOrg("del-async", ownerId);
     await seedEventsWithAttempts(org, 4);
+    // A live API key — its credential must be revoked at request time (the reaper window keeps the row alive).
+    const keyId = randomUUID();
+    await withTenant(
+      app,
+      org,
+      (tx) => tx`
+      insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
+      values (${keyId}, ${org}, ${randomBytes(32)}, ${"whk_"}, ${"whk_x"}, ${"k"}, ${tx.json(["events:read"])})`,
+    );
 
     const res = await requestOrgDeletion(app, { orgId: org, actor: userActor(ownerId) }, key);
     expect(res.orgId).toBe(org);
@@ -476,6 +485,14 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
       select count(*)::int as live from endpoints where org_id = ${org} and deleted_at is null`,
     );
     expect(ep.live).toBe(0);
+    // Credentials are revoked: a revoked key is rejected by the api-key cold lookup, so it can't authenticate.
+    const [ak] = await withTenant(
+      app,
+      org,
+      (tx) => tx<{ live: number }[]>`
+      select count(*)::int as live from api_keys where org_id = ${org} and revoked_at is null`,
+    );
+    expect(ak.live).toBe(0);
 
     // The WORM audit chain gained org.deleted, and the R2 purge job was enqueued.
     const chain = await withTenant(app, org, (tx) => readAuditChain(tx, org));
@@ -503,6 +520,23 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
     await expect(
       requestOrgDeletion(app, { orgId: ghost, actor: userActor("x") }, key),
     ).rejects.toBeInstanceOf(OrgNotFoundError);
+  });
+
+  it("the coherence CHECK forbids a deleting org from carrying suspension metadata", async () => {
+    const ownerId = `user_owner_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const org = await seedOrg("del-coherent", ownerId);
+    // status='deleting' MUST NOT keep suspended_reason/suspended_at — the invariant the CHECK enforces.
+    await expect(
+      withTenant(
+        app,
+        org,
+        (tx) => tx`
+        update orgs set status = 'deleting', deleting_at = now(),
+                        suspended_reason = 'free_org_cap', suspended_at = now()
+        where id = ${org}`,
+      ),
+    ).rejects.toThrow(/orgs_lifecycle_coherent/);
   });
 
   it("reaper claims deleting orgs oldest-first, drains events in chunks (cascading attempts), then finalizes", async () => {

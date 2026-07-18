@@ -353,6 +353,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
         from memberships m
         join orgs o on o.id = m.org_id
        where m.role = 'owner'
+         and o.status <> 'deleting' -- a deleting org (#665) is on its way out — never count it toward the cap
          and not exists (
            select 1 from billing_subscriptions b
             where b.org_id = o.id
@@ -647,6 +648,42 @@ export async function isPersonalOrg(app: Sql, orgId: string): Promise<boolean> {
 }
 
 /**
+ * The terminal side-effects an org deletion records regardless of whether the rows are removed synchronously
+ * (deleteOrgWithAudit) or drained by the reaper (requestOrgDeletion): the durable R2 payload-purge job and any
+ * live Stripe subscription cancellation. Runs inside the caller's tenant transaction.
+ *
+ * `requested_by` keeps the encoding it ALREADY has (0051): the column holds bare user ids for every org
+ * deleted before today, so a user actor writes its bare id (org deletion is only ever a web session action
+ * today) — a prefixed `user:<id>` would leave one column carrying two incompatible encodings. A non-user actor
+ * writes the prefixed form, which cannot collide with a bare id. `on conflict do nothing` keeps a re-run
+ * idempotent. Capturing the Stripe subscription HERE, before the billing_subscriptions row is (eventually)
+ * cascaded away, is what stops a paying customer who deletes from being charged forever; canceling inline is
+ * unsafe (a cancel-then-DB-fail leaves a live org with a canceled sub → the cap producer pauses the payer),
+ * so a cancellation is enqueued for the apps/api cron. Only a subscription still live at Stripe
+ * (isLiveSubscriptionStatus) needs canceling. The explicit org_id predicate is defense-in-depth beyond RLS.
+ */
+async function enqueueOrgDeletionSideEffects(
+  tx: TenantTx,
+  orgId: string,
+  actor: AuditActorInput,
+): Promise<void> {
+  const requestedBy = actor.kind === "user" ? actor.id : formatAuditActor(actor);
+  await tx`
+    insert into org_deletions (org_id, requested_by)
+    values (${orgId}, ${requestedBy})
+    on conflict (org_id) do nothing`;
+  const [sub] = await tx<{ stripeSubscriptionId: string; status: string }[]>`
+    select stripe_subscription_id as "stripeSubscriptionId", status
+    from billing_subscriptions where org_id = ${orgId}`;
+  if (sub && isLiveSubscriptionStatus(sub.status)) {
+    await tx`
+      insert into org_billing_cancellations (org_id, stripe_subscription_id)
+      values (${orgId}, ${sub.stripeSubscriptionId})
+      on conflict (org_id) do nothing`;
+  }
+}
+
+/**
  * Hard-delete an org and all of its Postgres metadata (every `org_id` child table is
  * `ON DELETE CASCADE`), while PRESERVING the two append-only WORM audit trails — `audit_log` and
  * `auth_audit_event` had their `orgs` FK decoupled in migration 0051, so the cascade no longer
@@ -699,41 +736,9 @@ export async function deleteOrgWithAudit(
       action: "org.deleted",
       target: input.orgId,
     });
-    // Enqueue the durable R2 payload-body purge (also FK-free, so it outlives the org row). The
-    // insert `with check (org_id = current_org_id())` is why a tenant can't forge another org's job.
-    // `requested_by` keeps the encoding it ALREADY has. This column (0051) holds bare user ids for every org
-    // deleted before today, and there is no migration to rewrite them — so writing the prefixed `user:<id>`
-    // form here would leave one column carrying two incompatible encodings, and a lookup of "who requested
-    // this deletion" would silently find nothing for exactly the rows we meant to attribute. A user actor
-    // therefore still writes its bare id (org deletion is only ever a web session action today). A non-user
-    // actor writes the prefixed form, which cannot collide with a bare id and cannot pre-exist. The purge
-    // role deliberately cannot read this column at all (0051).
-    const requestedBy =
-      input.actor.kind === "user" ? input.actor.id : formatAuditActor(input.actor);
-    await tx`
-      insert into org_deletions (org_id, requested_by)
-      values (${input.orgId}, ${requestedBy})`;
-    // Capture the org's live Stripe subscription BEFORE the delete cascades billing_subscriptions
-    // away, and enqueue a cancellation the apps/api cron drains against Stripe. Without this a paying
-    // customer who deletes their account (or a paid org) keeps being charged forever, and the row that
-    // would let anyone reconcile it is gone. Canceling inline is unsafe (this delete is one of a loop of
-    // separate transactions + a cross-worker RPC): a cancel-then-DB-fail would leave a live org with a
-    // canceled subscription, which effectiveBillingPeriod drops to the exhausted Free lifetime basis and
-    // the cap producer then PAUSES the payer's ingest. webhook_app has tenant-scoped SELECT on
-    // billing_subscriptions; only a subscription that still EXISTS at Stripe (isLiveSubscriptionStatus)
-    // needs canceling — a canceled/expired one is a no-op. `on conflict` keeps a re-delete idempotent.
-    // The explicit org_id predicate is defense-in-depth beyond RLS (same reasoning as
-    // readOrgMembershipCensus above): RLS policies are permissive/OR'd, so a future policy must never be
-    // able to widen this read into another tenant's subscription id.
-    const [sub] = await tx<{ stripeSubscriptionId: string; status: string }[]>`
-      select stripe_subscription_id as "stripeSubscriptionId", status
-      from billing_subscriptions where org_id = ${input.orgId}`;
-    if (sub && isLiveSubscriptionStatus(sub.status)) {
-      await tx`
-        insert into org_billing_cancellations (org_id, stripe_subscription_id)
-        values (${input.orgId}, ${sub.stripeSubscriptionId})
-        on conflict (org_id) do nothing`;
-    }
+    // Enqueue the durable R2 payload purge + capture any live Stripe cancellation (shared with the async
+    // requestOrgDeletion — see enqueueOrgDeletionSideEffects for the encoding + billing reasoning).
+    await enqueueOrgDeletionSideEffects(tx, input.orgId, input.actor);
     // Hard-delete: every org_id child cascades — but events + delivery_attempts were bulk-deleted above, so
     // this cascade is mostly the SMALL remainder (endpoints, memberships, billing rows, …) plus only the
     // rows that arrived AFTER the bulk delete's snapshot (the org is still live and can still ingest until
@@ -846,6 +851,13 @@ export async function requestOrgDeletion(
     // (those are the reaper's bounded job). The eventual `delete from orgs` hard-deletes the endpoint rows.
     await tx`update endpoints set deleted_at = now() where org_id = ${input.orgId} and deleted_at is null`;
 
+    // Revoke API CREDENTIALS immediately. The synchronous deleteOrgWithAudit cascaded api_keys away with the
+    // org row; the async mark leaves the org row alive until the reaper finalizes, so its keys would keep
+    // authenticating against the API for the whole reaper window. Set `revoked_at` — the api-key cold lookup
+    // already rejects a revoked key (no new grant). Bounded (a handful of keys per org). Web sessions need no
+    // action: a deleting org is absent from user_org_directory(), so the read gate 404s it.
+    await tx`update api_keys set revoked_at = now() where org_id = ${input.orgId} and revoked_at is null`;
+
     // Close out the tamper-evident chain (this is where the advisory lock is taken — held only through this
     // small write + commit). audit_log has no FK to orgs (0051), so the row survives the eventual reap.
     await appendAuditEntry(tx, auditKey, {
@@ -854,26 +866,9 @@ export async function requestOrgDeletion(
       action: "org.deleted",
       target: input.orgId,
     });
-    // Enqueue the durable R2 payload-body purge (same encoding rule as deleteOrgWithAudit: a user actor keeps
-    // its bare id so the column stays comparable to pre-existing rows; a non-user actor writes the prefixed
-    // form). `on conflict do nothing` keeps a re-request idempotent even across the guard above.
-    const requestedBy =
-      input.actor.kind === "user" ? input.actor.id : formatAuditActor(input.actor);
-    await tx`
-      insert into org_deletions (org_id, requested_by)
-      values (${input.orgId}, ${requestedBy})
-      on conflict (org_id) do nothing`;
-    // Capture the live Stripe subscription BEFORE the reaper later cascades billing_subscriptions away, and
-    // enqueue a cancellation the apps/api cron drains — else a paying customer who deletes keeps being charged.
-    const [sub] = await tx<{ stripeSubscriptionId: string; status: string }[]>`
-      select stripe_subscription_id as "stripeSubscriptionId", status
-      from billing_subscriptions where org_id = ${input.orgId}`;
-    if (sub && isLiveSubscriptionStatus(sub.status)) {
-      await tx`
-        insert into org_billing_cancellations (org_id, stripe_subscription_id)
-        values (${input.orgId}, ${sub.stripeSubscriptionId})
-        on conflict (org_id) do nothing`;
-    }
+    // Enqueue the durable R2 payload purge + capture any live Stripe cancellation (shared with the
+    // synchronous deleteOrgWithAudit — see enqueueOrgDeletionSideEffects).
+    await enqueueOrgDeletionSideEffects(tx, input.orgId, input.actor);
     return { orgId: input.orgId, deletingAt: marked.deletingAt };
   });
 }

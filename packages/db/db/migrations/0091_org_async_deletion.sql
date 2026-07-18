@@ -28,13 +28,15 @@ alter table orgs add constraint orgs_lifecycle_coherent check (
   or
   (status = 'suspended' and suspended_reason is not null and suspended_at is not null and deleting_at is null)
   or
-  (status = 'deleting' and deleting_at is not null)
+  (status = 'deleting' and deleting_at is not null and suspended_reason is null and suspended_at is null)
 );
 
--- 2) Hide a `deleting` org from the user-facing directory the read/delivery gate resolves through. Once an
---    org is marked for deletion it must VANISH from every surface (same UX as today's instant hard-delete) —
---    filtering it here is the single choke point, so no per-surface change is needed. The reaper reads orgs
---    directly (below), not through this function. Signature unchanged from 0083.
+-- 2) Hide a `deleting` org from the user-facing directory. The web READ/auth gate resolves the slug through
+--    this function, so filtering here 404s a deleting org for every dashboard surface (no per-page change).
+--    But `deleting` is a new lifecycle STATE, not only a visibility flag: the surfaces that read orgs.status
+--    DIRECTLY — outbound delivery (isOrgDeliveryHeld), the free-org-cap count, the API-key gate (revoked in
+--    requestOrgDeletion), and the OrgStatus type — are each handled explicitly alongside this. The reaper
+--    reads orgs directly (below), not through this function. Signature unchanged from 0083.
 drop function user_org_directory();
 
 create function user_org_directory()
@@ -186,6 +188,12 @@ create function user_org_directory()
      order by m.created_at asc, m.org_id asc
   $$;
 grant execute on function user_org_directory() to webhook_app;
+
+-- Any org left in `deleting` was already requested for deletion (audit row written, endpoints soft-deleted).
+-- Rolling the feature back can't leave it in a status the restored 2-state CHECK forbids, so COMPLETE its
+-- deletion synchronously — the same terminal outcome the reaper would have reached. (In practice there are
+-- none: the feature ships inert.) This runs as the migration role (schema owner), which bypasses RLS.
+delete from orgs where status = 'deleting';
 
 alter table orgs drop constraint orgs_lifecycle_coherent;
 alter table orgs add constraint orgs_suspension_coherent check (

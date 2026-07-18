@@ -26,11 +26,17 @@ Postgres rows.
    whereas the audit decoupling was justified only because those tables are WORM and must survive the delete.
 
 2. **The sync request (`requestOrgDeletion`), one atomic transaction.** Mark `deleting` (+ `deleting_at`),
-   soft-delete the org's endpoints (so ingest 404s at once via the existing `deleted_at is null` cold-lookup —
-   ADR-0076, no new grant), append the WORM `org.deleted` audit row, enqueue the R2 purge job, and capture any
-   live Stripe subscription cancellation. The audit advisory lock is held only for this small write. A
-   `deleting` org VANISHES from every user surface via one choke point — `user_org_directory()` filters it —
-   so the UX matches today's instant delete. Idempotent.
+   soft-delete the org's endpoints (ingest 404s at once via the existing `deleted_at is null` cold-lookup —
+   ADR-0076, no new grant), revoke the org's API keys (the api-key cold lookup already rejects a revoked key),
+   append the WORM `org.deleted` audit row, enqueue the R2 purge job, and capture any live Stripe cancellation.
+   The audit advisory lock is held only for this small write. Idempotent.
+
+   `deleting` is a new lifecycle STATE, so it is handled at every gate `suspended` is, plus stronger: the web
+   READ/auth gate resolves through `user_org_directory()` which filters it (→ 404, no per-page change); and the
+   surfaces that read `orgs.status` DIRECTLY are each handled — outbound delivery is HELD (`isOrgDeliveryHeld`
+   = any non-active state), the free-org-cap COUNT excludes it, and the `OrgStatus` type includes it so the
+   exhaustive switches stay honest. (The initial draft wrongly called the directory filter a single choke
+   point; the security review caught the delivery-egress, cap-count, and credential gaps.)
 
 3. **The async drain (`webhook_reaper` cron).** An hourly cross-org cron claims `deleting` orgs oldest-first
    and, per org, deletes `events` in bounded chunks per tick (deleting an event cascades its
