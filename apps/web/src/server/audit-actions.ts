@@ -1,8 +1,7 @@
 "use server";
 
 import { verifyAuditChainPaged } from "@webhook-co/db/audit-append";
-import { readAuthAuditChain, verifyAuthAuditChain } from "@webhook-co/db/auth-audit";
-import { withTenant } from "@webhook-co/db/client";
+import { verifyAuthAuditChainPaged } from "@webhook-co/db/auth-audit";
 import { isAuditReaderRole, type AuditChainResult } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
@@ -94,9 +93,10 @@ export async function loadMoreAuthAuditAction(
  * Recompute the governance chain. Until Lane 2.10 `aae1` had only a per-ROW verifier — which cannot see the
  * attacks a chain exists to detect (a deleted row's seq gap, a rewritten link, a forked seq). This walks it.
  *
- * NOTE: this still loads the whole chain (readAuthAuditChain) — the same OOM shape #636 paged away for the
- * MAIN chain. Generalizing the paged verifier to this parallel chain (own table + HMAC) is tracked as its
- * own PR in issue #663, kept out of #636 to keep that change focused on the main chain.
+ * Streams the chain a page at a time (verifyAuthAuditChainPaged, #663) and walks the hash links across page
+ * boundaries, so it reports the FIRST break with its seq and an operator-readable detail — without ever
+ * holding the whole chain, or one DB connection, for the length of the verification. Before #663 this loaded
+ * the entire chain (readAuthAuditChain), the same Worker-OOM shape #636 paged away for the MAIN chain.
  */
 export async function verifyAuthAuditChainAction(slug: string): Promise<VerifyChainResult> {
   const { orgId, role } = await requireOrgAccess(slug);
@@ -104,10 +104,11 @@ export async function verifyAuthAuditChainAction(slug: string): Promise<VerifyCh
 
   try {
     const key = await importAuditKey(b64ToBytes(await getAuditChainKey()));
-    const rows = await withTenantDb((app) =>
-      withTenant(app, orgId, (tx) => readAuthAuditChain(tx, orgId)),
-    );
-    return { status: "ok", verification: await verifyAuthAuditChain(key, orgId, rows) };
+    // Stream the chain page-by-page (#663): reading every row into memory is a Worker OOM risk that grows
+    // with org age. verifyAuthAuditChainPaged carries the prior page's tail so the hash-chain checks still
+    // hold, and opens its own short transaction per page (so it takes the pool, not a tx).
+    const verification = await withTenantDb((app) => verifyAuthAuditChainPaged(app, orgId, key));
+    return { status: "ok", verification };
   } catch (error) {
     logActionError("audit.auth_verify_failed", error);
     return { status: "error" };
