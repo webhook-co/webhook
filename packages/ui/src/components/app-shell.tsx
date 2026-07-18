@@ -6,6 +6,17 @@ import { cn } from "../lib/cn";
 import { IconButton } from "./icon-button";
 import { Wordmark } from "./mark";
 
+// The nav's list-reset + column rhythm, defined ONCE. This is the crux of the nested-list nav: the same
+// `list-none m-0 p-0` reset and `gap-0.5` between-item rhythm must hold on every list level (top list, each
+// section's list, the Events sub-list) and every list item, or the sidebar's spacing drifts and a stray
+// bullet/margin creeps back in on one level. Four verbatim copies of this string used to invite exactly that.
+//   - NAV_LIST_RESET: strips the list marker/margin/padding (Tailwind's own reset already does this; we state
+//     it so nothing downstream reintroduces it). Used on the plain item `<li>`.
+//   - NAV_LIST: the reset plus the flex column + 2px gap. Used on every `<ul>` and on a section's grouping
+//     `<li>`. Kept as the prettier-tailwind-sorted literal so the emitted className is byte-for-byte unchanged.
+const NAV_LIST_RESET = "m-0 list-none p-0";
+const NAV_LIST = "m-0 flex list-none flex-col gap-0.5 p-0";
+
 export interface AppShellProps {
   /** The page content, rendered in the scrollable main canvas. */
   children: React.ReactNode;
@@ -81,8 +92,15 @@ export function AppShell({
           {sidebarTop}
         </div>
       ) : null}
-      <nav aria-label="Primary" className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-1">
-        {sidebar}
+      <nav aria-label="Primary" className="flex flex-1 flex-col overflow-y-auto px-3 py-1">
+        {/* A real list — the nav is a list of destinations, so it says so. `role="list"` is explicit because
+            the `list-style:none` reset below strips list semantics in Safari+VoiceOver; without the role they
+            drop the list entirely. The flex column + `gap-0.5` rhythm that used to live on the <nav> moves
+            here, onto the list, so the visual layout is unchanged. Sections and sub-items nest as real child
+            lists (see AppNavSection / AppNavItem). */}
+        <ul role="list" className={NAV_LIST}>
+          {sidebar}
+        </ul>
       </nav>
       {sidebarFooter ? (
         <div className="mt-auto flex-shrink-0 border-t border-hairline p-3">{sidebarFooter}</div>
@@ -155,16 +173,22 @@ export interface AppNavItemProps extends React.AnchorHTMLAttributes<HTMLAnchorEl
   /** Marks the current page — sets `aria-current` and the active treatment. */
   active?: boolean;
   /**
-   * Renders as a SUB-item of the entry above it: indented to where a top-level item's label starts, and
-   * without its own icon — the indent is what carries the hierarchy.
+   * Applies the SUB-item visual treatment to this item's anchor: indented to where a top-level item's label
+   * starts (past the icon), and without its own icon.
    *
-   * a11y note, stated rather than implied: the nav is a flat column of anchors (no `<ul>`), so this is a
-   * VISUAL nesting only — assistive tech announces a sub-item as a sibling. That matches how `AppNavSection`
-   * headings already work here (they group nothing semantically either). Making the relationship real means
-   * giving the whole nav list semantics, which is a design-system change with blast radius across every item
-   * and does not belong to whichever feature adds the first sub-item.
+   * This is styling only — the parent/child RELATIONSHIP is expressed structurally, via the parent item's
+   * `subNav` (a nested `<ul role="list">` inside the parent's own `<li>`), so assistive tech announces a
+   * sub-item as a real child. The indent lives on the anchor (not the nested list) deliberately: it keeps the
+   * sub-item's anchor full-width, so its hover/active fill spans the rail exactly as a top-level item's does
+   * while only the label shifts right.
    */
   nested?: boolean;
+  /**
+   * Sub-items this entry owns. Rendered in a nested `<ul role="list">` as a sibling of the anchor inside this
+   * item's own `<li>` — so they are true DOM children and are announced as such. Each child should itself be
+   * an `<AppNavItem nested>` (which supplies the sub-item indent and drops the icon).
+   */
+  subNav?: React.ReactNode;
   /**
    * Render the child element instead of a bare `<a>`, keeping the nav styling. This is how a router link
    * (next/link) gets in: without it the sidebar emits plain anchors and every click is a FULL DOCUMENT
@@ -179,7 +203,7 @@ export interface AppNavItemProps extends React.AnchorHTMLAttributes<HTMLAnchorEl
  */
 export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
   (
-    { icon, count, active, nested = false, asChild = false, className, children, ...props },
+    { icon, count, active, nested = false, asChild = false, subNav, className, children, ...props },
     ref,
   ) => {
     const navClass = cn(
@@ -216,37 +240,75 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
       </>
     );
 
-    // asChild: the caller's element (a router link) BECOMES the nav item. Slot merges our className +
+    // asChild: the caller's element (a router link) BECOMES the anchor. Slot merges our className +
     // aria-current onto it, and we re-parent the icon/label/count INSIDE it — so the anchor the router
     // controls is the same anchor the user clicks. Wrapping it instead would nest <a> inside <a> (invalid,
     // and it would defeat the router).
-    if (asChild && React.isValidElement(children)) {
-      const child = children as React.ReactElement<{ children?: React.ReactNode }>;
-      return (
+    const child = React.isValidElement(children)
+      ? (children as React.ReactElement<{ children?: React.ReactNode }>)
+      : null;
+    const anchor =
+      asChild && child ? (
         <Slot ref={ref} aria-current={active ? "page" : undefined} className={navClass} {...props}>
           {React.cloneElement(child, undefined, contents(child.props.children))}
         </Slot>
+      ) : (
+        <a ref={ref} aria-current={active ? "page" : undefined} className={navClass} {...props}>
+          {contents(children)}
+        </a>
       );
-    }
 
+    // Every item is a real list item. When it owns sub-items, they hang off a nested `<ul role="list">`
+    // that is a sibling of the anchor INSIDE this same `<li>` — a true DOM child, so the hierarchy is
+    // announced, not merely drawn. `flex flex-col gap-0.5` on the <li> reproduces the exact 2px rhythm the
+    // sub-item had as a flat sibling; the sub-list itself carries no indent (that lives on the anchor, via
+    // `nested`), so the sub-item's fill stays full-width.
     return (
-      <a ref={ref} aria-current={active ? "page" : undefined} className={navClass} {...props}>
-        {contents(children)}
-      </a>
+      <li className={cn(NAV_LIST_RESET, subNav != null && "flex flex-col gap-0.5")}>
+        {anchor}
+        {subNav != null ? (
+          <ul role="list" className={NAV_LIST}>
+            {subNav}
+          </ul>
+        ) : null}
+      </li>
     );
   },
 );
 AppNavItem.displayName = "AppNavItem";
 
-/** A small uppercase label that groups sidebar nav items (e.g. "Workspace", "Account"). */
-export function AppNavSection({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
+export interface AppNavSectionProps {
+  /** The section label (e.g. "Inbound", "Account"). */
+  label: React.ReactNode;
+  /** The section's nav items — each an `<AppNavItem>` (which renders its own `<li>`). */
+  children: React.ReactNode;
+  /** Extra classes on the label element. */
+  className?: string;
+}
+
+/**
+ * A named group of sidebar nav items. It is a real, LABELED group now — not a decorative heading floating
+ * above unrelated siblings: the section renders a `<li>` holding its label plus a nested
+ * `<ul role="list" aria-labelledby={label}>`, so the section name is programmatically tied to the items it
+ * introduces. The label keeps its exact small-uppercase styling, and the `pt-3.5 pb-1.5` + `gap-0.5` rhythm
+ * is preserved, so the grouping is invisible to the eye and audible to a screen reader.
+ */
+export function AppNavSection({ label, children, className }: AppNavSectionProps) {
+  const labelId = React.useId();
   return (
-    <p
-      className={cn(
-        "px-2.5 pb-1.5 pt-3.5 font-mono text-[0.625rem] uppercase tracking-mono-label text-fg-faint",
-        className,
-      )}
-      {...props}
-    />
+    <li className={NAV_LIST}>
+      <p
+        id={labelId}
+        className={cn(
+          "px-2.5 pb-1.5 pt-3.5 font-mono text-[0.625rem] uppercase tracking-mono-label text-fg-faint",
+          className,
+        )}
+      >
+        {label}
+      </p>
+      <ul role="list" aria-labelledby={labelId} className={NAV_LIST}>
+        {children}
+      </ul>
+    </li>
   );
 }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const nav = vi.hoisted(() => ({ pathname: "/account/profile" }));
@@ -31,5 +31,13 @@ describe("AccountNav", () => {
     nav.pathname = "/account/profile";
     rerender(<AccountNav />);
     expect(screen.getByRole("link", { name: "Profile" })).toHaveAttribute("aria-current", "page");
+  });
+
+  // The account links live in a real labeled group (#20), not a decorative sibling heading. Locks the
+  // aria-labelledby name so the grouping can't silently flatten back.
+  it("groups the account links in a list labeled 'Account'", () => {
+    render(<AccountNav />);
+    const group = screen.getByRole("list", { name: "Account" });
+    expect(within(group).getByRole("link", { name: "Profile" })).toBeInTheDocument();
   });
 });

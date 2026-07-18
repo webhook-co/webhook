@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
 
 /**
  * The dashboard sidebar nav. A client component so the active item follows the route (`usePathname`) —
@@ -106,12 +107,13 @@ export function AppNav({ slug }: { slug: string }) {
   const item = (
     key: keyof typeof NAV,
     { path, label, Icon }: { path: string; label: string; Icon: typeof Gauge },
-    nested = false,
+    { nested = false, subNav }: { nested?: boolean; subNav?: ReactNode } = {},
   ) => (
     <AppNavItem
       asChild
       active={activeKey === key}
       nested={nested}
+      subNav={subNav}
       icon={nested ? undefined : <Icon aria-hidden="true" />}
     >
       <Link href={orgHref(slug, path)}>{label}</Link>
@@ -125,23 +127,28 @@ export function AppNav({ slug }: { slug: string }) {
       {item("overview", NAV.overview)}
       {/* Grouped by direction: Inbound is what you receive; Outbound is where you send it and how those
           sends fared. Within Outbound, Destinations (the targets) precede Deliveries (the results) —
-          a delivery can't exist before a destination. */}
-      <AppNavSection>Inbound</AppNavSection>
-      {item("endpoints", NAV.endpoints)}
-      {/* Events sits UNDER Endpoints as a sub-item — always visible, never collapsed: it is the page most
-          readers want, and hiding it behind a disclosure would cost the clicks this page exists to remove. */}
-      {item("events", NAV.events, true)}
-      {item("triggers", NAV.triggers)}
-      <AppNavSection>Outbound</AppNavSection>
-      {item("destinations", NAV.destinations)}
-      {item("deliveries", NAV.deliveries)}
-      <AppNavSection>Account</AppNavSection>
-      {item("usage", NAV.usage)}
-      {item("billing", NAV.billing)}
-      {item("credentials", NAV.credentials)}
-      {item("team", NAV.team)}
-      {item("audit", NAV.audit)}
-      {item("settings", NAV.settings)}
+          a delivery can't exist before a destination. Each section is a real labeled group (AppNavSection). */}
+      <AppNavSection label="Inbound">
+        {/* Events sits UNDER Endpoints as a sub-item — a true nested list child, always visible, never
+            collapsed: it is the page most readers want, and hiding it behind a disclosure would cost the
+            clicks this page exists to remove. */}
+        {item("endpoints", NAV.endpoints, {
+          subNav: item("events", NAV.events, { nested: true }),
+        })}
+        {item("triggers", NAV.triggers)}
+      </AppNavSection>
+      <AppNavSection label="Outbound">
+        {item("destinations", NAV.destinations)}
+        {item("deliveries", NAV.deliveries)}
+      </AppNavSection>
+      <AppNavSection label="Account">
+        {item("usage", NAV.usage)}
+        {item("billing", NAV.billing)}
+        {item("credentials", NAV.credentials)}
+        {item("team", NAV.team)}
+        {item("audit", NAV.audit)}
+        {item("settings", NAV.settings)}
+      </AppNavSection>
     </>
   );
 }
