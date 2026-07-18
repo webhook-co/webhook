@@ -1,9 +1,9 @@
 "use server";
 
-import { readAuditChain } from "@webhook-co/db/audit-append";
+import { verifyAuditChainPaged } from "@webhook-co/db/audit-append";
 import { readAuthAuditChain, verifyAuthAuditChain } from "@webhook-co/db/auth-audit";
 import { withTenant } from "@webhook-co/db/client";
-import { isAuditReaderRole, verifyAuditChain, type AuditChainResult } from "@webhook-co/shared";
+import { isAuditReaderRole, type AuditChainResult } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 
@@ -57,10 +57,12 @@ export async function verifyAuditChainAction(slug: string): Promise<VerifyChainR
 
   try {
     const key = await importAuditKey(b64ToBytes(await getAuditChainKey()));
-    const rows = await withTenantDb((app) =>
-      withTenant(app, orgId, (tx) => readAuditChain(tx, orgId)),
+    // Stream the chain page-by-page (#636): reading every row into memory is a Worker OOM risk that grows
+    // with org age. verifyAuditChainPaged carries the prior page's tail so the hash-chain checks still hold.
+    const verification = await withTenantDb((app) =>
+      withTenant(app, orgId, (tx) => verifyAuditChainPaged(tx, orgId, key)),
     );
-    return { status: "ok", verification: await verifyAuditChain(key, orgId, rows) };
+    return { status: "ok", verification };
   } catch (error) {
     logActionError("audit.verify_failed", error);
     return { status: "error" };

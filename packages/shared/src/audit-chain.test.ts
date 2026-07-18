@@ -2,7 +2,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { AuditEntry } from "./audit";
 import { computeAuditRowHash, importAuditKey } from "./audit";
-import { verifyAuditChain, type StoredAuditRow } from "./audit-chain";
+import {
+  verifyAuditChain,
+  verifyAuditChainChunk,
+  type AuditChainCursor,
+  type StoredAuditRow,
+} from "./audit-chain";
 
 // The full-chain walker is the audit verifier (ADR-0004). These are pure
 // unit tests over an in-memory chain; the db package drives the same walker against a
@@ -141,5 +146,71 @@ describe("verifyAuditChain", () => {
     const result = await verifyAuditChain(key, orgId, shuffled);
     expect(result.ok).toBe(true);
     expect(result.rowsVerified).toBe(3);
+  });
+});
+
+// The chunk verifier is what makes paged verification (#636) possible: the only state crossing a page
+// boundary is the prior row's (seq, rowHash), carried as the cursor. These tests inject breaks AT a chunk
+// boundary — the paging-specific concern the whole-chain form never exercises.
+describe("verifyAuditChainChunk (paged verification)", () => {
+  const longEntries: AuditEntry[] = Array.from({ length: 5 }, (_, i) => ({
+    orgId,
+    seq: i + 1,
+    actor: i % 2 === 0 ? "user_abc" : null,
+    action: `action.${i + 1}`,
+    target: i === 0 ? null : `t_${i}`,
+  }));
+
+  /** Drive verifyAuditChainChunk over `rows` in pages of `size`, carrying the tail cursor across boundaries. */
+  async function verifyInPages(rows: readonly StoredAuditRow[], size: number) {
+    let cursor: AuditChainCursor | null = null;
+    let verified = 0;
+    for (let i = 0; i < rows.length; i += size) {
+      const result = await verifyAuditChainChunk(
+        key,
+        orgId,
+        rows.slice(i, i + size),
+        cursor,
+        verified,
+      );
+      if (!result.ok) return result;
+      cursor = result.tail;
+      verified = result.rowsVerified;
+    }
+    return { ok: true as const, rowsVerified: verified };
+  }
+
+  it("verifies a clean chain identically to the whole-chain form, across page boundaries", async () => {
+    const rows = await buildChain(longEntries);
+    const whole = await verifyAuditChain(key, orgId, rows);
+    // Page sizes that DON'T divide 5 evenly force a boundary between every check position.
+    for (const size of [1, 2, 3, 5]) {
+      const paged = await verifyInPages(rows, size);
+      expect(paged).toEqual(whole); // same ok + same rowsVerified (5)
+    }
+  });
+
+  it("catches a broken LINK at a page boundary (the first row of a later page)", async () => {
+    const rows = await buildChain(longEntries);
+    // Corrupt seq 3's prev_hash — with pageSize 2 it is the FIRST row of the 2nd page, so the link check
+    // must use the carried cursor (page 1's tail), not a same-page prior row.
+    const corrupt = rows.map((r) => (r.seq === 3 ? { ...r, prevHash: new Uint8Array(32) } : r));
+    const result = await verifyInPages(corrupt, 2);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.break.kind).toBe("broken_link");
+    expect(result.break.seq).toBe(3);
+    expect(result.rowsVerified).toBe(2); // seqs 1 + 2 verified before the boundary break
+  });
+
+  it("catches a seq GAP straddling a page boundary", async () => {
+    const rows = await buildChain(longEntries);
+    // Drop seq 3, so page 1 = [1,2] and page 2 starts at seq 4 — the gap is exactly at the boundary.
+    const withGap = rows.filter((r) => r.seq !== 3);
+    const result = await verifyInPages(withGap, 2);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.break.kind).toBe("seq_gap");
+    expect(result.break.seq).toBe(4);
   });
 });

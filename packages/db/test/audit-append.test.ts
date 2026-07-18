@@ -9,7 +9,12 @@ import {
 } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { appendAuditEntry, listAuditEntries, readAuditChain } from "../src/audit-append";
+import {
+  appendAuditEntry,
+  listAuditEntries,
+  readAuditChain,
+  verifyAuditChainPaged,
+} from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
@@ -289,5 +294,62 @@ describe("listAuditEntries", () => {
 
     const inB = await withTenant(app, b, (tx) => listAuditEntries(tx, { limit: 50 }));
     expect(inB.items).toEqual([]);
+  });
+});
+
+describe("verifyAuditChainPaged (streaming verification, #636)", () => {
+  async function seedChain(orgId: string, n: number): Promise<void> {
+    await withTenant(app, orgId, async (tx) => {
+      for (let i = 0; i < n; i++) {
+        await appendAuditEntry(tx, key, {
+          orgId,
+          actor: i % 2 === 0 ? userActor("u") : SYSTEM_ACTOR,
+          action: `action.${i + 1}`,
+          target: i === 0 ? null : `t_${i}`,
+        });
+      }
+    });
+  }
+
+  it("verifies an intact chain across MANY pages (a tiny pageSize forces the boundaries)", async () => {
+    const orgId = await seedOrg("audit-paged-ok");
+    await seedChain(orgId, 5);
+    // pageSize 2 → pages [1,2] [3,4] [5]: the prev_hash link at seq 3 and seq 5 is checked across a boundary.
+    const result = await withTenant(app, orgId, (tx) => verifyAuditChainPaged(tx, orgId, key, 2));
+    expect(result.ok).toBe(true);
+    expect(result.rowsVerified).toBe(5);
+  });
+
+  it("matches the whole-chain verifier exactly (same ok + rowsVerified) at any pageSize", async () => {
+    const orgId = await seedOrg("audit-paged-match");
+    await seedChain(orgId, 7);
+    const whole = await withTenant(app, orgId, (tx) => readAuditChain(tx, orgId)).then((rows) =>
+      verifyAuditChain(key, orgId, rows),
+    );
+    for (const pageSize of [1, 3, 7, 100]) {
+      const paged = await withTenant(app, orgId, (tx) =>
+        verifyAuditChainPaged(tx, orgId, key, pageSize),
+      );
+      expect(paged).toEqual(whole);
+    }
+  });
+
+  it("still catches tampering (a wrong key) through the paged reader", async () => {
+    const orgId = await seedOrg("audit-paged-key");
+    await seedChain(orgId, 4);
+    const wrongKey = await importAuditKey(new Uint8Array(32).fill(9));
+    const result = await withTenant(app, orgId, (tx) =>
+      verifyAuditChainPaged(tx, orgId, wrongKey, 2),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.break.kind).toBe("hash_mismatch");
+    expect(result.break.seq).toBe(1); // the genesis row already fails to recompute
+  });
+
+  it("an empty chain is vacuously valid (no page read past the first)", async () => {
+    const orgId = await seedOrg("audit-paged-empty");
+    const result = await withTenant(app, orgId, (tx) => verifyAuditChainPaged(tx, orgId, key, 10));
+    expect(result).toEqual({ ok: true, rowsVerified: 0 });
   });
 });

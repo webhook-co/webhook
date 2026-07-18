@@ -18,7 +18,10 @@
 import {
   computeAuditRowHash,
   formatAuditActor,
+  verifyAuditChainChunk,
   type AuditActor,
+  type AuditChainCursor,
+  type AuditChainResult,
   type AuditEntry,
   type StoredAuditRow,
 } from "@webhook-co/shared";
@@ -169,37 +172,89 @@ export async function listAuditEntries(
   return { items, nextSeq: hasMore ? (items[items.length - 1]?.seq ?? null) : null };
 }
 
+interface AuditRowShape {
+  org_id: string;
+  seq: string | number;
+  actor: string | null;
+  action: string;
+  target: string | null;
+  prev_hash: Uint8Array | null;
+  row_hash: Uint8Array;
+}
+
+const toStoredRow = (r: AuditRowShape): StoredAuditRow => ({
+  orgId: r.org_id,
+  seq: Number(r.seq),
+  actor: r.actor,
+  action: r.action,
+  target: r.target,
+  prevHash: toBytes(r.prev_hash),
+  rowHash: toBytes(r.row_hash)!,
+});
+
 /**
- * Read an org's full audit chain (ascending seq) as StoredAuditRow[], ready for
- * verifyAuditChain. Runs under the caller's RLS context, so it returns exactly this
- * org's rows. For very large chains, page this — the walker is streaming-friendly.
+ * Read an org's full audit chain (ascending seq) as StoredAuditRow[], ready for verifyAuditChain. Runs under
+ * the caller's RLS context, so it returns exactly this org's rows. UNBOUNDED — the whole chain in memory; for
+ * verification prefer {@link verifyAuditChainPaged}, which streams it a page at a time (#636).
  */
 export async function readAuditChain(tx: TenantTx, orgId: string): Promise<StoredAuditRow[]> {
-  const rows = await tx<
-    {
-      org_id: string;
-      seq: string | number;
-      actor: string | null;
-      action: string;
-      target: string | null;
-      prev_hash: Uint8Array | null;
-      row_hash: Uint8Array;
-    }[]
-  >`
+  const rows = await tx<AuditRowShape[]>`
     select org_id, seq, actor, action, target, prev_hash, row_hash
     from audit_log
     where org_id = ${orgId}
     order by seq asc`;
+  return rows.map(toStoredRow);
+}
 
-  return rows.map((r) => ({
-    orgId: r.org_id,
-    seq: Number(r.seq),
-    actor: r.actor,
-    action: r.action,
-    target: r.target,
-    prevHash: toBytes(r.prev_hash),
-    rowHash: toBytes(r.row_hash)!,
-  }));
+/** One ascending-seq page of an org's audit chain: rows with `seq > afterSeq`, capped at `limit`. Backed by
+ *  the `unique (org_id, seq)` index, so each page is an index range read, not a scan. */
+export async function readAuditChainPage(
+  tx: TenantTx,
+  orgId: string,
+  afterSeq: number,
+  limit: number,
+): Promise<StoredAuditRow[]> {
+  const rows = await tx<AuditRowShape[]>`
+    select org_id, seq, actor, action, target, prev_hash, row_hash
+    from audit_log
+    where org_id = ${orgId} and seq > ${afterSeq}
+    order by seq asc
+    limit ${limit}`;
+  return rows.map(toStoredRow);
+}
+
+/** How many audit rows to hold in memory per verification page. Bounds the Worker's peak memory independent
+ *  of chain length (#636); the `unique (org_id, seq)` index makes each page a cheap range read. */
+export const AUDIT_CHAIN_PAGE_SIZE = 1000;
+
+/**
+ * Verify an org's whole audit chain WITHOUT materialising it — read it a page at a time and walk each page
+ * with {@link verifyAuditChainChunk}, carrying the prior page's tail cursor across the boundary so every
+ * check (seq contiguity, prev_hash link, HMAC) holds exactly as the whole-chain form does. Fixes #636:
+ * `readAuditChain` returned the ENTIRE chain, an unbounded result set that grows with org age — a Worker OOM
+ * risk. Runs under the caller's RLS context (this org's rows only). Returns the same AuditChainResult, with
+ * the first break's cumulative `rowsVerified`.
+ */
+export async function verifyAuditChainPaged(
+  tx: TenantTx,
+  orgId: string,
+  key: CryptoKey,
+  pageSize: number = AUDIT_CHAIN_PAGE_SIZE,
+): Promise<AuditChainResult> {
+  let cursor: AuditChainCursor | null = null;
+  let afterSeq = 0;
+  let verified = 0;
+  for (;;) {
+    const page = await readAuditChainPage(tx, orgId, afterSeq, pageSize);
+    if (page.length === 0) break;
+    const result = await verifyAuditChainChunk(key, orgId, page, cursor, verified);
+    if (!result.ok) return result;
+    cursor = result.tail;
+    verified = result.rowsVerified;
+    afterSeq = page[page.length - 1]!.seq;
+    if (page.length < pageSize) break; // a short page is the tail of the chain
+  }
+  return { ok: true, rowsVerified: verified };
 }
 
 /** A per-org audit-chain head: the latest (seq, row_hash) for an org. */
