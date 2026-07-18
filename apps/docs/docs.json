@@ -188,6 +188,25 @@
               "help/organizations/rename-and-url",
               "help/organizations/delete-an-organization"
             ]
+          },
+          {
+            "group": "Billing & plans",
+            "icon": "credit-card",
+            "pages": [
+              "help/billing/overview",
+              "help/billing/plans-and-pricing",
+              "help/billing/manage-your-subscription",
+              "help/billing/refunds"
+            ]
+          },
+          {
+            "group": "Usage & limits",
+            "icon": "gauge",
+            "pages": [
+              "help/usage/overview",
+              "help/usage/alerts-and-caps",
+              "help/usage/data-retention"
+            ]
           }
         ]
       },
