@@ -67,10 +67,29 @@ Postgres rows.
 
 ## Rollout (activation is gated)
 
-The foundation ships INERT — nothing marks orgs `deleting` and the cron is dark. Activation sequence:
+Both the foundation AND the web activation ship in this PR, but the activation is behind a **default-OFF
+feature flag** (`ASYNC_ORG_DELETION`), so prod keeps using the proven synchronous `deleteOrgWithAudit` until an
+operator provisions the reaper and flips the flag. Nothing marks an org `deleting` and the reaper cron stays
+dark until then. The web caller (`deleteOrRequestOrg`) is the single seam both delete surfaces route through;
+with the flag off it calls `deleteOrgWithAudit` exactly as before.
 
-1. Provision the `webhook_reaper` Neon role + its `HYPERDRIVE_REAPER` pool (caching off); set the
-   `HYPERDRIVE_REAPER_ID` GH var (the wrangler overlay then keeps the binding; the cron un-darkens).
-2. Verify the cron drains a test `deleting` org in prod.
-3. Flip the web delete actions from `deleteOrgWithAudit` to `requestOrgDeletion`, then retire the synchronous
-   path.
+Activation is an ordered, operator-run sequence (the DB steps run as `webhook_owner` against prod — a
+background agent is deliberately blocked from prod-DB credential materialization, so a human runs them):
+
+1. **Apply migration 0091 to prod, then merge (or merge then apply).** Both `deploy-web` and `deploy-wedge`
+   carry a migration-guard that holds the auto-deploy while HEAD is ahead of the applied-schema tag by an
+   unapplied migration — so the code cannot ship ahead of 0091 either way. 0091 is INERT (a nullable column, a
+   CHECK extension, a dark role + fenced policies); it changes no behaviour on its own.
+2. **Provision the `webhook_reaper` role + its `HYPERDRIVE_REAPER` pool** (query caching OFF — the reaper's
+   reads are RLS-scoped, and the deploy's cache-posture guard blocks a caching tenant pool). Set the
+   `HYPERDRIVE_REAPER_ID` GH var; the wrangler overlay then keeps the engine binding and the cron un-darkens.
+   0091 creates the role password-less, so its password is set out-of-band via `ALTER ROLE` (the other cron
+   roles' pattern). Provision it BEFORE the engine deploy so no deploy wedges on an unset id.
+3. **Deploy the engine and verify the drain on a disposable `deleting` org** — mark a throwaway org `deleting`
+   directly (the flag is still off, so nothing else creates one) and confirm the cron drains its events to
+   zero and drops the org row, with no errors in the engine logs.
+4. **Set the GH var `ASYNC_ORG_DELETION=true` and re-deploy web.** Org deletes now route through
+   `requestOrgDeletion` → mark `deleting` + revoke credentials + KV eviction, drained by the reaper. Rolling
+   back is unsetting the var + re-deploying (no migration) — the synchronous path resumes at once.
+5. **Later, retire the synchronous path.** Once the async path has soaked, `deleteOrgWithAudit` + the flag can
+   be removed and `requestOrgDeletion` made unconditional. Not before — the flag is the safety net.
