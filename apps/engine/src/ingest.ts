@@ -612,6 +612,10 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
 
   // ACK once both artifacts are durable. A dedup no-op (inserted=false) is still a success.
   deps.log("ingest.captured", {
+    // The received→delivered correlation key (Slice 3.5): events.id = the Standard Webhooks webhook-id,
+    // logged 100% + unsampled so a delivery log keyed on it joins receive→deliver. In-CF sink → an opaque
+    // id is allowed here (ADR-0125); it is NEVER a metric label or an exported-span attribute.
+    eventId,
     endpointId: endpoint.endpointId,
     inserted,
     dedupStrategy: derived.dedupStrategy,

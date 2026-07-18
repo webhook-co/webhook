@@ -31,6 +31,7 @@ import {
 } from "@webhook-co/db";
 import {
   b64ToBytes,
+  emitMetric,
   importAuditKey,
   readSecretBinding,
   type DeliverResult,
@@ -209,6 +210,22 @@ export class DeliveryDO extends DurableObject<Env> {
             );
           },
           now: () => Date.now(),
+          // 100% correlation log (keyed by eventId — received→delivered, Slice 3.5).
+          log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+          // Bounded delivery RED metrics to Analytics Engine; guarded so a telemetry fault never wedges a drain.
+          metric: (name, labels, value) => {
+            try {
+              emitMetric(this.env.METRICS, name, labels, value);
+            } catch (err) {
+              console.log(
+                JSON.stringify({
+                  message: "delivery.metric_failed",
+                  metric: name,
+                  error: String(err),
+                }),
+              );
+            }
+          },
         }),
       );
       // Re-arm target, read AFTER the drain's writes so it reflects the new pending/terminal states.

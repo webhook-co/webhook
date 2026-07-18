@@ -1184,4 +1184,14 @@ describe("handleIngest — per-endpoint dedup config threads to the key (Slice 2
     for (const m of calls.metrics)
       for (const v of Object.values(m.labels)) expect(v).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
   });
+
+  it("ingest.captured logs the event id — the received→delivered correlation key (Slice 3.5)", async () => {
+    const { deps, calls } = makeDeps();
+    await handleIngest(req(GOOD), deps);
+    const f = calls.logs.find((l) => l.event === "ingest.captured")!.fields;
+    // an opaque id in an IN-CF log is allowed (ADR-0125); it is the SAME identity handed to ingest_event
+    // (events.id = the Standard Webhooks webhook-id), so a delivery log keyed on it joins receive→deliver.
+    expect(typeof f.eventId).toBe("string");
+    expect(f.eventId).toBe(calls.ingest[0]!.id);
+  });
 });
