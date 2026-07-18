@@ -3,21 +3,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const requireOrgAccess = vi.fn();
 vi.mock("./org-access", () => ({ requireOrgAccess: () => requireOrgAccess() }));
 
-const readAuditChain = vi.fn(async () => [{ seq: 1 }]);
+// The action now STREAMS the chain via verifyAuditChainPaged (#636) — it reads + walks the chain itself and
+// returns the verdict, so it's the one collaborator to stub. It needs WebCrypto + a real key + real rows, so
+// it can't run here; the paged reader's own correctness lives in packages/db's real-Postgres suite.
+const verifyAuditChainPaged = vi.fn(async () => ({ ok: true, rowsVerified: 1 }));
 vi.mock("@webhook-co/db/audit-append", () => ({
-  readAuditChain: (...a: unknown[]) => readAuditChain(...a),
+  verifyAuditChainPaged: (...a: unknown[]) => verifyAuditChainPaged(...a),
 }));
 vi.mock("@webhook-co/db/client", () => ({
   withTenant: (_app: unknown, _org: string, fn: (tx: unknown) => unknown) => fn({}),
 }));
 
-const verifyAuditChain = vi.fn(async () => ({ ok: true, rowsVerified: 1 }));
-// PARTIAL mock: stub only verifyAuditChain (it needs WebCrypto + a real key) and keep the REAL
-// isAuditReaderRole. A gate tested against a hand-rolled copy of itself is green and worthless — the real
-// predicate could drift to `true` for a member and every test here would still pass.
+// PARTIAL mock: keep the REAL isAuditReaderRole. A gate tested against a hand-rolled copy of itself is green
+// and worthless — the real predicate could drift to `true` for a member and every test here would still pass.
 vi.mock("@webhook-co/shared", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@webhook-co/shared")>()),
-  verifyAuditChain: (...a: unknown[]) => verifyAuditChain(...a),
 }));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) as CryptoKey }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array(32) }));
@@ -54,7 +54,7 @@ function form(afterSeq: string): FormData {
 beforeEach(() => {
   vi.clearAllMocks();
   requireOrgAccess.mockResolvedValue({ userId: "u_1", orgId: "org_1", role: "owner" });
-  verifyAuditChain.mockResolvedValue({ ok: true, rowsVerified: 1 });
+  verifyAuditChainPaged.mockResolvedValue({ ok: true, rowsVerified: 1 });
   loadAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
   loadAuthAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
   verifyAuthAuditChain.mockResolvedValue({ ok: true, rowsVerified: 1 });
@@ -67,8 +67,7 @@ describe("the audit role gate", () => {
   it("REFUSES a plain member — and reads nothing", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
     expect(await verifyAuditChainAction("acme")).toEqual({ status: "forbidden" });
-    expect(readAuditChain).not.toHaveBeenCalled();
-    expect(verifyAuditChain).not.toHaveBeenCalled();
+    expect(verifyAuditChainPaged).not.toHaveBeenCalled();
   });
 
   it("REFUSES a plain member the list too", async () => {
@@ -87,11 +86,11 @@ describe("verifyAuditChainAction", () => {
   it("walks the whole chain and reports the verdict", async () => {
     const res = await verifyAuditChainAction("acme");
     expect(res).toEqual({ status: "ok", verification: { ok: true, rowsVerified: 1 } });
-    expect(readAuditChain).toHaveBeenCalled();
+    expect(verifyAuditChainPaged).toHaveBeenCalled();
   });
 
   it("reports a BREAK verbatim — with where it broke, not a reassuring boolean", async () => {
-    verifyAuditChain.mockResolvedValueOnce({
+    verifyAuditChainPaged.mockResolvedValueOnce({
       ok: false,
       rowsVerified: 3,
       break: { kind: "hash_mismatch", seq: 4, detail: "row 4 does not recompute" },
@@ -104,7 +103,7 @@ describe("verifyAuditChainAction", () => {
   });
 
   it("returns an error result rather than throwing when the read fails", async () => {
-    readAuditChain.mockRejectedValueOnce(new Error("db down"));
+    verifyAuditChainPaged.mockRejectedValueOnce(new Error("db down"));
     expect(await verifyAuditChainAction("acme")).toEqual({ status: "error" });
   });
 });

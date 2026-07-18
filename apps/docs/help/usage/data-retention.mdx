@@ -1,0 +1,30 @@
+---
+title: "Data retention"
+sidebarTitle: "Data retention"
+description: "How long webhook.co keeps your events before they're automatically removed — a window that grows with your plan."
+icon: "clock-rotate-left"
+---
+
+Captured events — including their stored payloads — are kept for a **retention window**, then
+automatically removed. The window **grows with your plan**.
+
+## How long events are kept
+
+- **Free** — events are kept for **7 days**.
+- **Paid plans** — a longer window, up to a year on Enterprise. See the
+  [pricing page](https://www.webhook.co/pricing) for each plan's exact retention.
+
+After the window passes, older events are pruned automatically. Retention doesn't change your
+usage — an event was counted when it was captured, whether or not it's still within the window.
+
+## Deleting an event early
+
+Separately from retention, you can delete an individual event yourself at any time — its content is
+redacted immediately and its payload purged shortly after. As with retention, this doesn't lower your
+usage (the event was already counted). See [events & usage](/events-and-usage) for the details.
+
+<Note>
+  Need a longer window than your plan offers? [Upgrade](/help/billing/manage-your-subscription), or
+  [forward events to a destination](/guides/send-to-a-destination) you control so you keep your own
+  copy.
+</Note>

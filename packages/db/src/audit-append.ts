@@ -18,12 +18,15 @@
 import {
   computeAuditRowHash,
   formatAuditActor,
+  verifyAuditChainChunk,
   type AuditActor,
+  type AuditChainCursor,
+  type AuditChainResult,
   type AuditEntry,
   type StoredAuditRow,
 } from "@webhook-co/shared";
 
-import type { Sql, TenantTx } from "./client";
+import { withTenant, type Sql, type TenantTx } from "./client";
 
 /** The caller-supplied fields for a new audit row (seq is assigned by the service). */
 export interface AuditAppendInput {
@@ -169,37 +172,130 @@ export async function listAuditEntries(
   return { items, nextSeq: hasMore ? (items[items.length - 1]?.seq ?? null) : null };
 }
 
+interface AuditRowShape {
+  org_id: string;
+  seq: string | number;
+  actor: string | null;
+  action: string;
+  target: string | null;
+  prev_hash: Uint8Array | null;
+  row_hash: Uint8Array;
+}
+
+const toStoredRow = (r: AuditRowShape): StoredAuditRow => ({
+  orgId: r.org_id,
+  seq: Number(r.seq),
+  actor: r.actor,
+  action: r.action,
+  target: r.target,
+  prevHash: toBytes(r.prev_hash),
+  rowHash: toBytes(r.row_hash)!,
+});
+
 /**
- * Read an org's full audit chain (ascending seq) as StoredAuditRow[], ready for
- * verifyAuditChain. Runs under the caller's RLS context, so it returns exactly this
- * org's rows. For very large chains, page this — the walker is streaming-friendly.
+ * Read an org's full audit chain (ascending seq) as StoredAuditRow[], ready for verifyAuditChain. Runs under
+ * the caller's RLS context, so it returns exactly this org's rows. UNBOUNDED — the whole chain in memory; for
+ * verification prefer {@link verifyAuditChainPaged}, which streams it a page at a time (#636).
  */
 export async function readAuditChain(tx: TenantTx, orgId: string): Promise<StoredAuditRow[]> {
-  const rows = await tx<
-    {
-      org_id: string;
-      seq: string | number;
-      actor: string | null;
-      action: string;
-      target: string | null;
-      prev_hash: Uint8Array | null;
-      row_hash: Uint8Array;
-    }[]
-  >`
+  const rows = await tx<AuditRowShape[]>`
     select org_id, seq, actor, action, target, prev_hash, row_hash
     from audit_log
     where org_id = ${orgId}
     order by seq asc`;
+  return rows.map(toStoredRow);
+}
 
-  return rows.map((r) => ({
-    orgId: r.org_id,
-    seq: Number(r.seq),
-    actor: r.actor,
-    action: r.action,
-    target: r.target,
-    prevHash: toBytes(r.prev_hash),
-    rowHash: toBytes(r.row_hash)!,
-  }));
+/**
+ * A keyset position in the audit-log's PHYSICAL ordering: the last read row's `(seq, id)`. `id` is the
+ * `bigserial` primary key, so `(seq, id)` is a TOTAL order even on a tampered chain that duplicated a seq —
+ * which a seq-only keyset could not page safely: with two rows sharing seq N, `seq > N` skips the second one
+ * whenever the page boundary falls between them, and the whole-chain verifier's `duplicate_seq` detection is
+ * lost (#636 review). Ordering and paging by the compound key never skips or re-reads a boundary row.
+ */
+export interface AuditPageCursor {
+  readonly seq: number;
+  /** The `bigserial` PK as text — only ever compared in SQL, never used for arithmetic here. */
+  readonly id: string;
+}
+
+/** One page of an org's audit chain in physical `(seq asc, id asc)` order, plus the keyset to resume after
+ *  it (null once the chain is exhausted). Backed by the `unique (org_id, seq)` index. `after === null` reads
+ *  from the very START — so the true minimum row is seen and a forged pre-genesis row (`seq <= 0`) is caught,
+ *  exactly as the whole-chain verifier would; a `seq > 0` first page would silently skip it (#636 review). */
+export async function readAuditChainPage(
+  tx: TenantTx,
+  orgId: string,
+  after: AuditPageCursor | null,
+  limit: number,
+): Promise<{ rows: StoredAuditRow[]; nextCursor: AuditPageCursor | null }> {
+  const rows = await tx<(AuditRowShape & { id: string })[]>`
+    select id, org_id, seq, actor, action, target, prev_hash, row_hash
+    from audit_log
+    where org_id = ${orgId}
+      ${after ? tx`and (seq, id) > (${after.seq}::bigint, ${after.id}::bigint)` : tx``}
+    order by seq asc, id asc
+    limit ${limit}`;
+  const last = rows[rows.length - 1];
+  return {
+    rows: rows.map(toStoredRow),
+    nextCursor: last ? { seq: Number(last.seq), id: last.id } : null,
+  };
+}
+
+/** How many audit rows to hold in memory per verification page. Bounds the Worker's peak memory independent
+ *  of chain length (#636); the `unique (org_id, seq)` index makes each page a cheap range read. */
+export const AUDIT_CHAIN_PAGE_SIZE = 1000;
+
+/**
+ * Verify an org's whole audit chain WITHOUT materialising it — read it a page at a time and walk each page
+ * with {@link verifyAuditChainChunk}, carrying the prior page's tail cursor across the boundary so every
+ * check (seq contiguity, prev_hash link, HMAC, duplicate/genesis) holds exactly as the whole-chain form does.
+ * Fixes #636: `readAuditChain` returned the ENTIRE chain, an unbounded result set that grows with org age — a
+ * Worker OOM risk.
+ *
+ * Takes the pool (`app`), not a transaction: each page is read in its OWN short `withTenant` transaction, so
+ * the pooled connection is RELEASED between pages instead of being pinned open across the whole (CPU-bound)
+ * per-row HMAC verification — which, on a long chain, could exceed an idle-in-transaction/statement timeout
+ * or starve concurrent tenant requests (#636 review). The HMAC walk runs between reads, outside any tx.
+ *
+ * The whole-chain form read every row in ONE MVCC snapshot; paging spans several. That does NOT weaken the
+ * verdict here, because `audit_log` is append-only WORM: the `no_update`/`no_delete`/`no_truncate` triggers
+ * make mid-chain rows immutable, so the ONLY concurrent change to an org's chain is a new row appended at the
+ * TAIL. A tail append between two page reads simply lets the walk verify a longer (still-contiguous) prefix —
+ * it can neither delete a row already read nor insert one before the cursor, so no page boundary can tear.
+ * (A superuser tamper that bypasses the WORM triggers is exactly what a verify is meant to CATCH; racing one
+ * mid-verify is no different from verifying a millisecond before or after it.)
+ */
+export async function verifyAuditChainPaged(
+  app: Sql,
+  orgId: string,
+  key: CryptoKey,
+  pageSize: number = AUDIT_CHAIN_PAGE_SIZE,
+): Promise<AuditChainResult> {
+  // A non-positive pageSize would read `limit 0` (or negative), get an empty first page, and FALSELY report
+  // any chain — even a tampered one — as valid. Refuse it rather than silently certify nothing (#636 review).
+  if (!Number.isInteger(pageSize) || pageSize < 1) {
+    throw new RangeError(
+      `verifyAuditChainPaged pageSize must be a positive integer, got ${pageSize}`,
+    );
+  }
+  let cursor: AuditChainCursor | null = null; // chain-LINK cursor (seq, rowHash) for verifyAuditChainChunk
+  let after: AuditPageCursor | null = null; // READ keyset cursor (seq, id)
+  let verified = 0;
+  for (;;) {
+    const { rows, nextCursor } = await withTenant(app, orgId, (tx) =>
+      readAuditChainPage(tx, orgId, after, pageSize),
+    );
+    if (rows.length === 0) break;
+    const result = await verifyAuditChainChunk(key, orgId, rows, cursor, verified);
+    if (!result.ok) return result;
+    cursor = result.tail;
+    verified = result.rowsVerified;
+    after = nextCursor;
+    if (rows.length < pageSize) break; // a short page is the tail of the chain
+  }
+  return { ok: true, rowsVerified: verified };
 }
 
 /** A per-org audit-chain head: the latest (seq, row_hash) for an org. */

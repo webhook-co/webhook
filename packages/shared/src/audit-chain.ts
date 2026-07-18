@@ -45,33 +45,53 @@ export type AuditChainResult =
   | { readonly ok: true; readonly rowsVerified: number }
   | { readonly ok: false; readonly rowsVerified: number; readonly break: AuditChainBreak };
 
+/** The failure variant, shared by AuditChainResult and AuditChunkResult (so `broken` fits both). */
+type AuditChainBroken = Extract<AuditChainResult, { ok: false }>;
+
 function broken(
   kind: AuditBreakKind,
   seq: number,
   detail: string,
   rowsVerified: number,
-): AuditChainResult {
+): AuditChainBroken {
   return { ok: false, rowsVerified, break: { kind, seq, detail } };
 }
 
+/** A verification position: the last verified row's (seq, rowHash), carried between chunks. */
+export interface AuditChainCursor {
+  readonly seq: number;
+  readonly rowHash: Uint8Array;
+}
+
+/** The result of verifying ONE chunk: on success, the cumulative count + the tail cursor to resume from. */
+export type AuditChunkResult =
+  | { readonly ok: true; readonly rowsVerified: number; readonly tail: AuditChainCursor | null }
+  | (AuditChainResult & { readonly ok: false });
+
 /**
- * Walk a per-org audit chain and return the first break (kind + seq) on failure, or
- * `{ ok: true }`. Rows may arrive in any order — they are sorted by seq first. An empty
- * set is vacuously valid. The key must be the same HMAC key the chain was written with.
+ * Verify ONE contiguous chunk of a per-org audit chain, resuming from `prior` (the previous chunk's tail
+ * cursor, or null for the first chunk / genesis). This is what lets the chain be verified PAGE BY PAGE without
+ * materialising the whole thing (#636): the only state that crosses a page boundary is the prior row's (seq,
+ * rowHash), which `prior`/`tail` carry — so the seq-contiguity and prev_hash-link checks hold across pages
+ * exactly as they do within one. Rows within the chunk may arrive in any order (sorted by seq first); the
+ * caller must feed chunks in ascending seq order. `priorVerified` is the running count so a mid-chunk break
+ * reports the true cumulative `rowsVerified`.
  */
-export async function verifyAuditChain(
+export async function verifyAuditChainChunk(
   key: CryptoKey,
   orgId: string,
   rows: readonly StoredAuditRow[],
-): Promise<AuditChainResult> {
+  prior: AuditChainCursor | null,
+  priorVerified: number,
+): Promise<AuditChunkResult> {
   const sorted = [...rows].sort((a, b) => a.seq - b.seq);
 
-  let verified = 0;
+  let verified = priorVerified;
   // The prior row's (seq, rowHash) move together — null before the genesis row, both
   // present after it. Modelling them as ONE nullable object makes that invariant visible
   // to the type system (no `prevRowHash!` non-null assertion, no way to set one without
-  // the other).
-  let prev: { seq: number; rowHash: Uint8Array } | null = null;
+  // the other). Seeded from `prior` so a continuation chunk's first row is checked as a link, not a genesis.
+  let prev: AuditChainCursor | null = prior;
 
   for (const row of sorted) {
     if (row.orgId !== orgId) {
@@ -144,5 +164,20 @@ export async function verifyAuditChain(
     prev = { seq: row.seq, rowHash: row.rowHash };
   }
 
-  return { ok: true, rowsVerified: verified };
+  return { ok: true, rowsVerified: verified, tail: prev };
+}
+
+/**
+ * Walk a per-org audit chain and return the first break (kind + seq) on failure, or `{ ok: true }`. Rows may
+ * arrive in any order — they are sorted by seq first. An empty set is vacuously valid. The key must be the
+ * same HMAC key the chain was written with. This is the whole-chain form (all rows in memory); for a large
+ * chain, verify it page-by-page with {@link verifyAuditChainChunk} (see verifyAuditChainPaged in the db pkg).
+ */
+export async function verifyAuditChain(
+  key: CryptoKey,
+  orgId: string,
+  rows: readonly StoredAuditRow[],
+): Promise<AuditChainResult> {
+  const result = await verifyAuditChainChunk(key, orgId, rows, null, 0);
+  return result.ok ? { ok: true, rowsVerified: result.rowsVerified } : result;
 }

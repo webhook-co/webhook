@@ -175,6 +175,38 @@
               "help/your-account/connected-apps",
               "help/your-account/delete-your-account"
             ]
+          },
+          {
+            "group": "Organizations & members",
+            "icon": "building",
+            "pages": [
+              "help/organizations/overview",
+              "help/organizations/organizations-and-teams",
+              "help/organizations/create-an-organization",
+              "help/organizations/invite-and-manage-members",
+              "help/organizations/roles-and-permissions",
+              "help/organizations/rename-and-url",
+              "help/organizations/delete-an-organization"
+            ]
+          },
+          {
+            "group": "Billing & plans",
+            "icon": "credit-card",
+            "pages": [
+              "help/billing/overview",
+              "help/billing/plans-and-pricing",
+              "help/billing/manage-your-subscription",
+              "help/billing/refunds"
+            ]
+          },
+          {
+            "group": "Usage & limits",
+            "icon": "gauge",
+            "pages": [
+              "help/usage/overview",
+              "help/usage/alerts-and-caps",
+              "help/usage/data-retention"
+            ]
           }
         ]
       },
