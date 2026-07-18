@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
+import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
@@ -210,27 +211,38 @@ describe("flushOrgTail", () => {
     expect(calls).toEqual([]);
   });
 
-  it("is resumable — completes a tail day a partial prior re-roll left open (#637)", async () => {
-    // The re-roll is now one bounded rollup_usage per day, not one unbounded statement over N days. Its
-    // contract is that a partial roll (some days done, the rest still open) is FINISHED by a re-run rather
-    // than being all-or-nothing. Simulate a prior partial: roll only 07-04, leave 07-05 unrolled + open.
+  it("re-rolls with ONE bounded rollup_usage statement per day, not one over N days (#637)", async () => {
+    // The fix's whole point: the re-roll must be per-day-bounded statements, not a single unbounded
+    // generate_series over the window. A `debug` hook counts the rollup_usage calls the flush actually issues:
+    // the new per-day loop makes exactly `rerollDays` of them; the old single-statement form made 1. So this
+    // FAILS if anyone reverts to the unbounded roll (the exact revenue-path regression #637 removed) — a
+    // guard the count-preserving behavioural tests can't give. reroll window = [cutoff-(settleDays+2),
+    // cutoff-1] = [07-03..07-06] = 4 days.
     const { orgId, endpointId } = await seedOrg();
-    await seedEvents(orgId, endpointId, 40, "2026-07-04");
-    await seedEvents(orgId, endpointId, 60, "2026-07-05");
-    await withTenant(app, orgId, async (tx) => {
-      await tx`set local time zone 'UTC'`;
-      await tx`select rollup_usage('2026-07-04'::date::timestamptz)`;
+    await seedEvents(orgId, endpointId, 10, "2026-07-05");
+
+    let rollupCalls = 0;
+    // A dedicated app-role client with prepare:false so each rollup arrives as full SQL text the debug hook
+    // can match (a prepared statement would send the text once then execute by name).
+    const countingApp = postgres(pg.urlFor({ role: DB_ROLES.app }), {
+      prepare: false,
+      fetch_types: false,
+      max: 2,
+      debug: (_conn, query) => {
+        if (query.includes("rollup_usage(")) rollupCalls++;
+      },
     });
+    try {
+      await flushOrgTail(
+        { app: countingApp, stripe: fakeSink().sink, eventName: EVENT_NAME },
+        { orgId, floorDay: FLOOR, periodEndMs: PERIOD_END_MS, settleDays: SETTLE_DAYS },
+      );
+    } finally {
+      await countingApp.end();
+    }
 
-    const res = await flush(orgId, fakeSink().sink);
-
-    // The flush rolls the REMAINING day and freezes BOTH, with correct counts — not just the day it happened
-    // to roll first.
-    expect(res.finalized).toBe(2);
-    const days = await usageDays(orgId);
-    expect(days.filter((d) => d.finalized).map((d) => d.day)).toEqual(["2026-07-04", "2026-07-05"]);
-    expect(days.find((d) => d.day === "2026-07-04")?.count).toBe(40);
-    expect(days.find((d) => d.day === "2026-07-05")?.count).toBe(60);
+    // rerollDays = SETTLE_DAYS(2) + REROLL_MARGIN_DAYS(2) = 4 → four separate bounded statements.
+    expect(rollupCalls).toBe(4);
   });
 
   it("does not double-bill when the normal reporter runs after a flush", async () => {

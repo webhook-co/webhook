@@ -86,8 +86,10 @@ export async function flushOrgTail(
   // every day in a SINGLE statement — each call does a full-day count(*) over events + delivery_attempts, so
   // on a real-volume org that one statement was unbounded, and this runs on the REVENUE path (the
   // invoice.created draft-grace flush): if it didn't finish, the tail never reached Stripe, silently. Now
-  // each day is independently bounded, and a partial failure is RESUMABLE rather than all-or-nothing —
-  // rollup_usage upserts, so a re-run re-rolls the already-done days as a no-op and finishes the rest.
+  // each day is independently bounded, and a partial failure is RESUMABLE rather than all-or-nothing: the
+  // days that committed stay committed, and a re-run is safe because rollup_usage is IDEMPOTENT — it re-runs
+  // the full recount for an already-rolled-but-still-OPEN day (same result, not free), and its
+  // `where finalized_at is null` guard makes it a true no-op only for a day already frozen.
   for (const day of rerollDayList) {
     await withTenant(deps.app, orgId, async (tx) => {
       await tx`set local time zone 'UTC'`;
