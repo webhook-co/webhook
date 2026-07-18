@@ -775,10 +775,10 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
  */
 export async function resolveSince(
   tx: TenantTx,
-  // `endpointId` is OPTIONAL and no longer READ: once `now` became wall-clock, all four `since` kinds resolve
-  // without touching the endpoint. Endpoint-scoped callers still pass it (harmless); the ORG-WIDE tail seed
-  // omits it entirely — there is no endpoint to name. (Fully dropping the param is task #27's dedupe.)
-  opts: { readonly endpointId?: string; readonly since: Exclude<Since, { kind: "invalid" }> },
+  // Scope-agnostic: once `now` became wall-clock, all four `since` kinds resolve without touching the
+  // endpoint, so there is NO `endpointId` — an org-wide seed has no endpoint to name, and an endpoint-scoped
+  // caller resolves the same boundary and applies the endpoint filter downstream (in tailEvents), not here.
+  opts: { readonly since: Exclude<Since, { kind: "invalid" }> },
 ): Promise<Cursor | undefined> {
   const { since } = opts;
   if (since.kind === "beginning") return undefined;

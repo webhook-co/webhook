@@ -296,9 +296,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       const endpoint = await getEndpoint(tx, endpointId, { includeDeleted: true });
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
       // Resolve `--since` to a cursor ONCE (after the guard, under RLS), then iterate by it.
-      const from = parsedSince
-        ? await resolveSince(tx, { endpointId, since: parsedSince })
-        : decoded;
+      const from = parsedSince ? await resolveSince(tx, { since: parsedSince }) : decoded;
       const tailed = await tailEvents(tx, { endpointId, sinceCursor: from });
       return { page: tailed, meta: await tailMeta(tx, { endpointId, sinceCursor: from }) };
     });

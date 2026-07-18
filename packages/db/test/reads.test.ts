@@ -1315,7 +1315,7 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
     const parsed = parseSince(sinceStr);
     if (parsed.kind === "invalid") throw new Error(`unexpected invalid --since: ${sinceStr}`);
     return withTenant(app, orgA, async (tx) => {
-      const cursor = await resolveSince(tx, { endpointId, since: parsed });
+      const cursor = await resolveSince(tx, { since: parsed });
       const page = await tailEvents(tx, { endpointId, sinceCursor: cursor, limit: 50 });
       return page.items.map((e) => e.id);
     });
@@ -1350,7 +1350,7 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
     await seedEvent(orgA, epNow, { provider: "stripe" });
 
     const { cursor, dbNow } = await withTenant(app, orgA, async (tx) => {
-      const cursor = await resolveSince(tx, { endpointId: epNow, since: { kind: "now" } });
+      const cursor = await resolveSince(tx, { since: { kind: "now" } });
       // The reference clock is the DB's, NOT the test runner's — the cursor is now()-derived, and on the
       // remote nightly the runner and Neon are different hosts, so a runner Date.now() comparison could go
       // negative from clock skew (a red nightly that is not a regression — the trap this lane has hit).
@@ -1414,12 +1414,8 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
   it("resolve-once is stable for a timestamp (no clock drift between calls)", async () => {
     const parsed = parseSince("2026-06-01T00:00:01.500Z");
     if (parsed.kind === "invalid") throw new Error("x");
-    const c1 = await withTenant(app, orgA, (tx) =>
-      resolveSince(tx, { endpointId: epTail, since: parsed }),
-    );
-    const c2 = await withTenant(app, orgA, (tx) =>
-      resolveSince(tx, { endpointId: epTail, since: parsed }),
-    );
+    const c1 = await withTenant(app, orgA, (tx) => resolveSince(tx, { since: parsed }));
+    const c2 = await withTenant(app, orgA, (tx) => resolveSince(tx, { since: parsed }));
     expect(c1).toEqual(c2);
   });
 });
