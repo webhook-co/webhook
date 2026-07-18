@@ -1,4 +1,5 @@
 import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+import { geist } from "../fonts";
 
 export const Hello = () => {
   const frame = useCurrentFrame();
@@ -9,7 +10,7 @@ export const Hello = () => {
       data-theme="dark"
       style={{ fontSize: "5rem" }}
     >
-      <span style={{ opacity }}>hello, webhook.co</span>
+      <span style={{ opacity, fontFamily: geist.fontFamily }}>hello, webhook.co</span>
     </AbsoluteFill>
   );
 };
