@@ -2,11 +2,13 @@
 //
 // One <AbsoluteFill> composing the film's scenes as time-shifted
 // <Sequence from={...} durationInFrames={...}> blocks, per the §5 frame table.
-// Act I (S1–S5, frames 0–360) and Act II (S6–S11, frames 360–900) are built
-// here. The AbsoluteFill base is dark (--term-bg) for the dark terminal acts
-// (S1–S5, S10–S11); the light dashboard acts (S6–S9) each paint their own
-// off-white base via <DotsBackground theme="light">, which covers the dark base
-// full-frame — so no base switch is needed here, the scenes compose directly.
+// The full film is built here: Act I (S1–S5, 0–360), Act II (S6–S11, 360–900),
+// Act III (S12–S17, 900–1560), and Act IV (S18–S20, 1560–1800) — 1800 frames.
+// The AbsoluteFill base is dark (--term-bg) for the dark terminal acts
+// (S1–S5, S10–S16); the light acts (S6–S9 dashboard, S18–S20 close) each paint
+// their own off-white base via <DotsBackground theme="light">, which covers the
+// dark base full-frame — so no base switch is needed here, the scenes compose
+// directly.
 // Each scene reads useCurrentFrame() as 0 at its own start because the enclosing
 // <Sequence> time-shifts it, so scenes are authored in scene-local frames.
 //
@@ -35,6 +37,9 @@ import { S14 } from "./scenes/S14";
 import { S15 } from "./scenes/S15";
 import { S16 } from "./scenes/S16";
 import { S17 } from "./scenes/S17";
+import { S18 } from "./scenes/S18";
+import { S19 } from "./scenes/S19";
+import { S20 } from "./scenes/S20";
 import { colors } from "./tokens";
 import type { Format } from "./tokens";
 
@@ -106,10 +111,21 @@ export function PromoMaster({ format = "16x9" }: PromoMasterProps) {
         <S17 format={format} />
       </Sequence>
 
-      {/* TODO: ACT IV — CLOSE, S18–S20 (frames 1560–1800) to be added next.
-          Act IV closes on the light page (hero + signature line + wordmark +
-          trust band). The master composition already reserves the full
-          1800-frame duration. */}
+      {/* ACT IV — CLOSE (frames 1560–1800). The light page: the hero headline
+          resolves (S18), the signature line + wordmark land (S19), and the
+          minimal off-white end card with the trust band holds (S20). Each Act IV
+          scene paints its own off-white base via <DotsBackground theme="light">,
+          covering the dark AbsoluteFill base full-frame. The film is complete
+          (0–1800). */}
+      <Sequence from={1560} durationInFrames={90}>
+        <S18 format={format} />
+      </Sequence>
+      <Sequence from={1650} durationInFrames={90}>
+        <S19 format={format} />
+      </Sequence>
+      <Sequence from={1740} durationInFrames={60}>
+        <S20 format={format} />
+      </Sequence>
     </AbsoluteFill>
   );
 }
