@@ -1,0 +1,55 @@
+---
+title: "A tour of the dashboard"
+sidebarTitle: "The dashboard"
+description: "Where to find your endpoints, events, deliveries, team, and settings in the webhook.co dashboard."
+icon: "table-columns"
+---
+
+The [dashboard](https://app.webhook.co) is organized around your **organization** — the workspace that
+holds everything. If you belong to more than one, you can switch between them; each has its own
+endpoints, events, team, and billing.
+
+## The main areas
+
+<CardGroup cols={2}>
+  <Card title="Endpoints" icon="inbox">
+    Your ingest URLs. Create an endpoint, see its URL, pause or resume it, and configure
+    [deduplication](/deduplication) and the provider secret used to
+    [verify](/guides/verify-inbound-signatures) its traffic.
+  </Card>
+  <Card title="Events" icon="list">
+    Every captured request, searchable and filterable. Open one to inspect the full payload,
+    headers, and its [verification state](/concepts/inbound-verification).
+  </Card>
+  <Card title="Deliveries" icon="paper-plane">
+    The outbound side — each attempt to forward an event to a destination, with its status and any
+    error. See [handle delivery failures](/guides/handle-delivery-failures).
+  </Card>
+  <Card title="Destinations" icon="location-arrow">
+    The services you forward events to. An HTTPS allowlist, each with its own retry and signing.
+  </Card>
+  <Card title="Credentials" icon="key">
+    Your `whk_` [API keys](/authentication) and the devices signed in via the CLI. Create, rotate,
+    or revoke them here.
+  </Card>
+  <Card title="Team" icon="users">
+    The people in your organization and their [roles](/concepts/security). Invite members and manage
+    access.
+  </Card>
+</CardGroup>
+
+## Billing and settings
+
+- **Billing** — your plan, current usage, and (on paid plans) your payment method and invoices.
+- **Settings** — your organization's name, URL, and logo.
+
+## Your account menu
+
+Separately from any organization, your account menu holds your own **profile** (name and avatar),
+**sign-in and security**, the **organizations** you belong to, and the **connected apps** you've
+authorized. See [your account](/help/your-account/overview).
+
+<Note>
+  Some areas are read-only depending on your role — for example, only owners and admins manage
+  billing or the team. See [roles and what each can do](/concepts/security).
+</Note>

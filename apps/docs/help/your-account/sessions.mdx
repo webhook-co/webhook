@@ -1,0 +1,41 @@
+---
+title: "Sessions & signing out"
+sidebarTitle: "Sessions"
+description: "How webhook.co sessions work, and how to sign out — everywhere at once when you need to."
+icon: "arrow-right-from-bracket"
+---
+
+A **session** is what keeps you signed in after you authenticate. webhook.co checks each session
+against its records on every request, so when a session ends, access stops **immediately** — there's
+no lingering window.
+
+## Sign out
+
+Use the sign-out control in your account menu to end your session on the current device.
+
+## Sign out everywhere
+
+Some actions end **all** your sessions at once, so you're signed out on every device and have to sign
+in again:
+
+- **Changing your email** signs you out everywhere as a safety measure — see
+  [change your email](/help/your-account/change-your-email).
+- **Deleting your account** ends every session as part of erasing it.
+
+<Note>
+  Signing in from the CLI is separate: `wbhk login` registers a device with its own credential.
+  Revoking that device from **Credentials** signs the CLI out and revokes the keys it created,
+  without touching your dashboard session. See
+  [authentication](/authentication#signing-in-from-the-cli).
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="How you sign in" icon="right-to-bracket" href="/help/your-account/sign-in-methods">
+    Manage your login methods.
+  </Card>
+  <Card title="Connected apps" icon="plug" href="/help/your-account/connected-apps">
+    Revoke apps you've authorized.
+  </Card>
+</CardGroup>
