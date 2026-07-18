@@ -37,7 +37,7 @@ export const RemotionRoot = () => (
       fps={30}
       width={1920}
       height={1080}
-      defaultProps={{ format: "16x9" }}
+      defaultProps={{ format: "16x9", music: true }}
     />
     <Composition
       id="promo-9x16"
@@ -46,7 +46,7 @@ export const RemotionRoot = () => (
       fps={30}
       width={1080}
       height={1920}
-      defaultProps={{ format: "9x16" }}
+      defaultProps={{ format: "9x16", music: true }}
     />
   </>
 );

@@ -14,12 +14,18 @@
 //
 // `format` is threaded down so scenes can switch layout / scale type for the
 // 9:16 cut (brief §8); the 16:9 master registers it via defaultProps in Root.
+//
+// Audio: narration (VO_CUES) is the primary track, always on, at full volume —
+// one time-shifted <Sequence><Audio/> per cue, mirroring the scene Sequences.
+// Music (MUSIC_SRC) is a secondary bed gated by the `music` prop and ducked
+// under narration via a pure function of the frame (deterministic — no state).
 
-import { AbsoluteFill, Sequence } from "remotion";
+import { Audio, AbsoluteFill, Sequence, staticFile } from "remotion";
 
 // Importing the promo fonts module once here registers Inter + JetBrains Mono
 // as a side effect, high in the tree (the scenes also import it transitively).
 import "./fonts";
+import { VO_CUES, MUSIC_SRC } from "./vo-cues";
 import { S1 } from "./scenes/S1";
 import { S2 } from "./scenes/S2";
 import { S3 } from "./scenes/S3";
@@ -45,11 +51,55 @@ import type { Format } from "./tokens";
 
 export interface PromoMasterProps {
   format?: Format;
+  music?: boolean;
 }
 
-export function PromoMaster({ format = "16x9" }: PromoMasterProps) {
+// Ducks the music bed under narration so the VO stays the primary track. Pure
+// over the frame number — no randomness, no state — so it renders
+// deterministically no matter which frame is requested. A short linear ramp
+// either side of a VO cue's boundary avoids an audible level jump/click.
+const MUSIC_DUCKED_VOLUME = 0.09;
+const MUSIC_OPEN_VOLUME = 0.2;
+const MUSIC_RAMP_FRAMES = 6;
+
+// Distance (in frames) from f to the nearest active-VO region: 0 while a cue
+// is playing, a small positive count while approaching or just past one
+// (either direction), and +Infinity when f is nowhere near any cue.
+function framesIntoNearestCue(f: number): number {
+  let best = Infinity;
+  for (const cue of VO_CUES) {
+    const start = cue.from;
+    const end = cue.from + cue.durationInFrames;
+    if (f >= start && f < end) return 0;
+    const distance = f < start ? start - f : f - end + 1;
+    if (distance < best) best = distance;
+  }
+  return best;
+}
+
+function musicVolumeAtFrame(f: number): number {
+  const distance = framesIntoNearestCue(f);
+  if (distance <= 0) return MUSIC_DUCKED_VOLUME;
+  if (distance >= MUSIC_RAMP_FRAMES) return MUSIC_OPEN_VOLUME;
+  const t = distance / MUSIC_RAMP_FRAMES;
+  return MUSIC_DUCKED_VOLUME + (MUSIC_OPEN_VOLUME - MUSIC_DUCKED_VOLUME) * t;
+}
+
+export function PromoMaster({ format = "16x9", music = true }: PromoMasterProps) {
   return (
     <AbsoluteFill style={{ backgroundColor: colors.termBg }}>
+      {/* Narration — primary track, always on, full volume (the Audio default). */}
+      {VO_CUES.map((cue) => (
+        <Sequence key={cue.src} from={cue.from} durationInFrames={cue.durationInFrames}>
+          <Audio src={staticFile(cue.src)} />
+        </Sequence>
+      ))}
+
+      {/* Music bed — secondary, gated by `music`, ducked under narration. */}
+      {music !== false ? (
+        <Audio src={staticFile(MUSIC_SRC)} volume={(f) => musicVolumeAtFrame(f)} />
+      ) : null}
+
       {/* ACT I — LAND (frames 0–360). */}
       <Sequence from={0} durationInFrames={90}>
         <S1 format={format} />
