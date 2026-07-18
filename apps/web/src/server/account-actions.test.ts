@@ -33,6 +33,12 @@ vi.mock("@webhook-co/db/org-lifecycle", () => ({
   deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
   classifyOwnedOrgs: (...a: unknown[]) => classifyOwnedOrgs(...a),
 }));
+// The async delete seam (dashboard org-delete uses it). deleteAccount must NEVER reach it — this spy proves
+// it: if a future change routed an account's org through deleteOrRequestOrg, the not-called assertions fail.
+const deleteOrRequestOrg = vi.fn(async () => {});
+vi.mock("./org-delete", () => ({
+  deleteOrRequestOrg: (...a: unknown[]) => deleteOrRequestOrg(...a),
+}));
 vi.mock("./db", () => ({ getTenantDb: async () => ({ end: async () => {} }) }));
 const deleteAccountRpc = vi.fn(async () => {});
 vi.mock("./env", () => ({
@@ -62,7 +68,10 @@ function form(confirm: string): FormData {
   return fd;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("deleteAccount", () => {
   it("erases the identity, clears the cookie, and redirects to LOGOUT — never LOGIN", async () => {
@@ -111,6 +120,17 @@ describe("deleteAccount", () => {
       soleOwnedSolo: [],
     });
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(/Acme Team/);
+  });
+
+  it("stays SYNCHRONOUS even with ASYNC_ORG_DELETION on — never routes an account's org through the async seam", async () => {
+    // The invariant behind keeping account delete sync (ADR-0123): the async mark would leave a `deleting`
+    // personal org, and a failed identity delete would then strand the account (bootstrap won't recreate a
+    // lingering `deleting` row). So deleteAccount must hard-delete synchronously regardless of the flag.
+    vi.stubEnv("ASYNC_ORG_DELETION", "true");
+    await expect(deleteAccount(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
+    expect(deleteOrgWithAudit).toHaveBeenCalledTimes(1); // the one solo-owned org, hard-deleted in-line
+    expect(deleteOrRequestOrg).not.toHaveBeenCalled(); // the async seam is unreachable from here
+    expect(deleteAccountRpc).toHaveBeenCalledWith("usr_1");
   });
 
   it("erases EVERY solo-owned org, not just the personal one (a cross-org orphan is still an orphan)", async () => {

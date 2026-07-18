@@ -8,8 +8,11 @@ import { getAsyncOrgDeletionEnabled } from "./env";
 /**
  * Delete an org, routing through the async or synchronous path per the ASYNC_ORG_DELETION flag (#665).
  *
- * Shared by both delete surfaces — the single-org `deleteOrganization` and the `deleteAccount` loop over a
- * user's solo-owned orgs — so the flag-gate and the credential-cache eviction live in exactly one place.
+ * Used by the DASHBOARD org-delete (`deleteOrganization`) ONLY. Account deletion (`deleteAccount`) deliberately
+ * does NOT route through this seam — it always calls the synchronous `deleteOrgWithAudit` directly, even when
+ * the flag is on, so a failed identity-delete can't strand the surviving account with an unrecreatable
+ * `deleting` personal org (ADR-0123 / the deleteAccount header). So the flag-gate + credential-cache eviction
+ * live here for the one surface that uses them.
  *
  * When async is enabled, `requestOrgDeletion` marks the org `deleting` (the reaper drains its rows) and
  * revokes its credentials in the DB, returning the revoked key hashes; we MUST then evict those from KV_AUTHZ

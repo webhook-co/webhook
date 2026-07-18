@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// deleteOrRequestOrg is the single seam both delete surfaces (deleteOrganization + the deleteAccount loop)
-// route through, so the ASYNC_ORG_DELETION flag branch and the KV credential eviction are decided in ONE
-// place. This file is that decision's only guard — the callers mock deleteOrRequestOrg out entirely.
+// deleteOrRequestOrg is the seam the DASHBOARD org-delete (deleteOrganization) routes through, so the
+// ASYNC_ORG_DELETION flag branch and the KV credential eviction are decided in ONE place. (Account deletion
+// does NOT use it — it stays synchronous even under the flag; see account-actions.test.ts.) This file is that
+// decision's only guard — the caller mocks deleteOrRequestOrg out entirely.
 //
 // The invariant with teeth: when async is ON, the reaper leaves the org row alive for its whole drain window,
 // so a revoked key must be evicted from KV_AUTHZ or it keeps authenticating against a still-existing org. The
