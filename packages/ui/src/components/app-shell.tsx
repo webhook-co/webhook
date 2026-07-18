@@ -208,10 +208,10 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
   ) => {
     const navClass = cn(
       "relative flex h-9 items-center gap-2.5 rounded-control px-2.5 text-base text-fg-secondary",
-      // Sub-items sit a step deeper than a top-level label — indented past the "└" tree connector drawn in
-      // their gutter (see `contents`) so the parent→child relationship reads at a glance. The extra ~6px over
-      // a bare label-alignment (2.375rem) is what makes the item look tucked UNDER its parent, not beside it.
-      nested && "pl-[2.75rem]",
+      // Sub-items sit a clear step deeper than a top-level label — indented well past the "└" tree connector
+      // drawn in their gutter (see `contents`) so the parent→child relationship reads at a glance and the item
+      // looks tucked UNDER its parent, not beside it. The connector's horizontal reach tracks this indent.
+      nested && "pl-[3.25rem]",
       "transition-colors hover:bg-surface-sunken hover:text-fg",
       "outline-none focus-visible:shadow-[var(--wh-focus-ring)]",
       "[&_svg]:size-[1.125rem] [&_svg]:shrink-0",
@@ -233,7 +233,7 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
           <span
             aria-hidden="true"
             data-nav-connector=""
-            className="pointer-events-none absolute left-5 top-0 h-1/2 w-2.5 rounded-bl-[6px] border-b border-l border-strong"
+            className="pointer-events-none absolute left-5 top-0 h-1/2 w-4 rounded-bl-[6px] border-b border-l border-strong"
           />
         ) : null}
         {icon}
