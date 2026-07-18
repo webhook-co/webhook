@@ -4,6 +4,16 @@ packages:
   - "ee/*"
   - "infra"
 
+catalog:
+  remotion: 4.0.491
+  "@remotion/cli": 4.0.491
+  "@remotion/bundler": 4.0.491
+  "@remotion/renderer": 4.0.491
+  "@remotion/google-fonts": 4.0.491
+  "@remotion/tailwind-v4": 4.0.491
+  react: 19.2.7
+  react-dom: 19.2.7
+
 # pnpm 10 reads build-script allowlists here (moved out of package.json's "pnpm" field).
 onlyBuiltDependencies:
   - esbuild
