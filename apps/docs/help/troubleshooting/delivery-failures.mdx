@@ -10,14 +10,18 @@ what each means and what to do.
 
 ## Delivery states
 
-| State                | What it means                                                                                                       | What to do                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `queued` / `pending` | Waiting to be sent, or in flight.                                                                                   | Nothing — it's working.                                                                 |
-| `delivered`          | The destination returned a success (2xx).                                                                           | Nothing.                                                                                |
-| `failed`             | A retryable error — a non-2xx response or a timeout.                                                                | Fix the receiver; it will retry on schedule.                                            |
-| `dead`               | Retries were exhausted (all attempts over ~32h).                                                                    | Fix the receiver, then [replay](/guides/replay-past-or-failed-event) the missed events. |
-| `blocked`            | The destination resolved to a private/internal address and the SSRF guard refused it. **Terminal** — never retried. | Point the destination at a publicly reachable HTTPS URL.                                |
-| `cancelled`          | The delivery was cancelled (e.g. the destination was disabled).                                                     | Re-enable the destination and replay if needed.                                         |
+| State                | What it means                                                                                                       | What to do                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `queued` / `pending` | Waiting to be sent, or in flight.                                                                                   | Nothing — it's working.                                                                                 |
+| `delivered`          | The destination returned a success (2xx).                                                                           | Nothing.                                                                                                |
+| `failed`             | A retryable error — a non-2xx response or a timeout.                                                                | Fix the receiver; it will retry on schedule.                                                            |
+| `dead`               | Retries were exhausted (all attempts over ~32h).                                                                    | Fix the receiver, then [replay](/guides/replay-past-or-failed-event) the missed events.                 |
+| `blocked`            | The destination resolved to a private/internal address and the SSRF guard refused it. **Terminal** — never retried. | Point the destination at a publicly reachable HTTPS URL.                                                |
+| `cancelled`          | The destination was **deleted** while the delivery was still open. **Terminal.**                                    | Recreate the destination and [replay](/guides/replay-past-or-failed-event) if you still need the event. |
+
+You may also see **`forwarded`** — that's the record of replaying an event to your **own machine** with
+the CLI (`wbhk listen` / `wbhk replay`), where the CLI made the request. It's not a delivery to a
+destination, and it doesn't count as usage.
 
 ## How retries work
 

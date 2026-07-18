@@ -16,8 +16,9 @@ Nothing showing up? Work through these in order — most "missing webhook" cases
   <Step title="Is the endpoint paused?">
     A paused endpoint answers new requests with a `429` so the provider holds and retries rather
     than dropping the event. If you see a **"Capture is paused"** banner, you've either paused the
-    endpoint or hit your [usage cap](/help/usage/alerts-and-caps) — resume or raise your limit, and
-    held events redeliver.
+    endpoint or hit your [usage cap](/help/usage/alerts-and-caps) — resume or raise your limit so
+    new requests are captured again. (webhook.co doesn't buffer requests while paused; the retryable
+    `429` is what makes a well-behaved provider redeliver.)
   </Step>
   <Step title="Did the provider actually send it?">
     Check the provider's own webhook/delivery logs. If the provider shows a delivery to your URL,

@@ -7,13 +7,15 @@ icon: "triangle-exclamation"
 
 ## Common errors
 
-| You see                     | What it means                                                      | What to do                                                                                                                 |
-| --------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| **401 unauthorized**        | The API key is missing, malformed, expired, or revoked.            | Check the `Authorization: Bearer` header and that the key is live. If it leaked, [revoke and replace it](/leaked-api-key). |
-| **403 forbidden**           | The key is valid but missing the **scope** the action needs.       | Mint a key with the right scope rather than over-provisioning one. `whoami` shows a key's scopes.                          |
-| **404 not found**           | The resource doesn't exist, or isn't visible to your organization. | Cross-organization resources return `404`, not `403` — we don't confirm things you can't see.                              |
-| **429 (from the provider)** | Your endpoint is **paused**, so ingest returns a retryable `429`.  | [Resume the endpoint](/help/usage/alerts-and-caps) or raise your usage limit — held events redeliver.                      |
-| **A delivery is `blocked`** | The destination resolved to a private/internal address.            | Point it at a public HTTPS URL. See [delivery failures](/help/troubleshooting/delivery-failures).                          |
+| You see                     | What it means                                                      | What to do                                                                                                                              |
+| --------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **401 unauthorized**        | The API key is missing, malformed, expired, or revoked.            | Check the `Authorization: Bearer` header and that the key is live. If it leaked, [revoke and replace it](/leaked-api-key).              |
+| **403 forbidden**           | The key is valid but missing the **scope** the action needs.       | Mint a key with the right scope rather than over-provisioning one. `whoami` shows a key's scopes.                                       |
+| **404 not found**           | The resource doesn't exist, or isn't visible to your organization. | Cross-organization resources return `404`, not `403` — we don't confirm things you can't see.                                           |
+| **409 endpoint paused**     | An API call targets a **paused** endpoint.                         | [Resume the endpoint](/help/usage/alerts-and-caps), or wait, then retry.                                                                |
+| **429 rate limited** (API)  | Your API requests were throttled.                                  | Back off and retry. See [rate limits](/reference/rate-limits).                                                                          |
+| **429 at your ingest URL**  | Your endpoint is **paused**, so ingest answers a retryable `429`.  | [Resume the endpoint](/help/usage/alerts-and-caps) or raise your usage limit; the retryable `429` is what makes the provider redeliver. |
+| **A delivery is `blocked`** | The destination resolved to a private/internal address.            | Point it at a public HTTPS URL. See [delivery failures](/help/troubleshooting/delivery-failures).                                       |
 
 The full status-code taxonomy is in the [errors reference](/reference/errors).
 
