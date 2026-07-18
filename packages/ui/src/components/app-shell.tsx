@@ -6,6 +6,17 @@ import { cn } from "../lib/cn";
 import { IconButton } from "./icon-button";
 import { Wordmark } from "./mark";
 
+// The nav's list-reset + column rhythm, defined ONCE. This is the crux of the nested-list nav: the same
+// `list-none m-0 p-0` reset and `gap-0.5` between-item rhythm must hold on every list level (top list, each
+// section's list, the Events sub-list) and every list item, or the sidebar's spacing drifts and a stray
+// bullet/margin creeps back in on one level. Four verbatim copies of this string used to invite exactly that.
+//   - NAV_LIST_RESET: strips the list marker/margin/padding (Tailwind's own reset already does this; we state
+//     it so nothing downstream reintroduces it). Used on the plain item `<li>`.
+//   - NAV_LIST: the reset plus the flex column + 2px gap. Used on every `<ul>` and on a section's grouping
+//     `<li>`. Kept as the prettier-tailwind-sorted literal so the emitted className is byte-for-byte unchanged.
+const NAV_LIST_RESET = "m-0 list-none p-0";
+const NAV_LIST = "m-0 flex list-none flex-col gap-0.5 p-0";
+
 export interface AppShellProps {
   /** The page content, rendered in the scrollable main canvas. */
   children: React.ReactNode;
@@ -87,7 +98,7 @@ export function AppShell({
             drop the list entirely. The flex column + `gap-0.5` rhythm that used to live on the <nav> moves
             here, onto the list, so the visual layout is unchanged. Sections and sub-items nest as real child
             lists (see AppNavSection / AppNavItem). */}
-        <ul role="list" className="m-0 flex list-none flex-col gap-0.5 p-0">
+        <ul role="list" className={NAV_LIST}>
           {sidebar}
         </ul>
       </nav>
@@ -233,16 +244,13 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
     // aria-current onto it, and we re-parent the icon/label/count INSIDE it — so the anchor the router
     // controls is the same anchor the user clicks. Wrapping it instead would nest <a> inside <a> (invalid,
     // and it would defeat the router).
+    const child = React.isValidElement(children)
+      ? (children as React.ReactElement<{ children?: React.ReactNode }>)
+      : null;
     const anchor =
-      asChild && React.isValidElement(children) ? (
+      asChild && child ? (
         <Slot ref={ref} aria-current={active ? "page" : undefined} className={navClass} {...props}>
-          {React.cloneElement(
-            children as React.ReactElement<{ children?: React.ReactNode }>,
-            undefined,
-            contents(
-              (children as React.ReactElement<{ children?: React.ReactNode }>).props.children,
-            ),
-          )}
+          {React.cloneElement(child, undefined, contents(child.props.children))}
         </Slot>
       ) : (
         <a ref={ref} aria-current={active ? "page" : undefined} className={navClass} {...props}>
@@ -256,10 +264,10 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
     // sub-item had as a flat sibling; the sub-list itself carries no indent (that lives on the anchor, via
     // `nested`), so the sub-item's fill stays full-width.
     return (
-      <li className={cn("m-0 list-none p-0", subNav != null && "flex flex-col gap-0.5")}>
+      <li className={cn(NAV_LIST_RESET, subNav != null && "flex flex-col gap-0.5")}>
         {anchor}
         {subNav != null ? (
-          <ul role="list" className="m-0 flex list-none flex-col gap-0.5 p-0">
+          <ul role="list" className={NAV_LIST}>
             {subNav}
           </ul>
         ) : null}
@@ -288,7 +296,7 @@ export interface AppNavSectionProps {
 export function AppNavSection({ label, children, className }: AppNavSectionProps) {
   const labelId = React.useId();
   return (
-    <li className="m-0 flex list-none flex-col gap-0.5 p-0">
+    <li className={NAV_LIST}>
       <p
         id={labelId}
         className={cn(
@@ -298,7 +306,7 @@ export function AppNavSection({ label, children, className }: AppNavSectionProps
       >
         {label}
       </p>
-      <ul role="list" aria-labelledby={labelId} className="m-0 flex list-none flex-col gap-0.5 p-0">
+      <ul role="list" aria-labelledby={labelId} className={NAV_LIST}>
         {children}
       </ul>
     </li>
