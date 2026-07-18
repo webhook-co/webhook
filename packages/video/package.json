@@ -1,0 +1,38 @@
+{
+  "name": "@webhook-co/video",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "tsx src/render.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@webhook-co/ui": "workspace:*",
+    "remotion": "catalog:",
+    "@remotion/cli": "catalog:",
+    "@remotion/google-fonts": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "catalog:",
+    "@remotion/renderer": "catalog:",
+    "@remotion/tailwind-v4": "catalog:",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "@testing-library/react": "^16.3.2",
+    "jsdom": "^29.1.1",
+    "tailwindcss": "^4.3.2",
+    "tsx": "^4.19.2",
+    "vitest": "^4.1.10"
+  }
+}
