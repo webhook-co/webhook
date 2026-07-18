@@ -6,7 +6,7 @@ import {
   METRIC_LABEL_ALLOWLIST,
   METRIC_LABEL_KEYS,
   TELEMETRY_METRICS,
-} from "./telemetry-catalog.js";
+} from "./telemetry-catalog";
 
 // The whole catalog as the guard consumes it — this is the check running against the real contract.
 const REAL_CATALOG = { labelAllowlist: METRIC_LABEL_KEYS, metrics: TELEMETRY_METRICS };

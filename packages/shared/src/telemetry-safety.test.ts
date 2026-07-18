@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { spanSafeAttributes } from "./telemetry-safety.js";
+import { spanSafeAttributes } from "./telemetry-safety";
 
 describe("spanSafeAttributes", () => {
   test("drops url.path / url.full / url.query — they can carry the ingest bearer token", () => {

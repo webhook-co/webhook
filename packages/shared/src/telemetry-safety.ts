@@ -5,7 +5,7 @@
 // Cloudflare's managed root span (which is why native trace export is removed from token-bearing
 // workers — see ADR-0124/0125), so it must be the sole path by which our code emits attributes.
 
-import { LOGGABLE_HEADER_ALLOWLIST, redactSecret } from "./redaction.js";
+import { LOGGABLE_HEADER_ALLOWLIST, redactSecret } from "./redaction";
 
 /** Primitive attribute value — the only shapes an OTel attribute / AE blob may hold. */
 export type SafeAttributeValue = string | number | boolean;
