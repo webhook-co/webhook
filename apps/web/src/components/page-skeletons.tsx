@@ -56,18 +56,33 @@ export function TableSkeleton({ rows = 5, columns = 4 }: { rows?: number; column
   );
 }
 
+/**
+ * The container shape a skeleton borrows from the page it stands in for. Both live on `PageContainer`; a
+ * skeleton that leaves them at the default while its page is `narrow`/`gap-6` renders 100px too wide and
+ * re-flows the whole column the instant real content arrives — the exact jump these skeletons exist to avoid.
+ * Omit both to inherit `PageContainer`'s own defaults (860px, gap-8), so existing callers are unchanged.
+ */
+interface ContainerShape {
+  /** Reading measure — matches the page's `PageContainer size`. Default 860px; `narrow` is 760px. */
+  size?: "default" | "narrow";
+  /** Vertical rhythm — matches the page's `PageContainer gap`. Defaults to gap-8; card pages pass "gap-6". */
+  gap?: string;
+}
+
 /** The standard "heading, then a table" list page. */
 export function ListPageSkeleton({
   label,
   rows = 6,
   columns = 4,
+  size,
+  gap,
 }: {
   label: string;
   rows?: number;
   columns?: number;
-}) {
+} & ContainerShape) {
   return (
-    <PageContainer aria-busy>
+    <PageContainer aria-busy size={size} gap={gap}>
       <HeaderSkeleton />
       <TableSkeleton rows={rows} columns={columns} />
       <span className="sr-only">{`Loading ${label}…`}</span>
@@ -76,9 +91,14 @@ export function ListPageSkeleton({
 }
 
 /** A page built from stacked cards (dashboard overview, billing). */
-export function CardsPageSkeleton({ label, cards = 2 }: { label: string; cards?: number }) {
+export function CardsPageSkeleton({
+  label,
+  cards = 2,
+  size,
+  gap,
+}: { label: string; cards?: number } & ContainerShape) {
   return (
-    <PageContainer aria-busy>
+    <PageContainer aria-busy size={size} gap={gap}>
       <HeaderSkeleton />
       {Array.from({ length: cards }).map((_, i) => (
         <CardSkeleton key={i} />
