@@ -11,6 +11,17 @@
   // per-version preview URLs stay on so CI can validate/preview a build without touching prod.
   "workers_dev": false,
   "preview_urls": true,
+  // Native tracing (S6 · ADR-0124), dashboard-only (no `destinations`; free during the beta). SAFE to trace:
+  // this is a static marketing site — every url.path is a public marketing route and the Worker reads only a
+  // whitelisted set of UTM query keys (src/lib/analytics.ts), never a secret — so CF's auto fetch span (which
+  // records url.path/url.query with no redaction hook) leaks nothing. Enforced by tracing-safety-guard.mjs.
+  // 5% head sampling: `run_worker_first` means EVERY asset request would otherwise be traced; a small sample
+  // is plenty for a static site and the other 95% pay zero overhead.
+  // NOTE: `traces.enabled` is CF's independent tracing switch — it does NOT require the `observability.enabled`
+  // logs master flag (CF's canonical enablement is exactly `{observability:{traces:{enabled:true}}}`). www
+  // deliberately does NOT set `observability.enabled` (that would turn on Workers Logs at 100% for a
+  // high-traffic static site — a separate cost decision). Do not add it to "match" api/get.
+  "observability": { "traces": { "enabled": true, "head_sampling_rate": 0.05 } },
   "assets": {
     "directory": "./out",
     // The Worker defers to static assets via this binding (env.ASSETS.fetch) — which applies
