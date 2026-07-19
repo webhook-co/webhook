@@ -48,10 +48,10 @@ Each captured event prints one line — timestamp, provider, signature result, i
 forwarding it to your local server (example output):
 
 ```text
-2026-07-19T14:02:03.517Z  —       unverified  6b1f0c2a-9d84-4e02-b7a1-2c5f8e30a1bd
-forwarded 6b1f0c2a-9d84-4e02-b7a1-2c5f8e30a1bd → http://localhost:3000 · 200
-2026-07-19T14:02:11.884Z  github  verified    a0c33f19-72d6-4b58-8e41-6f9b0d2c4a77
-forwarded a0c33f19-72d6-4b58-8e41-6f9b0d2c4a77 → http://localhost:3000 · 200
+2026-07-19T14:02:03.517Z  —  unverified  6b1f0c2a-9d84-4e02-b7a1-2c5f8e30a1bd
+forwarded 6b1f0c2a-9d84-4e02-b7a1-2c5f8e30a1bd → http://localhost:3000 · 200 · 12ms
+2026-07-19T14:02:11.884Z  github  verified  a0c33f19-72d6-4b58-8e41-6f9b0d2c4a77
+forwarded a0c33f19-72d6-4b58-8e41-6f9b0d2c4a77 → http://localhost:3000 · 200 · 9ms
 ```
 
 `--forward` targets must be a full loopback URL (`http://localhost:3000`,
@@ -86,9 +86,10 @@ stopping at "no signatures found." Signing and verification follow the
 
 **Reliable outbound delivery.** Forward captured events to your own destinations with strict FIFO
 ordering (one Durable Object per destination), at-least-once delivery, retries on exponential backoff,
-and dead-lettering once a destination exhausts its retries. Deliveries are re-signed only for events
-`webhook.co` actually authenticated. Optional per-endpoint deduplication collapses repeats by
-Standard-Webhooks id, provider event id, a content hash, or JSON fields you choose.
+and dead-lettering once a destination exhausts its retries. Deliveries carry a fresh signature only
+for events `webhook.co` verified or authenticated; anything it couldn't vouch for is relayed unsigned.
+Optional per-endpoint deduplication collapses repeats by Standard-Webhooks id, provider event id, a
+content hash, or JSON fields you choose.
 
 **Replay on demand.** Re-send any captured event still within your retention window — to localhost or
 to a registered destination — to fix a handler or recover from an outage, without asking the provider
