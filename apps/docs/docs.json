@@ -263,6 +263,15 @@
     }
   },
   "description": "webhook.co documentation — a free, permanent, signed webhook URL with payload inspection, replay-to-localhost, inbound verification across 142 providers, outbound delivery, and an MCP webhook→agent trigger. Identical across CLI, API, dashboard, and MCP.",
+  "seo": {
+    "organization": {
+      "id": "https://www.webhook.co/#organization",
+      "name": "webhook.co",
+      "url": "https://www.webhook.co",
+      "logo": "https://www.webhook.co/logo.png",
+      "sameAs": ["https://github.com/webhook-co"]
+    }
+  },
   "contextual": {
     "options": ["copy", "view", "chatgpt", "claude", "cursor"]
   },
