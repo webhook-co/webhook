@@ -195,6 +195,48 @@ test("tracing enabled inside an env section of a forbidden worker is still caugh
   assert.match(v[0], /auth/);
 });
 
+test("tracing enabled in a top-level `previews` block of a forbidden worker is caught (union)", () => {
+  // anySection() includes previews; the credential-leak check must exercise it, not just env.<name>.
+  const configs = cleanRepo().map((c) =>
+    c.name === "mcp"
+      ? {
+          name: "mcp",
+          file: "wrangler.jsonc",
+          text: `{ "previews": { "observability": { "traces": { "enabled": true } } } }`,
+        }
+      : c,
+  );
+  const v = tracingSafetyViolations(configs);
+  assert.ok(v.some((m) => m.includes("mcp") && /traces block is present/i.test(m)));
+});
+
+test("tracing enabled in an env.<name>.previews block of a forbidden worker is caught (union)", () => {
+  const configs = cleanRepo().map((c) =>
+    c.name === "web"
+      ? {
+          name: "web",
+          file: "wrangler.jsonc",
+          text: `{ "env": { "production": { "previews": { "observability": { "traces": { "enabled": true } } } } } }`,
+        }
+      : c,
+  );
+  const v = tracingSafetyViolations(configs);
+  assert.ok(v.some((m) => m.includes("web") && /traces block is present/i.test(m)));
+});
+
+test("tracesConfigPresentAnySection also sees a previews block", () => {
+  assert.equal(
+    tracesConfigPresentAnySection(`{ "previews": { "observability": { "traces": {} } } }`),
+    true,
+  );
+  assert.equal(
+    tracesConfigPresentAnySection(
+      `{ "env": { "production": { "previews": { "observability": { "traces": {} } } } } }`,
+    ),
+    true,
+  );
+});
+
 test("a brand-new UNCLASSIFIED worker is a violation even with tracing OFF (forces the audit)", () => {
   const v = tracingSafetyViolations([...cleanRepo(), noTraces("newthing")]);
   assert.equal(v.length, 1);
