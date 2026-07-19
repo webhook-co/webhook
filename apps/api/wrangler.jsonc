@@ -7,8 +7,16 @@
   // and reads Postgres through postgres.js over Hyperdrive — both need Node built-ins in workerd.
   // (Matches apps/engine + apps/mcp; the auth-surface tests run in plain Node so they never exercised this.)
   "compatibility_flags": ["nodejs_compat"],
+  // Workers Logs (enabled) + native tracing (S6 · ADR-0124). Dashboard-only: no `destinations`, so spans stay
+  // in Cloudflare (free during the tracing beta, and the same residency as our Analytics Engine metrics). SAFE
+  // to trace: api reads its bearer strictly from the Authorization header, and its url.path/url.query carry
+  // only opaque resource ids + filters — never a secret — so CF's auto fetch span (which records url.path with
+  // no redaction hook) leaks nothing here. This is enforced by scripts/tracing-safety-guard.mjs, which forbids
+  // this block on any worker that puts a token in its URL (engine/auth/web/mcp/play). 20% head sampling: the
+  // control-plane API is the high-value trace target; head sampling means the other 80% pay zero overhead.
   "observability": {
     "enabled": true,
+    "traces": { "enabled": true, "head_sampling_rate": 0.2 },
   },
   // Hourly retention reconciler (S2b): the scheduled() handler re-derives each active subscription's entitled
   // retention window from Stripe and repairs any org stuck below it, so the prune can never delete a paying

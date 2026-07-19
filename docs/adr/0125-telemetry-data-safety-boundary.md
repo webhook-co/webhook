@@ -39,9 +39,12 @@ allowlist boundary; anything not on the list is dropped or redacted. Identifiers
 2. **Identifier tiers by sink:**
    - **Metric labels:** no tenant/org/endpoint/event id, and no URL, ever — labels are enums, templated routes,
      `plan`, or job names. This bounds cardinality (and cost) independent of tenant count.
-   - **In-CF sinks (Analytics Engine blobs, Workers Logs, Postgres):** opaque tenant/org/endpoint/event ids are
-     **allowed** — they are the point of operational triage, they stay within an existing Cloudflare
-     sub-processor, and AE keeps them off the single index so they don't drive cardinality.
+   - **In-CF sinks (Analytics Engine blobs, Workers Logs, Postgres, and the CF-dashboard trace store while
+     tracing is dashboard-only — ADR-0124 §3):** opaque tenant/org/endpoint/event ids are **allowed** — they are
+     the point of operational triage, they stay within an existing Cloudflare sub-processor, and AE keeps them off
+     the single index so they don't drive cardinality. Native tracing shipped dashboard-only (no `destinations`),
+     so its spans land in this in-CF tier; the founder's "allow identifiers, region-pinned" ruling (2026-07-19)
+     is satisfied here without any data leaving Cloudflare.
    - **Exported spans (to an off-platform, possibly cross-region backend):** **no tenant/org identifier**. An
      `org_id` mapping to an identifiable EU customer is pseudonymous personal data (GDPR Recital 26); exporting
      it to a new sub-processor is a residency/DPA decision, not a default. Per-tenant *external* trace

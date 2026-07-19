@@ -1,7 +1,7 @@
 # ADR-0124: OpenTelemetry observability — the inverted spine
 
-- **Status:** Accepted (S6; native-tracing phase gated — see Rollout)
-- **Date:** 2026-07-18
+- **Status:** Accepted (S6; slices 0–4 shipped — native tracing enabled dashboard-only on `api`/`www`/`get`)
+- **Date:** 2026-07-18 (updated 2026-07-19: slice 4 shipped — see Rollout)
 - **Relates to:** AGENTS.md ("Observability | OpenTelemetry"), ADR-0123 (async org deletion — the
   `delivery_attempts` correlation key already exists there), the ingest hot path (`apps/engine/src/ingest.ts`),
   the CLI-telemetry collector (`apps/telemetry`, Analytics Engine — a *naming* neighbour, not this system)
@@ -71,12 +71,22 @@ proven free of URL-embedded secrets.**
    `packages/shared/src/delivery-retry.ts`). A first-class W3C span **link** is a strictly better mechanism but
    is genuinely blocked by CF (`spanContext()` absent); it is deferred *and labelled as such*, not faked.
 
-3. **Native tracing is enabled for export only on workers with no URL-embedded secret** — candidate set
-   `api` / `www` / `get`, each gated on a per-worker URL-secret audit (not assumed). There it buys free
-   RPC/DO trace stitching and OTLP export to a backend. It is **removed** from `engine`, `auth`, `web`, and
-   `mcp` — not gated, removed — because (1) is a documented hard block with no redaction hook, and `persist:false`
-   still exports. Custom `enterSpan` spans, where used, route through a `spanSafeAttributes()` boundary
-   (ADR-0125) and are isolated in try/catch so a tracing fault can never prevent `ingest_event` / `r2.put`.
+3. **Native tracing is enabled only on workers with no URL-embedded secret, and dashboard-only (no export
+   destination).** The firsthand per-worker URL-secret audit (2026-07-19) cleared `api` / `www` / `get`
+   (bearer strictly in headers/body; path+query carry only opaque resource ids, filters, static routes) and
+   `telemetry` (body-only). It is **not** enabled on `engine` / `auth` / `web` / `mcp` / `play` — each carries a
+   secret in path or query, and CF's auto fetch span records `url.path`/`url.query` with no redaction hook.
+   Enablement is **dashboard-only**: `observability.traces.enabled` with **no `destinations`**, so spans are
+   collected/stored/viewed inside Cloudflare and never leave it (same residency as our Analytics Engine metrics),
+   and it is **free during the CF tracing beta** — the per-span billing that lands 2026-03-01 is on the external
+   *export* path we deliberately do not take. Each enabled worker declares a deliberate `head_sampling_rate`
+   (`api` 0.2, `www`/`get` 0.05); head-based sampling means non-sampled requests incur **zero** tracing overhead
+   (CF docs), and none of the three is on the ingest ACK hot path. This audit boundary is now a **checked
+   property**: `scripts/tracing-safety-guard.mjs` (wired into `pnpm lint`) fails the build if tracing is enabled
+   on any worker outside the audited-safe allowlist, if it is silently removed from an enabled worker, or if a
+   brand-new worker is added without a deliberate classification. Custom `enterSpan` spans, where later used,
+   route through the `spanSafeAttributes()` boundary (ADR-0125); v1 relies on CF's automatic instrumentation
+   (fetch / RPC / DO / DB subrequests) only — no custom spans, no `spanContext()` dependency.
 
 4. **The library path (`@microlabs/otel-cf-workers` / a vanilla SDK) is rejected for v1.** It is the only way to
    read a trace id (for a first-class ingest→delivery link) or to run a local sampler (forced-sampling-DoS
@@ -103,18 +113,34 @@ proven free of URL-embedded secrets.**
   reuse the same Analytics Engine *technique* but a distinct dataset/binding. The name collision is noted so
   neither is mistaken for the other.
 
-## Rollout (native-tracing phase is gated; slices 0–3.5 are not)
+## Rollout (slices 0–4 shipped)
 
 Slices 0–3.5 (redaction boundary + CI guard → bench-through-`handleIngest` baseline → I/O step timings → AE
-metrics + Postgres drop-detection → `correlation_id` + 100% logs) require no external vendor and no new prod
-secret; Analytics Engine is a binding, not a secret. The one operator step is applying the `correlation_id`
-migration to prod (a background agent is blocked from prod-DB credentials): the migration is inert (a nullable,
-forward-only column) and the deploy migration-guard holds the code behind it.
+metrics + Postgres drop-detection → `correlation_id`/`event_id` 100% logs) require no external vendor and no new
+prod secret; Analytics Engine is a binding, not a secret. The shipped correlation is **log-only on `events.id`**
+(the abandoned external-id column in migration 0090 means no new migration was needed) — a strictly-inert change.
 
-The native-tracing phase (slice 4, `api`/`www`/`get` only) is gated on: (a) a per-worker runtime URL-secret
-audit; (b) the founder's residency ruling on identifiers in *exported* spans (ADR-0125); (c) a disposable-deploy
-spike measuring ON-vs-OFF p99 **and** CPU-ms and settling whether `head_sampling` drops span *creation* or only
-*export*; (d) pinning wrangler to an exact version so a beta-schema change cannot wedge the shared generator. The
-export destination (endpoint + auth header) is created at the Cloudflare account/dashboard level and referenced
-by name in wrangler — so no OTLP secret is committed; if a library path is ever adopted, its auth header MUST be
-a Secrets Store secret, never a var.
+**Slice 4 (native tracing) shipped 2026-07-19, dashboard-only on `api`/`www`/`get`.** How the original gates
+resolved:
+
+- **(a) per-worker URL-secret audit — done, firsthand.** `api`/`www`/`get` cleared (bearer in header/body; no
+  secret in path/query); `telemetry` also cleared (body-only) but is not enabled in v1; `engine`/`auth`/`web`/
+  `mcp`/`play` confirmed unsafe. The audit is frozen into `scripts/tracing-safety-guard.mjs`, so it is enforced
+  on every future PR, not a one-time reading.
+- **(b) residency ruling on identifiers in exported spans — moot for v1, gate kept armed.** The founder chose
+  **dashboard-only** (no `destinations`), so spans never leave Cloudflare — the same residency as the AE metrics.
+  Identifiers are therefore permitted on this in-CF span sink (the founder's "allow, region-pinned" ruling); the
+  `spanSafeAttributes()` "forbid identifiers on export" gate stays in place for the day an external OTLP
+  destination is ever attached, at which point (b) must be re-answered before that destination is added.
+- **(c) p99 / CPU-ms spike — structurally bounded, deploy-time confirmation still recommended.** These three
+  workers are **off** the ingest ACK hot path (the engine, which is excluded); head-based sampling incurs **zero
+  overhead on non-sampled requests** (CF docs), and the rates are low. A disposable-deploy ON-vs-OFF spike is a
+  deploy-gated step a background agent cannot run; it is recommended as a confirmation but is not load-bearing
+  for dashboard-only tracing on non-hot-path workers.
+- **(d) wrangler beta-schema wedge — not a risk for this generator.** `gen-wrangler-prod.mjs` is string
+  token-replacement, not schema validation, so a `traces` schema change cannot wedge the shared generator; a
+  breaking change would surface as a deploy error on the one worker, not a cross-app block.
+
+**No OTLP secret is committed** and none exists — dashboard-only needs no destination. If an external destination
+is ever adopted, its endpoint is configured at the Cloudflare account level (not the repo) and any auth header
+MUST be a Secrets Store secret, never a `var`; adopting a library path re-opens decision (4) above.
