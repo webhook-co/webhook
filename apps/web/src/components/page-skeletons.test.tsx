@@ -25,4 +25,30 @@ describe("page skeletons", () => {
     const cells = container.querySelectorAll("[aria-hidden]");
     expect(cells.length).toBe(4 + 5 * 4);
   });
+
+  // Matching the page's shape is not just about the cards — it's the COLUMN too. The narrow settings/account
+  // pages use `PageContainer size="narrow"` (760px) with `gap-6`; a skeleton stuck at the default 860px/gap-8
+  // is 100px too wide and re-flows the whole column inward the instant the real content lands. So the wrapper
+  // must forward the page's own container width and rhythm.
+  it("forwards the container width and gap so the column doesn't jump", () => {
+    const { container } = render(
+      <CardsPageSkeleton label="settings" size="narrow" gap="gap-6" cards={2} />,
+    );
+    expect(container.firstChild).toHaveClass("max-w-[760px]");
+    expect(container.firstChild).toHaveClass("gap-6");
+    // Two cards to mirror the two panels the settings page renders.
+    expect(container.querySelectorAll(".rounded-card")).toHaveLength(2);
+  });
+
+  it("keeps the default width and rhythm when no size/gap is given", () => {
+    const { container } = render(<CardsPageSkeleton label="dashboard" />);
+    expect(container.firstChild).toHaveClass("max-w-[860px]");
+    expect(container.firstChild).toHaveClass("gap-8");
+  });
+
+  it("forwards width and gap on the list skeleton too", () => {
+    const { container } = render(<ListPageSkeleton label="events" size="narrow" gap="gap-6" />);
+    expect(container.firstChild).toHaveClass("max-w-[760px]");
+    expect(container.firstChild).toHaveClass("gap-6");
+  });
 });
