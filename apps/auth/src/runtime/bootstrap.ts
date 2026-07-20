@@ -15,7 +15,12 @@ import {
   bootstrapPersonalOrg,
   createClient,
   createCredentialHasherFromBase64,
+  normalizeFirstTouch,
+  personalOrgId,
   readUserProfile,
+  stampSignupMilestone,
+  type FirstTouch,
+  type RawFirstTouch,
   type Sql,
   type UserProfile,
 } from "@webhook-co/db";
@@ -26,6 +31,10 @@ export interface BootstrapUser {
   email?: string | null;
 }
 
+/** The empty first-touch — stamped (idempotently, first-touch-WINS) when an org is created with no known
+ *  acquisition source (an OAuth signup, or a self-heal-created org), so its signed_up_at is still recorded. */
+const NO_FIRST_TOUCH: FirstTouch = { source: null, medium: null, campaign: null };
+
 export interface BootstrapDeps {
   /** webhook_app connection string (HYPERDRIVE_TENANT). */
   tenantConnectionString: string;
@@ -33,6 +42,9 @@ export interface BootstrapDeps {
   credentialPepper: string;
   createClient: typeof createClient;
   bootstrap: typeof bootstrapPersonalOrg;
+  /** Stamp the signup milestone (signed_up_at + first-touch). Injected so the wiring is unit-testable, like
+   *  `bootstrap`. Best-effort: a failure is swallowed so it can never break signup. */
+  stamp: typeof stampSignupMilestone;
   makeHasher: typeof createCredentialHasherFromBase64;
   /** ctx.waitUntil — runs the session-create self-heal after the response (off the login hot path). */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -227,7 +239,11 @@ function isSlugCollision(error: unknown): boolean {
  * Only a slug collision is retried. A db outage is not a slug problem, and hammering it four more times would
  * just make an incident worse.
  */
-export async function bootstrapForUser(deps: BootstrapDeps, user: BootstrapUser): Promise<void> {
+export async function bootstrapForUser(
+  deps: BootstrapDeps,
+  user: BootstrapUser,
+  firstTouch?: FirstTouch,
+): Promise<void> {
   const client = deps.createClient(deps.tenantConnectionString, { max: 1 });
   try {
     const hasher = deps.makeHasher(deps.credentialPepper);
@@ -237,17 +253,36 @@ export async function bootstrapForUser(deps: BootstrapDeps, user: BootstrapUser)
     const name = personalOrgName(known);
 
     for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
+      let result: Awaited<ReturnType<typeof deps.bootstrap>>;
       try {
-        await deps.bootstrap(
+        result = await deps.bootstrap(
           client,
           { userId: known.id, slug: personalOrgSlug(known, attempt), name },
           hasher,
         );
-        return;
       } catch (error) {
         if (!isSlugCollision(error) || attempt === MAX_SLUG_ATTEMPTS - 1) throw error;
         deps.log?.("auth.bootstrap_slug_collision", { userId: known.id, attempt });
+        continue;
       }
+      // The org now exists — record its signup milestone. On the signup (user.create) path we carry the
+      // first-touch (utm) to stamp. On the self-heal path we carry none, but must STILL stamp signed_up_at
+      // when THIS run actually created the org (result.created) — otherwise a create-path bootstrap that
+      // blipped, recovered only by the self-heal, would leave an org with no milestone and thus missing from
+      // the signups funnel until (if ever) it becomes active and the rollup backfills it. An all-null touch
+      // is idempotent (first-touch-WINS/coalesce), and gating on `created` keeps the every-login self-heal a
+      // no-op for the ~always-already-bootstrapped user. BEST-EFFORT: a stamp failure is caught + logged +
+      // swallowed so it can never undo a signup. Awaited inline (signup is not a hot path) on this same
+      // webhook_app client, which the `finally` must not close first.
+      const touch = firstTouch ?? (result?.created ? NO_FIRST_TOUCH : undefined);
+      if (touch) {
+        try {
+          await deps.stamp(client, personalOrgId(known.id), touch);
+        } catch (error) {
+          deps.log?.("auth.first_touch_stamp_failed", { userId: known.id, reason: reason(error) });
+        }
+      }
+      return;
     }
   } catch (error) {
     deps.log?.("auth.bootstrap_failed", { userId: user.id, reason: reason(error) });
@@ -256,14 +291,49 @@ export async function bootstrapForUser(deps: BootstrapDeps, user: BootstrapUser)
   }
 }
 
+/** Pull raw utm_* out of a signup request URL. The marketing CTA appends `?utm_*` to the auth `/login` URL;
+ *  the login page folds them into the Better Auth `callbackURL`, so on the magic-link VERIFY request they
+ *  arrive nested inside the `callbackURL` query param (and, as a fallback, may sit directly on the request
+ *  URL). Absolute or relative URLs both parse. Pure + total: any parse failure yields all-undefined. */
+export function firstTouchFromUrl(requestUrl: string | undefined): RawFirstTouch {
+  const params = (url: string | undefined | null): URLSearchParams | null => {
+    if (!url) return null;
+    try {
+      return new URL(url, "https://auth.webhook.co").searchParams;
+    } catch {
+      return null;
+    }
+  };
+  const top = params(requestUrl);
+  const nested = params(top?.get("callbackURL"));
+  const pick = (k: string): string | undefined => nested?.get(k) ?? top?.get(k) ?? undefined;
+  return { source: pick("utm_source"), medium: pick("utm_medium"), campaign: pick("utm_campaign") };
+}
+
+/** Extract + normalize the first-touch from Better Auth's after-hook endpoint context (arg 2 of
+ *  `user.create.after`). Reads the create request's URL defensively (the context shape is library-internal),
+ *  so a magic-link signup yields the carried utm and an OAuth signup — whose callback URL carries only an
+ *  opaque `state` — yields an all-null touch (best-effort by design). Never throws. */
+export function extractFirstTouch(context: unknown): FirstTouch {
+  let url: string | undefined;
+  if (typeof context === "object" && context !== null) {
+    const c = context as { request?: { url?: unknown }; url?: unknown };
+    if (typeof c.request?.url === "string") url = c.request.url;
+    else if (typeof c.url === "string") url = c.url;
+  }
+  return normalizeFirstTouch(firstTouchFromUrl(url));
+}
+
 /** Better Auth databaseHooks that bootstrap on user creation + self-heal on session creation. */
 export function makeBootstrapHooks(deps: BootstrapDeps) {
   return {
-    // Primary: awaited so the org exists before signup completes (the user lands needing it).
+    // Primary: awaited so the org exists before signup completes (the user lands needing it). Better Auth
+    // passes the endpoint context as arg 2 — the create request — from which we capture the cookieless
+    // first-touch (utm_*) to stamp on the new org's signup milestone.
     user: {
       create: {
-        after: async (user: BootstrapUser): Promise<void> => {
-          await bootstrapForUser(deps, user);
+        after: async (user: BootstrapUser, context?: unknown): Promise<void> => {
+          await bootstrapForUser(deps, user, extractFirstTouch(context));
         },
       },
     },

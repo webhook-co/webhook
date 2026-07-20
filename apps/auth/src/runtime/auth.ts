@@ -18,6 +18,7 @@ import {
   bootstrapPersonalOrg,
   createClient,
   createCredentialHasherFromBase64,
+  stampSignupMilestone,
 } from "@webhook-co/db";
 import { betterAuth } from "better-auth";
 import { captcha } from "better-auth/plugins";
@@ -294,6 +295,7 @@ export async function makeAuth(env: AuthEnv, ctx?: AuthExecutionContext): Promis
     credentialPepper: secrets.credentialPepper,
     createClient,
     bootstrap: bootstrapPersonalOrg,
+    stamp: stampSignupMilestone,
     makeHasher: createCredentialHasherFromBase64,
     waitUntil: ctx ? (promise) => ctx.waitUntil(promise) : undefined,
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
