@@ -95,6 +95,19 @@ export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
+/**
+ * Narrow a `Uint8Array` to the `Uint8Array<ArrayBuffer>` that lib.dom's `BufferSource` requires. Under
+ * TS 6 a plain `Uint8Array` (`Uint8Array<ArrayBufferLike>`) is not assignable to `crypto.subtle`'s DOM
+ * `BufferSource` because its backing store could in theory be a `SharedArrayBuffer`. Every array we hand
+ * to WebCrypto is ArrayBuffer-backed, so this is a RUNTIME NO-OP that lets the engine typecheck under
+ * BOTH `@cloudflare/workers-types` AND lib.dom — i.e. be imported into a browser (apps/www) TS program
+ * for the interactive verifier. `importHmacKey` states the same invariant inline; this is the reusable
+ * form for the other WebCrypto call sites. Enforced by tsconfig.domcheck.json.
+ */
+export function domBytes(u: Uint8Array): Uint8Array<ArrayBuffer> {
+  return u as Uint8Array<ArrayBuffer>;
+}
+
 export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
   const total = arrays.reduce((n, a) => n + a.length, 0);
   const out = new Uint8Array(total);
@@ -134,19 +147,22 @@ export type HmacHash = "SHA-1" | "SHA-256" | "SHA-512";
  * stays byte-for-byte identical to packages/shared's mirror (enforced by bytes-parity.test.ts).
  */
 export function importHmacKeyForHash(raw: Uint8Array, hash: HmacHash): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash }, false, ["sign", "verify"]);
+  return crypto.subtle.importKey("raw", domBytes(raw), { name: "HMAC", hash }, false, [
+    "sign",
+    "verify",
+  ]);
 }
 
 /** Compute HMAC-SHA256(key, message) and return the raw MAC bytes. */
 export async function hmacSha256(secret: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
   const key = await importHmacKey(secret);
-  const mac = await crypto.subtle.sign("HMAC", key, message);
+  const mac = await crypto.subtle.sign("HMAC", key, domBytes(message));
   return new Uint8Array(mac);
 }
 
 /** Compute the SHA-256 digest of `data` and return the raw 32 hash bytes (e.g. Twilio's bodySHA256). */
 export async function sha256(data: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", domBytes(data)));
 }
 
 /** Precomputed IEEE 802.3 CRC-32 table (polynomial 0xEDB88320). */
