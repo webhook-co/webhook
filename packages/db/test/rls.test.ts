@@ -32,6 +32,12 @@ const TENANT_TABLES = [
   // Daily delivery-outcome rollup for the dashboard overview (migration 0063). Full org-scoped CRUD
   // (the hourly rollup upserts under RLS; the page reads under RLS) — same shape as `usage`.
   { table: "delivery_stats", col: "org_id" },
+  // Activation instrumentation (migration 0092). Per-org first-activation milestones + per-ISO-week
+  // activity — full org-scoped CRUD (the hourly rollup upserts under RLS; a tenant reads its own). Each
+  // ALSO carries a role-targeted `for select to webhook_owner` policy so the confined SECURITY DEFINER
+  // review fn can aggregate them cross-org (dedupes into the SELECT command in the shape check below).
+  { table: "activation_org_milestones", col: "org_id" },
+  { table: "activation_org_weekly", col: "org_id" },
   { table: "org_limits", col: "org_id" },
   { table: "ingest_paused", col: "org_id" },
   { table: "usage_alerts", col: "org_id" },
@@ -87,6 +93,11 @@ const RLS_EXEMPT = new Set([
   // user/session/account/verification. Access is by GRANT to the auth runtime role (webhook_auth) ONLY — the
   // OTP hash it holds must never be readable from the tenant/app role.
   "pending_email_change",
+  // Metric-exclusion list (0092): the internal/test/founder orgs kept out of every activation metric.
+  // Secured purely by OWNERSHIP — no org RLS and NO webhook_app grant, so a tenant has zero access and
+  // cannot self-exclude to game the metric. The SECURITY DEFINER review fn (owner) reads it via ownership;
+  // ops seeds it via the provider connection. Same posture as processed_stripe_events (GRANT-scoped, no RLS).
+  "activation_org_exclusions",
 ]);
 
 // Deterministic, seed-by-length Buffer for fixture bytea values (NOT random — stable
@@ -1653,6 +1664,12 @@ describe("no unexpected SECURITY DEFINER functions", () => {
    * The properties that make it safe are asserted below — the allowlist entry is not taken on trust.
    */
   const ALLOWED_SECURITY_DEFINERS = [
+    // The founder's weekly activation review (0092). SECURITY DEFINER because the three activation tables
+    // are FORCE RLS: it aggregates them cross-org via role-targeted `for select to webhook_owner using(true)`
+    // policies — so the definer is POLICED by those policies, not bypassing RLS — and returns AGGREGATES ONLY
+    // (per-week counts + TTFV percentiles; never an org_id, never PII). search_path is pinned (anti-hijack).
+    // The exclusions table it also reads is owner-owned (no RLS), so ownership alone gates that read.
+    "activation_weekly_review",
     "current_user_profile",
     "org_member_directory",
     // The never-recycle guard on orgs.slug. SECURITY DEFINER because under webhook_app's own RLS the history
