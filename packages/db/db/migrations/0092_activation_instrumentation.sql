@@ -83,15 +83,26 @@ create table activation_org_exclusions (
   created_at timestamptz not null default now()
 );
 
+-- Partial index for the forward signal (the 0089 delivery_attempts_org_billable_idx idiom). status is a
+-- heap residual on delivery_attempts_org_ordered_idx (org_id, created_at), so the MIN(created_at) filtered to
+-- status='forwarded' and the per-week EXISTS(status='forwarded') would otherwise re-check status on the heap.
+-- 'forwarded' rows are uniquely the localhost-tunnel writer (packages/db/src/replay.ts), so this partial
+-- index stays small and serves both the milestone MIN and the weekly EXISTS index-only.
+create index delivery_attempts_org_forwarded_idx on delivery_attempts (org_id, created_at)
+  where status = 'forwarded';
+
 -- ============================================================================================
 -- 4) rollup_activation_milestones() — per-tenant (SECURITY INVOKER, webhook_app RLS). Fills signed_up_at
 --    (from orgs.created_at, for an org with no signup-stamp yet) and lowers first_capture/forward via LEAST
---    (set-once: a milestone only ever moves EARLIER; a late/replayed scan can never regress it). MIN scans
---    are index-served (events_org_recent_idx, delivery_attempts_org_ordered_idx). Idempotent.
+--    (set-once: a milestone only ever moves EARLIER; a late/replayed scan can never regress it). The capture
+--    MIN is served by events_org_ordered_idx (org_id, received_at, id — 0089); the forward MIN by the
+--    partial delivery_attempts_org_forwarded_idx added below. Self-pins UTC so bucketing never depends on the
+--    caller's session TimeZone. Idempotent.
 -- ============================================================================================
 create function rollup_activation_milestones() returns bigint
   language plpgsql
   security invoker
+  set timezone = 'UTC'
   as $$
 declare
   v_org uuid := current_org_id();
@@ -126,6 +137,7 @@ grant execute on function rollup_activation_milestones() to webhook_app;
 create function rollup_activation_weekly(p_week_start date) returns bigint
   language plpgsql
   security invoker
+  set timezone = 'UTC'
   as $$
 declare
   v_org uuid := current_org_id();
@@ -160,20 +172,26 @@ $$;
 grant execute on function rollup_activation_weekly(date) to webhook_app;
 
 -- ============================================================================================
--- 6) activation_weekly_review() — the founder's weekly review. SECURITY DEFINER (owner), search_path pinned
---    (anti-hijack), reads the three activation tables cross-org via the `to webhook_owner` policies above,
---    and returns AGGREGATES ONLY — never an org_id, never PII. Excludes activation_org_exclusions. One row
---    per ISO week combining the one-time funnel (signups/first_captures/first_forwards + TTFV, from
---    milestones) and the weekly-recurrence NSM (activated_orgs, from activation_org_weekly).
+-- 6) activation_weekly_review() — the founder's weekly review. SECURITY DEFINER (owner); search_path +
+--    timezone pinned (anti-hijack + tz-stable bucketing regardless of the caller's session). Reads the three
+--    activation tables cross-org via the `to webhook_owner` policies above, and returns AGGREGATES ONLY —
+--    never an org_id, never PII. Excludes activation_org_exclusions. One row per ISO week combines TWO
+--    differently-keyed views:
+--      • COHORT funnel keyed by SIGNUP week — signups, reached_capture, reached_forward, activation_rate
+--        (= reached_forward / signups, a true conversion bounded [0,1] because numerator and denominator are
+--        the SAME cohort), and TTFV. reached_* count how many of that week's signups EVER reached the
+--        milestone — right-censored for recent weeks (a fresh cohort hasn't had time to activate yet).
+--      • weekly-recurrence NSM keyed by ACTIVITY week — activated_orgs = distinct orgs that both captured
+--        and forwarded within that ISO week (the "weekly activated developers" north-star numerator).
 -- ============================================================================================
 create function activation_weekly_review()
   returns table (
     iso_week date,
     signups bigint,
-    first_captures bigint,
-    first_forwards bigint,
-    activated_orgs bigint,
+    reached_capture bigint,
+    reached_forward bigint,
     activation_rate numeric,
+    activated_orgs bigint,
     ttfv_median_hours numeric,
     ttfv_p90_hours numeric
   )
@@ -181,29 +199,29 @@ create function activation_weekly_review()
   stable
   security definer
   set search_path = public
+  set timezone = 'UTC'
   as $$
     with m as (
       select *
         from activation_org_milestones
        where org_id not in (select org_id from activation_org_exclusions)
     ),
-    signups as (
-      select date_trunc('week', signed_up_at)::date as wk, count(*) as n
-        from m group by 1
-    ),
-    caps as (
-      select date_trunc('week', first_capture_at)::date as wk, count(*) as n
-        from m where first_capture_at is not null group by 1
-    ),
-    fwds as (
-      select date_trunc('week', first_forward_at)::date as wk,
-             count(*) as n,
+    -- Cohort funnel keyed by SIGNUP week. reached_*, activation_rate and TTFV all derive from the SAME
+    -- signup cohort, so activation_rate = reached_forward / signups is a real conversion in [0,1] (never the
+    -- cross-cohort ratio that could exceed 1). percentile_cont ignores null latencies, so TTFV is over the
+    -- cohort's activated orgs only.
+    cohort as (
+      select date_trunc('week', signed_up_at)::date as wk,
+             count(*) as signups,
+             count(*) filter (where first_capture_at is not null) as reached_capture,
+             count(*) filter (where first_forward_at is not null) as reached_forward,
              percentile_cont(0.5) within group (
                order by extract(epoch from (first_forward_at - signed_up_at)) / 3600.0) as ttfv_median,
              percentile_cont(0.9) within group (
                order by extract(epoch from (first_forward_at - signed_up_at)) / 3600.0) as ttfv_p90
-        from m where first_forward_at is not null group by 1
+        from m group by 1
     ),
+    -- Weekly-recurrence NSM keyed by ACTIVITY week: distinct orgs that both captured and forwarded in W.
     active as (
       select iso_week as wk, count(*) as n
         from activation_org_weekly
@@ -211,36 +229,35 @@ create function activation_weekly_review()
          and org_id not in (select org_id from activation_org_exclusions)
        group by 1
     ),
-    weeks as (
-      select wk from signups
-      union select wk from caps
-      union select wk from fwds
-      union select wk from active
-    )
+    weeks as (select wk from cohort union select wk from active)
     select
       w.wk as iso_week,
-      coalesce(s.n, 0) as signups,
-      coalesce(c.n, 0) as first_captures,
-      coalesce(f.n, 0) as first_forwards,
+      coalesce(co.signups, 0) as signups,
+      coalesce(co.reached_capture, 0) as reached_capture,
+      coalesce(co.reached_forward, 0) as reached_forward,
+      case when coalesce(co.signups, 0) = 0 then 0
+           else round(coalesce(co.reached_forward, 0)::numeric / co.signups, 4) end as activation_rate,
       coalesce(a.n, 0) as activated_orgs,
-      case when coalesce(s.n, 0) = 0 then 0
-           else round(coalesce(f.n, 0)::numeric / s.n, 4) end as activation_rate,
-      round(f.ttfv_median::numeric, 4) as ttfv_median_hours,
-      round(f.ttfv_p90::numeric, 4) as ttfv_p90_hours
+      round(co.ttfv_median::numeric, 4) as ttfv_median_hours,
+      round(co.ttfv_p90::numeric, 4) as ttfv_p90_hours
     from weeks w
-    left join signups s on s.wk = w.wk
-    left join caps c on c.wk = w.wk
-    left join fwds f on f.wk = w.wk
+    left join cohort co on co.wk = w.wk
     left join active a on a.wk = w.wk
     order by w.wk
   $$;
-grant execute on function activation_weekly_review() to webhook_app;
+-- Postgres grants EXECUTE to PUBLIC by default, so NOT granting is not enough — REVOKE it. These are
+-- PLATFORM-WIDE aggregate KPIs (cross-tenant signup/activation counts): private-by-default, and the
+-- request-path role (webhook_app, a member of PUBLIC) must never read cross-org — even aggregates, since a
+-- tenant could be a competitor. Callable only by the owner/ops connection; the founder-facing read (PR3)
+-- wires a founder-gated caller (a dedicated reviewer role or an admin-authz'd path), never webhook_app.
+revoke execute on function activation_weekly_review() from public;
 
 -- migrate:down
 
 drop function if exists activation_weekly_review();
 drop function if exists rollup_activation_weekly(date);
 drop function if exists rollup_activation_milestones();
+drop index if exists delivery_attempts_org_forwarded_idx;
 drop table if exists activation_org_exclusions;
 drop table if exists activation_org_weekly;
 drop table if exists activation_org_milestones;

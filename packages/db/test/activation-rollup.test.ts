@@ -14,7 +14,9 @@ import { setupHookTimeoutMs } from "./pg-timing";
 // tunnel writer). Two SECURITY INVOKER rollup fns run per-tenant under webhook_app RLS (mirroring
 // rollup_delivery_stats); one SECURITY DEFINER fn (mirroring user_org_directory, 0067) reads the three
 // activation tables cross-org — via `to webhook_owner using(true)` policies, so the definer is POLICED,
-// not bypassing RLS — and returns AGGREGATES ONLY (no org_id, no PII). This suite asserts real rows.
+// not bypassing RLS — and returns AGGREGATES ONLY (no org_id, no PII). This suite asserts real rows, and
+// the set-once / OR-accumulate durability cases PRUNE the source rows so LEAST/OR are load-bearing (a plain
+// overwrite would fail them) — matching how retention actually purges events/delivery_attempts in prod.
 
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
@@ -28,12 +30,13 @@ function isoWeek(weeksAgo: number): string {
 
 let pg: EphemeralPostgres;
 let app: Sql;
-let meter: Sql;
-// The provider (RLS-bypassing) connection — the harness handle for ops writes like seeding the
-// metric-exclusions list (owner-managed in prod; a tenant never touches it).
+// The provider (RLS-bypassing) connection — the harness handle for ops writes/reads: seeding the
+// owner-managed metric-exclusions list, running the owner-only review fn, and simulating retention prunes.
 let provider: Sql;
 
-/** Seed an org (with an explicit created_at = signup time) + one endpoint + one event at `eventAtMs`. */
+/** Seed an org (with an explicit created_at = signup time) + one endpoint + optionally one event at
+ *  `eventAtMs`. received_at is trigger-stamped to now() on INSERT (events_received_at_biu), so the fixture
+ *  instant is set with a follow-up UPDATE — the pattern the metering/usage tests use. */
 async function seedOrg(
   slug: string,
   createdAtMs: number,
@@ -48,8 +51,6 @@ async function seedOrg(
     await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
              values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
     if (eventAtMs !== null) {
-      // received_at is trigger-stamped to now() on INSERT (events_received_at_biu), so set the fixture
-      // instant with a follow-up UPDATE — the pattern the metering/usage tests use.
       await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
                values (${eventId}, ${orgId}, ${endpointId}, ${slug + "-p"}, ${10}, ${slug + "-dk"}, ${"content_hash"})`;
       await tx`update events set received_at = ${new Date(eventAtMs).toISOString()} where id = ${eventId}`;
@@ -86,11 +87,21 @@ async function seedDelivery(
   });
 }
 
+/** Simulate retention: hard-delete an event (RLS-bypassing, like the prune cron). */
+async function pruneEvent(id: string): Promise<void> {
+  await provider`delete from delivery_attempts where event_id = ${id}`;
+  await provider`delete from events where id = ${id}`;
+}
+
+/** Simulate retention: hard-delete an org's forward delivery rows, keeping its capture events. */
+async function pruneForwards(orgId: string): Promise<void> {
+  await provider`delete from delivery_attempts where org_id = ${orgId} and status = 'forwarded'`;
+}
+
 /** Run both rollup functions for one org. Milestones scan all retained rows (set-once, backfill-safe);
  *  weekly is re-rolled across a settle window (here weeks 0..3 back, covering every fixture's activity). */
 async function rollupOrg(orgId: string): Promise<void> {
   await withTenant(app, orgId, async (tx) => {
-    await tx`set local time zone 'UTC'`;
     await tx`select rollup_activation_milestones()`;
     for (const w of [0, 1, 2, 3]) {
       await tx`select rollup_activation_weekly(${isoWeek(w)}::date)`;
@@ -128,13 +139,11 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-  meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
   provider = createClient(pg.providerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
-  await meter?.end();
   await provider?.end();
   await pg?.stop();
 });
@@ -159,16 +168,19 @@ describe("rollup_activation_milestones", () => {
     expect(m?.first_forward_at?.toISOString()).toBe(new Date(fwd).toISOString());
   });
 
-  it("is set-once/monotonic: a later re-roll never moves a milestone later", async () => {
+  it("is set-once via LEAST: the milestone survives even after its source event is PRUNED", async () => {
     const signup = Date.UTC(2026, 6, 6, 9);
     const firstCap = Date.UTC(2026, 6, 6, 12);
-    const { orgId, endpointId } = await seedOrg("act-mono", signup, firstCap);
+    const { orgId, endpointId, eventId } = await seedOrg("act-mono", signup, firstCap);
     await rollupOrg(orgId);
     expect((await milestonesOf(orgId))?.first_capture_at?.toISOString()).toBe(
       new Date(firstCap).toISOString(),
     );
 
-    // A LATER event arrives; re-roll. first_capture_at must stay at the earliest (LEAST).
+    // Retention prunes the earliest event and only a LATER event remains. The recomputed MIN is now later,
+    // so a plain overwrite would REGRESS first_capture_at forward — LEAST must keep the stored (earlier)
+    // value. This is the load-bearing set-once case.
+    await pruneEvent(eventId);
     await seedEvent(orgId, endpointId, Date.UTC(2026, 6, 8, 9), "act-mono-2");
     await rollupOrg(orgId);
     expect((await milestonesOf(orgId))?.first_capture_at?.toISOString()).toBe(
@@ -193,12 +205,11 @@ describe("rollup_activation_weekly", () => {
     const { orgId, eventId } = await seedOrg("act-wk", signup, Date.UTC(2026, 6, 6, 10));
     await seedDelivery(orgId, eventId, "forwarded", Date.UTC(2026, 6, 7, 10));
     // Prior-week capture only (no forward) → captured=true, forwarded=false that week.
-    const { orgId: bOrg, endpointId: bEp } = await seedOrg(
+    const { orgId: bOrg } = await seedOrg(
       "act-wk-b",
       Date.UTC(2026, 5, 29, 9),
       Date.UTC(2026, 5, 30, 10),
     );
-    void bEp;
 
     await rollupOrg(orgId);
     await rollupOrg(bOrg);
@@ -209,62 +220,114 @@ describe("rollup_activation_weekly", () => {
     expect(await weeklyOf(bOrg, isoWeek(0))).toBeNull();
   });
 
-  it("OR-accumulates: a later forward in the same week flips forwarded without unflipping captured", async () => {
+  it("OR-accumulate is durable: a set forwarded flag survives a re-roll after the forward is PRUNED", async () => {
     const signup = Date.UTC(2026, 6, 6, 9);
     const { orgId, eventId } = await seedOrg("act-accum", signup, Date.UTC(2026, 6, 6, 10));
+    await seedDelivery(orgId, eventId, "forwarded", Date.UTC(2026, 6, 6, 12));
     await rollupOrg(orgId);
-    expect(await weeklyOf(orgId, isoWeek(0))).toEqual({ captured: true, forwarded: false });
+    expect(await weeklyOf(orgId, isoWeek(0))).toEqual({ captured: true, forwarded: true });
 
-    await seedDelivery(orgId, eventId, "forwarded", Date.UTC(2026, 6, 8, 10));
+    // Retention prunes the forward row (the capture event survives). The re-roll re-detects captured=true
+    // but forwarded=false; OR must keep the stored forwarded=true. A plain overwrite would clear it — this
+    // is the load-bearing OR-accumulate case.
+    await pruneForwards(orgId);
     await rollupOrg(orgId);
     expect(await weeklyOf(orgId, isoWeek(0))).toEqual({ captured: true, forwarded: true });
   });
 });
 
 describe("activation_weekly_review (SECURITY DEFINER, aggregate-only)", () => {
-  it("counts distinct activated orgs per week, computes TTFV, and honors exclusions", async () => {
-    // Fresh isolated orgs in a distinct week (two weeks back) so other tests don't perturb the counts.
+  it("cohort funnel (signup week) + weekly NSM (activity week), TTFV percentiles, exclusions", async () => {
+    // Fresh isolated orgs in a distinct week (two weeks back) so other tests don't perturb the counts. All
+    // signed up the same week; the cohort funnel keys on signup week, so signups/reached_*/activation_rate/
+    // TTFV all land in this row.
     const wSignup = Date.UTC(2026, 5, 22, 9); // Mon 2026-06-22
     const wk = isoWeek(2); // 2026-06-22
-    const capAt = Date.UTC(2026, 5, 22, 10);
-    const fwdAt = Date.UTC(2026, 5, 22, 12); // TTFV = 3h from signup
+    const HOUR = 3_600_000;
 
-    // Org 1: captured + forwarded → activated.
-    const a = await seedOrg("rev-a", wSignup, capAt);
-    await seedDelivery(a.orgId, a.eventId, "forwarded", fwdAt);
-    // Org 2: captured + forwarded → activated (same week).
-    const b = await seedOrg("rev-b", wSignup, capAt);
-    await seedDelivery(b.orgId, b.eventId, "forwarded", fwdAt);
-    // Org 3: captured only → NOT activated (counts as a first-capture, not the NSM).
-    const c = await seedOrg("rev-c", wSignup, capAt);
-    // Org 4: activated but EXCLUDED (founder/test) → must not count anywhere.
-    const d = await seedOrg("rev-excl", wSignup, capAt);
-    await seedDelivery(d.orgId, d.eventId, "forwarded", fwdAt);
+    // Three ACTIVATED orgs with a spread of TTFV latencies (1h, 3h, 9h) so median != p90.
+    const a = await seedOrg("rev-a", wSignup, wSignup + 5 * 60_000);
+    await seedDelivery(a.orgId, a.eventId, "forwarded", wSignup + 1 * HOUR);
+    const b = await seedOrg("rev-b", wSignup, wSignup + 5 * 60_000);
+    await seedDelivery(b.orgId, b.eventId, "forwarded", wSignup + 3 * HOUR);
+    const g = await seedOrg("rev-g", wSignup, wSignup + 5 * 60_000);
+    await seedDelivery(g.orgId, g.eventId, "forwarded", wSignup + 9 * HOUR);
+    // Capture-only → reached_capture but NOT reached_forward / activated.
+    const c = await seedOrg("rev-c", wSignup, wSignup + 5 * 60_000);
+    // Signup-only (no capture) → counts in signups only, so signups != reached_capture.
+    const e = await seedOrg("rev-e", wSignup, null);
+    // Activated but EXCLUDED (founder/test) → must not count anywhere.
+    const d = await seedOrg("rev-excl", wSignup, wSignup + 5 * 60_000);
+    await seedDelivery(d.orgId, d.eventId, "forwarded", wSignup + 1 * HOUR);
 
-    for (const o of [a, b, c, d]) await rollupOrg(o.orgId);
+    for (const o of [a, b, g, c, e, d]) await rollupOrg(o.orgId);
     // Exclude org d via the ops (RLS-bypassing provider) path — exclusions are owner-managed; a tenant
     // never writes them.
     await provider`insert into activation_org_exclusions (org_id, reason) values (${d.orgId}, ${"test"})`;
 
-    const rows = await app<
+    // Called via the ops/owner connection (how the founder review runs in prod) — NOT webhook_app, which
+    // must never read cross-org platform aggregates (asserted below).
+    const rows = await provider<
       {
         iso_week: Date;
         signups: string;
-        first_captures: string;
-        first_forwards: string;
+        reached_capture: string;
+        reached_forward: string;
+        activation_rate: string;
         activated_orgs: string;
-        ttfv_median_hours: string | null;
+        ttfv_median_hours: string;
+        ttfv_p90_hours: string;
       }[]
-    >`select iso_week, signups, first_captures, first_forwards, activated_orgs, ttfv_median_hours
-      from activation_weekly_review() where iso_week = ${wk}::date`;
+    >`select iso_week, signups, reached_capture, reached_forward, activation_rate, activated_orgs,
+             ttfv_median_hours, ttfv_p90_hours
+        from activation_weekly_review() where iso_week = ${wk}::date`;
 
     expect(rows).toHaveLength(1);
     const r = rows[0]!;
-    // a + b activated (c capture-only, d excluded). signups counts a,b,c (d excluded).
-    expect(Number(r.activated_orgs)).toBe(2);
-    expect(Number(r.first_captures)).toBe(3);
-    expect(Number(r.first_forwards)).toBe(2);
-    expect(Number(r.signups)).toBe(3);
-    expect(Number(r.ttfv_median_hours)).toBeCloseTo(3, 5);
+    // Cohort (signup week wk), excluding d: signups a,b,g,c,e = 5; reached_capture a,b,g,c = 4 (e never
+    // captured); reached_forward a,b,g = 3.
+    expect(Number(r.signups)).toBe(5);
+    expect(Number(r.reached_capture)).toBe(4);
+    expect(Number(r.reached_forward)).toBe(3);
+    // Cohort conversion, bounded [0,1]: 3 activated / 5 signups.
+    expect(Number(r.activation_rate)).toBeCloseTo(0.6, 5);
+    // Weekly-recurrence NSM (activity week wk): a,b,g captured+forwarded that week = 3.
+    expect(Number(r.activated_orgs)).toBe(3);
+    // TTFV over [1h, 3h, 9h]: median = 3, p90 = interpolate(0.9) = 7.8 — and they DIFFER.
+    expect(Number(r.ttfv_median_hours)).toBeCloseTo(3, 4);
+    expect(Number(r.ttfv_p90_hours)).toBeCloseTo(7.8, 4);
+    expect(Number(r.ttfv_median_hours)).not.toBe(Number(r.ttfv_p90_hours));
+  });
+
+  it("webhook_app (a tenant) is DENIED — platform aggregates never reach the request-path role", async () => {
+    // The review fn is aggregate-only, but even aggregate cross-tenant KPIs are private-by-default; the
+    // request-path role holds no execute grant (revoked from PUBLIC), so a tenant cannot enumerate
+    // platform signup/activation.
+    await expect(app`select * from activation_weekly_review()`).rejects.toThrow(
+      /permission denied/i,
+    );
+  });
+});
+
+describe("activation_org_exclusions is ops-only (no tenant access)", () => {
+  it("webhook_app holds ZERO table privileges — a tenant can never self-exclude to game the metric", async () => {
+    // The exclusions list is secured purely by ownership (no RLS, no grant). Pin that with
+    // has_table_privilege (the idiom usage_alerts/billing_* use) so an accidental future GRANT to
+    // webhook_app — which would let a tenant remove itself from the founder's activation metric — fails CI.
+    const [priv] = await provider<{ sel: boolean; ins: boolean; upd: boolean; del: boolean }[]>`
+      select
+        has_table_privilege(${DB_ROLES.app}, 'activation_org_exclusions', 'SELECT') as sel,
+        has_table_privilege(${DB_ROLES.app}, 'activation_org_exclusions', 'INSERT') as ins,
+        has_table_privilege(${DB_ROLES.app}, 'activation_org_exclusions', 'UPDATE') as upd,
+        has_table_privilege(${DB_ROLES.app}, 'activation_org_exclusions', 'DELETE') as del`;
+    expect(priv).toEqual({ sel: false, ins: false, upd: false, del: false });
+
+    // Defense in depth: a direct read or write attempt as the tenant role is denied outright.
+    await expect(app`select * from activation_org_exclusions`).rejects.toThrow(
+      /permission denied/i,
+    );
+    await expect(
+      app`insert into activation_org_exclusions (org_id, reason) values (${randomUUID()}, ${"x"})`,
+    ).rejects.toThrow(/permission denied/i);
   });
 });
