@@ -3,8 +3,10 @@
  *
  * `renderThemeCss()` is the single producer of `styles/theme.css`. Theme-invariant
  * tokens (ink, radii, spacing, type, motion) live in `:root`; theme-variant tokens
- * (surfaces, text, borders, state, shadows) appear in both `:root` (light, the
- * canonical brand) and `[data-theme="dark"]`.
+ * (surfaces, text, borders, state, shadows) resolve to DARK on the bare `:root` — the
+ * brand-first default shown when no `data-theme` is set — with `[data-theme="light"]`
+ * and `[data-theme="dark"]` as explicit overrides. Each scope also pins `color-scheme`
+ * so native chrome (scrollbars, form controls) matches the theme rather than the OS.
  *
  * Every variable is namespaced with {@link CSS_VAR_PREFIX} so the system never
  * collides with host-app or third-party variables.
@@ -128,10 +130,27 @@ export function renderThemeCss(): string {
   const header =
     "/* webhook.co design tokens — GENERATED from packages/ui/src/tokens.\n" +
     "   Do not edit by hand: edit the TypeScript source and run `pnpm --filter @webhook-co/ui gen:theme`.\n" +
-    "   Light is the canonical brand; dark is a first-class product preference. */";
+    "   Dark is the default (bare :root); light and dark are explicit [data-theme] scopes.\n" +
+    "   `color-scheme` per scope makes native chrome follow the theme, not the OS. */";
 
-  const root = block(":root", [...invariantDecls(), ...semanticDecls(light, shadowLight)]);
-  const darkBlock = block('[data-theme="dark"]', semanticDecls(dark, shadowDark));
+  // The bare :root is DARK — the honest default shown before the pre-paint init script stamps
+  // data-theme (and if JS is unavailable). `[data-theme="light"]` opts a subtree into light;
+  // `[data-theme="dark"]` (identical to :root) lets a light-scoped page force dark on an island.
+  const colorScheme = (mode: "light" | "dark"): Decls => [["color-scheme", mode]];
 
-  return `${header}\n\n${root}\n\n${darkBlock}\n`;
+  const root = block(":root", [
+    ...colorScheme("dark"),
+    ...invariantDecls(),
+    ...semanticDecls(dark, shadowDark),
+  ]);
+  const lightBlock = block('[data-theme="light"]', [
+    ...colorScheme("light"),
+    ...semanticDecls(light, shadowLight),
+  ]);
+  const darkBlock = block('[data-theme="dark"]', [
+    ...colorScheme("dark"),
+    ...semanticDecls(dark, shadowDark),
+  ]);
+
+  return `${header}\n\n${root}\n\n${lightBlock}\n\n${darkBlock}\n`;
 }

@@ -24,10 +24,29 @@ describe("renderThemeCss", () => {
     }
   });
 
-  it("emits a :root (light) block and a dark block", () => {
+  it("makes :root the dark default, with explicit light and dark override scopes", () => {
     const css = renderThemeCss();
-    expect(css).toContain(":root {");
-    expect(css).toContain('[data-theme="dark"] {');
+    const rootAt = css.indexOf(":root {");
+    const lightAt = css.indexOf('[data-theme="light"] {');
+    const darkAt = css.indexOf('[data-theme="dark"] {');
+
+    // All three scopes exist, in order: :root, then the two attribute overrides. The dark override is
+    // kept (identical to :root) because a local island — e.g. the marketing terminal — sets
+    // data-theme="dark" on a subtree to force dark inside a light-scoped page.
+    expect(rootAt).toBeGreaterThanOrEqual(0);
+    expect(lightAt).toBeGreaterThan(rootAt);
+    expect(darkAt).toBeGreaterThan(lightAt);
+
+    // The bare :root — the no-attribute default, what shows before the init script stamps data-theme
+    // — is DARK, so the default is honest even with no JS. It also pins native chrome dark.
+    const rootBlock = css.slice(rootAt, lightAt);
+    expect(rootBlock).toContain(`--${CSS_VAR_PREFIX}-surface-page: ${dark.surface.page};`);
+    expect(rootBlock).toContain("color-scheme: dark;");
+
+    // The explicit light scope carries the light palette and light native chrome.
+    const lightBlock = css.slice(lightAt, darkAt);
+    expect(lightBlock).toContain(`--${CSS_VAR_PREFIX}-surface-page: ${light.surface.page};`);
+    expect(lightBlock).toContain("color-scheme: light;");
   });
 
   it("includes the full ink scale with its hex values", () => {

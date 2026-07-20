@@ -4,8 +4,9 @@ import { resolveTheme } from "./turnstile";
 
 // resolveTheme picks the Turnstile widget theme to match the app's mode. The app toggles dark mode via a
 // `data-theme` attribute on <html> (an in-app toggle persisted to localStorage), so we can't use Turnstile's
-// `theme:"auto"` (that follows the OS only). resolveTheme reads the attribute and falls back to the OS
-// preference when it's absent — mirroring the ThemeToggle's own fallback.
+// `theme:"auto"` (that follows the OS only). resolveTheme reads the attribute and, when it's absent, falls
+// back to the product default — dark — mirroring the ThemeToggle's own dark default, not the OS.
+// `stubMatchMedia` stays a regression guard: pin the OS to light and still expect dark ⇒ the OS is ignored.
 
 function stubMatchMedia(prefersDark: boolean) {
   vi.stubGlobal("matchMedia", (query: string) => ({
@@ -32,24 +33,24 @@ describe("resolveTheme", () => {
     expect(resolveTheme()).toBe("light");
   });
 
-  it("falls back to the OS preference (dark) when no data-theme is set", () => {
+  it("falls back to dark when no data-theme is set, even if the OS prefers light", () => {
+    stubMatchMedia(false); // OS light — must be ignored; the product default is dark
+    expect(resolveTheme()).toBe("dark");
+  });
+
+  it("falls back to dark when no data-theme is set and the OS prefers dark", () => {
     stubMatchMedia(true);
     expect(resolveTheme()).toBe("dark");
   });
 
-  it("falls back to light when no data-theme is set and the OS prefers light", () => {
-    stubMatchMedia(false);
-    expect(resolveTheme()).toBe("light");
-  });
-
-  it("ignores an unrecognized data-theme value and falls back to the OS preference", () => {
+  it("ignores an unrecognized data-theme value and falls back to dark", () => {
     document.documentElement.setAttribute("data-theme", "sepia");
-    stubMatchMedia(true);
+    stubMatchMedia(false);
     expect(resolveTheme()).toBe("dark");
   });
 
-  it("defaults to light when neither data-theme nor matchMedia is available (SSR-safe)", () => {
+  it("defaults to dark when no data-theme is set (SSR-safe, no matchMedia)", () => {
     vi.stubGlobal("matchMedia", undefined);
-    expect(resolveTheme()).toBe("light");
+    expect(resolveTheme()).toBe("dark");
   });
 });

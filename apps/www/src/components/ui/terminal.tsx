@@ -2,10 +2,11 @@ import { cn } from "@webhook-co/ui";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 
 /**
- * A dark code-block "island" on the otherwise light page. Setting `data-theme="dark"` re-resolves
- * the design-system tokens to their dark values for this subtree, so the terminal is built from the
- * same semantic utilities as everything else — no bespoke hex. `bg-surface-page` resolves to #0b0f14,
- * `text-fg` to #edf2f7, `text-ok` to #22c55e, and so on.
+ * A dark code-block "island": it pins `data-theme="dark"` so the terminal stays dark even when the
+ * page is in light mode (the page itself defaults to dark). That re-resolves the design-system tokens
+ * to their dark values for this subtree, so the terminal is built from the same semantic utilities as
+ * everything else — no bespoke hex. `bg-surface-page` resolves to #0b0f14, `text-fg` to #edf2f7,
+ * `text-ok` to #22c55e, and so on.
  */
 export function Terminal({
   title,

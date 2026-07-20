@@ -1,8 +1,10 @@
 /* webhook.co design tokens — GENERATED from packages/ui/src/tokens.
    Do not edit by hand: edit the TypeScript source and run `pnpm --filter @webhook-co/ui gen:theme`.
-   Light is the canonical brand; dark is a first-class product preference. */
+   Dark is the default (bare :root); light and dark are explicit [data-theme] scopes.
+   `color-scheme` per scope makes native chrome follow the theme, not the OS. */
 
 :root {
+  color-scheme: dark;
   --wh-ink-0: #ffffff;
   --wh-ink-25: #fcfdfe;
   --wh-ink-50: #f8fafc;
@@ -74,6 +76,44 @@
   --wh-dur-smooth: 280ms;
   --wh-dur-slow: 420ms;
   --wh-focus-ring: 0 0 0 2px var(--wh-surface-page), 0 0 0 4px var(--wh-border-focus);
+  --wh-surface-page: #0b0f14;
+  --wh-surface-card: #11161d;
+  --wh-surface-sunken: #080b0f;
+  --wh-surface-raised: #161d26;
+  --wh-surface-inverse: #edf2f7;
+  --wh-text-primary: #edf2f7;
+  --wh-text-secondary: #a9b4c4;
+  --wh-text-muted: #7e8ca0;
+  --wh-text-faint: #727f95;
+  --wh-text-on-inverse: #0e141b;
+  --wh-border-hairline: #1d2632;
+  --wh-border-strong: #2a3542;
+  --wh-border-focus: #edf2f7;
+  --wh-ok: #22c55e;
+  --wh-ok-bg: rgba(34, 197, 94, 0.1);
+  --wh-ok-border: rgba(34, 197, 94, 0.32);
+  --wh-warn: #f59e0b;
+  --wh-warn-bg: rgba(245, 158, 11, 0.1);
+  --wh-warn-border: rgba(245, 158, 11, 0.32);
+  --wh-danger: #ef4444;
+  --wh-danger-bg: rgba(239, 68, 68, 0.1);
+  --wh-danger-border: rgba(239, 68, 68, 0.32);
+  --wh-info: #3b82f6;
+  --wh-info-bg: rgba(59, 130, 246, 0.12);
+  --wh-info-border: rgba(59, 130, 246, 0.34);
+  --wh-chart-1: #7d9cc0;
+  --wh-chart-2: #7fae9a;
+  --wh-chart-3: #cfa76b;
+  --wh-chart-4: #a995c0;
+  --wh-chart-5: #8a99ad;
+  --wh-shadow-1: 0 0 0 1px rgb(255 255 255 / 0.04), 0 1px 2px rgb(0 0 0 / 0.5);
+  --wh-shadow-2: 0 0 0 1px rgb(255 255 255 / 0.04), 0 2px 10px rgb(0 0 0 / 0.5);
+  --wh-shadow-3: 0 0 0 1px rgb(255 255 255 / 0.05), 0 10px 32px rgb(0 0 0 / 0.6);
+  --wh-shadow-4: 0 0 0 1px rgb(255 255 255 / 0.06), 0 28px 80px rgb(0 0 0 / 0.7);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
   --wh-surface-page: #f8fafc;
   --wh-surface-card: #ffffff;
   --wh-surface-sunken: #f1f5f9;
@@ -111,6 +151,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --wh-surface-page: #0b0f14;
   --wh-surface-card: #11161d;
   --wh-surface-sunken: #080b0f;

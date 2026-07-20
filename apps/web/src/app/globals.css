@@ -19,12 +19,6 @@
 }
 
 /* Native form controls (the date-input calendar indicator + its picker popup, number spinners,
-   scrollbars) follow the app theme. The theme is a `data-theme` attribute, not the OS scheme, so
-   without this the browser paints the calendar icon black-on-dark in dark mode. Pinning
-   `color-scheme` per theme makes the native chrome render light-on-dark to match. */
-[data-theme="light"] {
-  color-scheme: light;
-}
-[data-theme="dark"] {
-  color-scheme: dark;
-}
+   scrollbars) follow the app theme, not the OS scheme — otherwise the browser paints the calendar
+   icon black-on-dark in dark mode. `color-scheme` is now pinned per `data-theme` scope in the shared
+   design system (@webhook-co/ui/styles/theme.css), so it applies here through that import. */

@@ -47,18 +47,16 @@ declare global {
 /**
  * The widget theme to match the app's current mode. The app toggles dark mode with a `data-theme` attribute
  * on <html> (an in-app toggle persisted to localStorage), so Turnstile's `theme:"auto"` — which only follows
- * the OS — would drift from a user who toggled. Read the attribute; fall back to the OS preference when it's
- * absent (mirroring the ThemeToggle's own fallback).
+ * the OS — would drift from a user who toggled. Read the attribute; when it's absent, fall back to the
+ * product default (dark), independent of the OS — mirroring the ThemeToggle's own dark default. In practice
+ * the pre-paint init script always stamps `data-theme` before this runs, so the fallback is a safety net.
  */
 export function resolveTheme(): TurnstileTheme {
   if (typeof document !== "undefined") {
     const attr = document.documentElement.getAttribute("data-theme");
     if (attr === "dark" || attr === "light") return attr;
   }
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-  return "light";
+  return "dark";
 }
 
 let scriptPromise: Promise<void> | null = null;

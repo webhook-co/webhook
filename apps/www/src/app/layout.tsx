@@ -12,12 +12,12 @@ import "./globals.css";
 export const metadata = siteMetadata;
 export const viewport = siteViewport;
 
-// The marketing site now honours light AND dark (the design system's tokens always supported both;
-// www just never exposed the toggle). `themeInitScript` runs BEFORE first paint and stamps
-// `data-theme` on <html> from localStorage, falling back to the OS preference — a static export has
-// no server to read a cookie, so without a pre-paint inline script a dark-mode visitor gets a white
-// flash on every navigation. `suppressHydrationWarning` on <html> because that attribute is written
-// by the script and therefore differs from the server-rendered markup by design.
+// The marketing site ships light AND dark and defaults to DARK (a stored `wh-theme` choice from the
+// nav toggle always wins). `themeInitScript` runs BEFORE first paint and stamps `data-theme` on
+// <html> from localStorage, defaulting to dark when nothing is stored — a static export has no
+// server to read a cookie, so without a pre-paint inline script a first-time (dark) visitor gets a
+// light flash on every navigation. `suppressHydrationWarning` on <html> because that attribute is
+// written by the script and therefore differs from the server-rendered markup by design.
 // Geist faces are self-hosted via the `geist` package and wired into the type tokens in globals.css.
 
 /**

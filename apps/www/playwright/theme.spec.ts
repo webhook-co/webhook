@@ -24,40 +24,43 @@ test.describe("theme toggle", () => {
     await page.waitForTimeout(250);
   }
 
-  test("follows the OS preference on a first visit, with no stored choice", async ({ page }) => {
+  test("defaults to dark on a first visit, regardless of the OS preference", async ({ page }) => {
+    // OS says light — the default must still be dark (brand-first, OS-independent).
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/");
+    await afterHydration(page);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+    // OS says dark — still dark. Same fixed default either way.
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto("/");
     await afterHydration(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-
-    await page.emulateMedia({ colorScheme: "light" });
-    await page.goto("/");
-    await afterHydration(page);
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   });
 
-  test("flips the theme, and the choice survives a navigation", async ({ page }) => {
-    await page.emulateMedia({ colorScheme: "light" });
+  test("flips to light, and the choice survives a navigation", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-
-    await page.getByRole("button", { name: /switch to dark theme/i }).click();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-
-    // The whole point: it must still be dark on the next page, applied before paint.
-    await page.goto("/pricing");
     await afterHydration(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await expect(page.getByRole("button", { name: /switch to light theme/i })).toBeVisible();
-  });
 
-  test("an explicit choice OUTRANKS the OS preference", async ({ page }) => {
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.goto("/");
     await page.getByRole("button", { name: /switch to light theme/i }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
-    // Reload with the OS still saying dark: the stored choice must win, or the toggle doesn't hold.
+    // The whole point: it must still be light on the next page, applied before paint.
+    await page.goto("/pricing");
+    await afterHydration(page);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(page.getByRole("button", { name: /switch to dark theme/i })).toBeVisible();
+  });
+
+  test("a stored choice OUTRANKS the dark default", async ({ page }) => {
+    await page.goto("/");
+    await afterHydration(page);
+    // Default dark → switch to light and persist the choice.
+    await page.getByRole("button", { name: /switch to light theme/i }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+    // Reload: the stored 'light' must beat the dark default, or the toggle doesn't hold.
     await page.reload();
     await afterHydration(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -72,11 +75,13 @@ test.describe("theme toggle", () => {
   test("the theme is applied by document-interactive (it is never left unset)", async ({
     page,
   }) => {
-    await page.emulateMedia({ colorScheme: "dark" });
+    // OS says light — proves the pre-paint default is dark independent of the OS, and that it is
+    // stamped early (not by a later React effect).
+    await page.emulateMedia({ colorScheme: "light" });
 
     // Read <html data-theme> at the earliest moment scripts can observe the document. If the theme
     // were applied by a React effect (or a deferred script) this would still be unset here, and the
-    // reader would see a white page for a frame.
+    // reader would see a light page for a frame.
     await page.addInitScript(() => {
       document.addEventListener("readystatechange", () => {
         if (document.readyState === "interactive") {

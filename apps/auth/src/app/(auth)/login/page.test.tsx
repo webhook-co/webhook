@@ -16,8 +16,8 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-// jsdom doesn't implement matchMedia, and the shell's ThemeToggle reads it on mount. Same stub the
-// sibling turnstile test uses (and apps/web's setup file). Default to light.
+// jsdom doesn't implement matchMedia; stub it for any component in the shell that reads it. (The
+// ThemeToggle no longer consults it — the theme defaults to dark, independent of the OS.)
 beforeEach(() => {
   // Reset between tests: the loop-breaker tests deliberately queue a signed-IN value that is never consumed
   // (the whole point is that the page doesn't ask), and a leftover `Once` would bleed into the next test.
