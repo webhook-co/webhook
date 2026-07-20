@@ -147,8 +147,10 @@ export function analyzePages(pages, opts = {}) {
 }
 
 // ── Runner ───────────────────────────────────────────────────────────────────────
-function run() {
-  if (!existsSync(MANIFEST_PATH)) {
+// Returns the process exit code: 0 = clean/idle, 1 = fail. `manifestPath` is injectable for tests;
+// the isMain block always uses the committed MANIFEST_PATH.
+export function run(manifestPath = MANIFEST_PATH) {
+  if (!existsSync(manifestPath)) {
     // Pre-pages state: no generator has emitted a manifest yet. Explicitly logged, never a silent
     // pass — the sibling unit test proves the guard itself works on every CI run.
     console.log(
@@ -158,7 +160,7 @@ function run() {
   }
   let manifest;
   try {
-    manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf8"));
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   } catch (e) {
     console.error(`content-dup-guard: manifest is unreadable/invalid JSON: ${e.message}`);
     return 1;

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -8,6 +11,7 @@ import {
   jaccard,
   NEAR_DUP_JACCARD,
   normalize,
+  run,
   wordShingles,
 } from "./content-dup-guard.mjs";
 
@@ -146,6 +150,49 @@ test("flags thin content via the SHINGLE floor independently of the word floor",
 test("does NOT flag a diverse page that clears BOTH floors", () => {
   const thin = checkThinContent([{ id: "stripe", name: "Stripe", text: stripePage }]);
   assert.equal(thin.length, 0);
+});
+
+test("runner exit-code contract: idle vs fail-closed (the behaviour CI actually invokes)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cdg-"));
+  const write = (obj) => {
+    const p = join(dir, "manifest.json");
+    writeFileSync(p, typeof obj === "string" ? obj : JSON.stringify(obj));
+    return p;
+  };
+  const boil = (n, h) => ({ id: n, name: n, header: h, text: boilerplate(n, h) });
+  try {
+    // manifest ABSENT → pre-pages idle → exit 0 (never a silent pass with real content)
+    assert.equal(run(join(dir, "missing.json")), 0);
+    // present-but-DEGENERATE → fail-closed floor → exit 1
+    assert.equal(run(write({ pages: [] })), 1); // empty
+    assert.equal(run(write({})), 1); // no `pages` key
+    assert.equal(run(write("{ not json")), 1); // unreadable JSON
+    assert.equal(run(write({ pages: [{ id: "x" }] })), 1); // malformed entry
+    // FINDINGS → exit 1
+    assert.equal(
+      run(
+        write({
+          pages: [boil("GitHub", "x-hub-signature-256"), boil("Meta", "x-hub-signature-256")],
+        }),
+      ),
+      1,
+    ); // near-duplicate
+    assert.equal(run(write({ pages: [{ id: "stub", name: "Acme", text: "too short" }] })), 1); // thin
+    // HEALTHY estate → exit 0
+    assert.equal(
+      run(
+        write({
+          pages: [
+            { id: "stripe", name: "Stripe", text: stripePage },
+            boil("GitHub", "x-hub-signature-256"),
+          ],
+        }),
+      ),
+      0,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("FLOOR: analyzePages refuses to report clean on an empty or non-array page set", () => {
