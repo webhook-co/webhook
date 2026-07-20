@@ -1,6 +1,6 @@
 import { cn, Wordmark } from "@webhook-co/ui";
 
-import { GithubIcon, LinkedinIcon, XIcon } from "@/components/ui/brand-icons";
+import { GithubIcon, LinkedinIcon } from "@/components/ui/brand-icons";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
@@ -56,12 +56,14 @@ const columns: { title: string; links: FooterLink[] }[] = [
   },
 ];
 
-// GitHub is the only social that exists. X and LinkedIn have no accounts behind them, so they stay
-// inert rather than linking nowhere-in-particular.
+// The two socials with a real account: GitHub (the org) and the LinkedIn company page (created
+// 2026-07-20). X/Twitter was removed — the founder chose not to create the account, so its mark is
+// gone rather than sitting inert and implying a presence that doesn't exist. The optional `href` and
+// the inert-mark branch below are kept so a future not-yet-live social can render as a mark, not as an
+// `href="#"` that goes nowhere.
 const socials: { label: string; icon: typeof GithubIcon; href?: string }[] = [
-  { label: "webhook.co on X", icon: XIcon },
   { label: "webhook.co on GitHub", icon: GithubIcon, href: LINKS.openSource },
-  { label: "webhook.co on LinkedIn", icon: LinkedinIcon },
+  { label: "webhook.co on LinkedIn", icon: LinkedinIcon, href: LINKS.linkedin },
 ];
 
 export function Footer() {

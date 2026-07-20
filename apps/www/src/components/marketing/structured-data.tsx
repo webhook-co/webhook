@@ -58,7 +58,7 @@ export function organizationNode(): OrganizationNode {
     // LinkedIn company page and Crunchbase org were created 2026-07-20 and cross-link back to the site.
     sameAs: [
       "https://github.com/webhook-co",
-      "https://www.linkedin.com/company/webhook-co/",
+      "https://www.linkedin.com/company/webhook-co",
       "https://www.crunchbase.com/organization/webhook-co",
     ],
   };
