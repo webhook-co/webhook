@@ -62,3 +62,12 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   // bigcommerce, datadog, brevo). Each built from the shared token-auth factory.
   ...TOKEN_AUTH_ADAPTERS,
 };
+
+/**
+ * The provider slugs served by a hand-written (bespoke) adapter — the authoritative set that
+ * `@webhook-co/webhooks-recipes` must supply a bespoke recipe for (a config-derived recipe would be
+ * wrong/incomplete for these, e.g. Twilio's form-only config row vs its real form+JSON adapter).
+ */
+export const BESPOKE_ADAPTER_SLUGS: readonly Provider[] = Object.keys(
+  BESPOKE_ADAPTERS,
+) as Provider[];

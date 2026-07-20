@@ -50,6 +50,8 @@ export {
   type KeyDerivation,
 } from "./adapters/config";
 export { makeHmacAdapter } from "./adapters/factory";
+// The bespoke-adapter slug set — the parity source of truth for @webhook-co/webhooks-recipes.
+export { BESPOKE_ADAPTER_SLUGS } from "./adapters/bespoke";
 // Tier-4 non-cryptographic authenticity: the operator-configured-header provider set + its secret
 // validator, single-sourced so the contract rejects a malformed `{header, token}` secret at registration.
 export { isUsableConfiguredHeaderSecret } from "./adapters/bespoke/token-auth";

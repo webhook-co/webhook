@@ -2,7 +2,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { PROVIDERS } from "@webhook-co/webhooks-spec";
+import { BESPOKE_ADAPTER_SLUGS, PROVIDERS } from "@webhook-co/webhooks-spec";
+import { buildAllRecipes } from "./build-all";
 import { BESPOKE_HEADER_PINS, BESPOKE_RECIPES } from "./bespoke-recipes";
 
 const ADAPTERS_DIR = fileURLToPath(new URL("../../webhooks-spec/src/adapters/", import.meta.url));
@@ -13,6 +14,32 @@ describe("bespoke recipes — integrity + code-pinning", () => {
       expect(r.slug).toBe(key);
       expect(r.source).toBe("bespoke");
       expect(PROVIDERS).toContain(key);
+    }
+  });
+
+  it("BESPOKE_RECIPES covers EXACTLY the registry's bespoke-adapter set (set parity)", () => {
+    // Any slug the engine serves with a hand-written adapter MUST have a bespoke recipe — else
+    // buildAllRecipes() silently falls back to an incomplete config recipe (e.g. Twilio's form-only
+    // config row instead of its real form+JSON adapter). And no extra bespoke recipes for slugs the
+    // engine doesn't treat as bespoke.
+    expect(Object.keys(BESPOKE_RECIPES).sort()).toEqual([...BESPOKE_ADAPTER_SLUGS].sort());
+  });
+
+  it("dual-source providers resolve to the bespoke recipe (Twilio's real form+JSON behaviour)", () => {
+    const twilio = buildAllRecipes().find((r) => r.slug === "twilio");
+    expect(twilio?.source).toBe("bespoke");
+    expect(JSON.stringify(twilio).toLowerCase()).toMatch(/json/); // documents the JSON mode, not just form
+  });
+
+  it("header code-pins are COMPLETE: every non-null-header recipe has a matching pin, and vice versa", () => {
+    for (const [slug, r] of Object.entries(BESPOKE_RECIPES)) {
+      const pin = BESPOKE_HEADER_PINS[slug];
+      if (r.signatureHeader === null) {
+        expect(pin, `${slug} has a null header → must have no pin`).toBeUndefined();
+      } else {
+        expect(pin, `${slug} has header ${r.signatureHeader} → must have a code-pin`).toBeDefined();
+        expect(pin!.header).toBe(r.signatureHeader);
+      }
     }
   });
 
