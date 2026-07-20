@@ -85,6 +85,13 @@ export const LINKS = {
   openSource: REPO,
   standardWebhooks: "https://www.standardwebhooks.com/",
   contact: "mailto:hello@webhook.co",
+  /**
+   * The LinkedIn company page — a real profile as of 2026-07-20, and one of the Organization's
+   * `sameAs` nodes in the JSON-LD. No trailing slash: the path convention here avoids the redirect
+   * hop that `links.test.ts` pins (`https://…/company/webhook-co/` would fail the malformed-path
+   * check). It resolves to the same page the founder created.
+   */
+  linkedin: "https://www.linkedin.com/company/webhook-co",
 } as const;
 
 /** Enterprise is contact-sales, and it routes to a different inbox than the general contact link. */

@@ -15,8 +15,23 @@ import { LINKS, SALES } from "../src/lib/links";
  * this spec exists to prevent (skipping is also a non-negotiable in AGENTS.md). What it will not
  * tolerate is a 404 or a 410 — those mean the destination is genuinely gone.
  */
+/**
+ * Hosts that answer an automated request with a synthetic block code, never a real HTTP status.
+ *
+ * LinkedIn returns `999` to any non-browser client (its anti-scraping wall). That is neither a 404
+ * nor a real 5xx — it's "you're a bot", returned to EVERY request this spec could ever make. So a
+ * LinkedIn URL can only ever produce a false failure here; it can never catch the renamed-slug 404
+ * this spec exists to find. That makes it categorically different from a reachable destination we'd
+ * be wrong to skip: its liveness is unobservable from an API client by design. Its FORMAT is still
+ * pinned by `src/lib/links.test.ts`, so a typo'd LinkedIn URL is still caught — just not here.
+ */
+const BOT_WALLED_HOSTS = new Set(["www.linkedin.com"]);
+
 const external = [...Object.values(LINKS), ...Object.values(LINKS.concepts), SALES].filter(
-  (href): href is string => typeof href === "string" && href.startsWith("https://"),
+  (href): href is string =>
+    typeof href === "string" &&
+    href.startsWith("https://") &&
+    !BOT_WALLED_HOSTS.has(new URL(href).hostname),
 );
 
 const destinations = [...new Set(external)].sort();
