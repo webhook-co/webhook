@@ -5,6 +5,7 @@ import {
   EXPECTED,
   checkSeoOrganization,
   extractSiteUrl,
+  extractOrgSameAs,
   checkWwwDrift,
   checkAnalyticsBeacon,
 } from "./docs-structured-data-guard.mjs";
@@ -63,7 +64,7 @@ test("checkSeoOrganization: a mismatched url/name/logo each fails", () => {
 
 test("checkSeoOrganization: a fabricated/extra sameAs entry fails (never-fabricate-sameAs)", () => {
   const org = validOrg();
-  org.sameAs = ["https://github.com/webhook-co", "https://x.com/webhookco"]; // invented profile
+  org.sameAs = [...EXPECTED.sameAs, "https://x.com/webhookco"]; // invented extra profile
   const errs = checkSeoOrganization(configWith(org));
   assert.ok(
     errs.some((e) => e.includes("sameAs")),
@@ -89,20 +90,68 @@ test("extractSiteUrl FLOOR: throws when SITE_URL is absent (fail-closed, not vac
   assert.throws(() => extractSiteUrl(""));
 });
 
-// ── checkWwwDrift: www's SOURCE must still produce EXPECTED ────────────────────
+// ── extractOrgSameAs + checkWwwDrift: www's SOURCE must still produce EXPECTED ──
 
 const wwwMetadata = `export const SITE_URL = "https://www.webhook.co";`;
+// A minimal stand-in for apps/www's structured-data: the Organization sameAs must equal EXPECTED, and a
+// Person node with a DIFFERENT sameAs is included so extractOrgSameAs's scoping is actually exercised.
 const wwwStructuredData = `
 export const ORG_ID = \`\${SITE_URL}/#organization\`;
 export function organizationNode() {
   return { name: "webhook.co", url: SITE_URL, logo: \`\${SITE_URL}/logo.png\`,
-    sameAs: ["https://github.com/webhook-co"] };
+    sameAs: [
+      "https://github.com/webhook-co",
+      "https://www.linkedin.com/company/webhook-co",
+      "https://www.crunchbase.com/organization/webhook-co",
+    ] };
+}
+export function personNode() {
+  return { name: "Sourabh Choraria",
+    sameAs: ["https://www.linkedin.com/in/choraria/", "https://github.com/choraria"] };
 }`;
+
+test("extractOrgSameAs: returns the Organization sameAs, scoped away from the Person node", () => {
+  assert.deepEqual(extractOrgSameAs(wwwStructuredData), [...EXPECTED.sameAs]);
+});
+
+test("extractOrgSameAs FLOOR: throws when organizationNode or its sameAs is absent", () => {
+  assert.throws(() => extractOrgSameAs("export const X = 1;"));
+  assert.throws(() =>
+    extractOrgSameAs('export function organizationNode() { return { name: "x" }; }'),
+  );
+});
 
 test("checkWwwDrift: passes when www's source still matches EXPECTED", () => {
   assert.deepEqual(
     checkWwwDrift({ metadataSource: wwwMetadata, structuredDataSource: wwwStructuredData }),
     [],
+  );
+});
+
+test("checkWwwDrift: www ADDING a sameAs entry docs doesn't mirror fails (catches additions, not just removals)", () => {
+  // The exact drift #690 introduced: www wired a new off-site profile, making docs a silent subset.
+  const src = wwwStructuredData.replace(
+    '"https://www.crunchbase.com/organization/webhook-co",',
+    '"https://www.crunchbase.com/organization/webhook-co",\n      "https://bsky.app/profile/webhook.co",',
+  );
+  assert.ok(
+    checkWwwDrift({ metadataSource: wwwMetadata, structuredDataSource: src }).some((e) =>
+      e.includes("sameAs"),
+    ),
+    "an added www sameAs entry must fail until docs mirrors it",
+  );
+});
+
+test("checkWwwDrift: www REMOVING a sameAs entry fails", () => {
+  const src = wwwStructuredData.replace(
+    '\n      "https://www.crunchbase.com/organization/webhook-co",',
+    "",
+  );
+  assert.ok(
+    checkWwwDrift({ metadataSource: wwwMetadata, structuredDataSource: src }).some((e) =>
+      e.includes("sameAs"),
+    ),
+    "a removed www sameAs entry must fail",
   );
 });
 

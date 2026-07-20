@@ -37,7 +37,15 @@ export const EXPECTED = Object.freeze({
   name: "webhook.co",
   url: "https://www.webhook.co",
   logo: "https://www.webhook.co/logo.png",
-  sameAs: Object.freeze(["https://github.com/webhook-co"]),
+  // Mirror www's Organization sameAs EXACTLY, in the same order — every entry is a REAL,
+  // founder-confirmed profile (never fabricate one). checkWwwDrift() below re-reads www's actual
+  // Organization sameAs and fails closed if it ever diverges (add OR remove), so docs can't silently
+  // fall out of sync when www wires a new off-site profile.
+  sameAs: Object.freeze([
+    "https://github.com/webhook-co",
+    "https://www.linkedin.com/company/webhook-co",
+    "https://www.crunchbase.com/organization/webhook-co",
+  ]),
 });
 
 const arraysEqual = (a, b) =>
@@ -83,12 +91,33 @@ export function extractSiteUrl(metadataSource) {
 }
 
 /**
+ * Extract the Organization node's `sameAs` URLs from apps/www's structured-data source. Scoped to the
+ * organizationNode() body (up to the next `export function`) so it never captures the Person node's
+ * sameAs. Throws (fail-closed) when the node or its sameAs array can't be found, so a www refactor
+ * can't make the drift check pass vacuously.
+ */
+export function extractOrgSameAs(structuredDataSource) {
+  const src = structuredDataSource ?? "";
+  const start = src.indexOf("function organizationNode");
+  if (start === -1)
+    throw new Error("could not find organizationNode() in apps/www structured-data");
+  const after = src.slice(start);
+  const nextFn = after.indexOf("export function", 1);
+  const body = nextFn === -1 ? after : after.slice(0, nextFn);
+  const arr = /sameAs:\s*\[([\s\S]*?)\]/.exec(body);
+  if (!arr)
+    throw new Error("could not find the Organization sameAs array in apps/www structured-data");
+  return [...arr[1].matchAll(/["']([^"']+)["']/g)].map((m) => m[1]);
+}
+
+/**
  * Drift guard: confirm www's SOURCE still produces EXPECTED. `SITE_URL` (from metadata.ts) drives the
  * @id and url, so those are derived from it (throwing if it can't be read). The @id-derivation, logo,
- * name, and sameAs are checked by floored existence against organizationNode-UNIQUE source patterns
- * (the `${SITE_URL}/#organization` and `${SITE_URL}/logo.png` interpolations don't appear on any other
- * node) — read from www's source, never self-derived, so a www refactor of any of them fails loudly
- * here instead of letting docs silently diverge.
+ * and name are checked by floored existence against organizationNode-UNIQUE source patterns (the
+ * `${SITE_URL}/#organization` and `${SITE_URL}/logo.png` interpolations don't appear on any other node).
+ * sameAs is compared EXACTLY: we read www's actual Organization sameAs and require it to equal
+ * EXPECTED.sameAs — so a www edit that ADDS a profile (which would silently make docs a subset), not
+ * just one that removes the github entry, fails loudly here instead of letting docs diverge.
  */
 export function checkWwwDrift({ metadataSource, structuredDataSource }) {
   const siteUrl = extractSiteUrl(metadataSource); // throws → fail closed
@@ -100,16 +129,15 @@ export function checkWwwDrift({ metadataSource, structuredDataSource }) {
     );
   if (siteUrl !== EXPECTED.url)
     errors.push(`www SITE_URL "${siteUrl}" no longer equals EXPECTED.url "${EXPECTED.url}".`);
-  // Anchor each remaining field to a fixed substring READ from www's organizationNode source. The two
-  // `${SITE_URL}`-interpolation needles are literal (double-quoted): they confirm www still derives the
-  // @id and logo from SITE_URL, and they're unique to organizationNode (name is shared with websiteNode,
-  // so it's the weakest anchor — but the @id/logo/sameAs anchors pin the node).
+  // Anchor the @id-derivation, logo, and name to fixed substrings READ from www's organizationNode
+  // source. The two `${SITE_URL}`-interpolation needles are literal (double-quoted): they confirm www
+  // still derives the @id and logo from SITE_URL, and are unique to organizationNode (name is shared
+  // with websiteNode, so it's the weakest anchor — but the @id/logo anchors pin the node).
   const src = structuredDataSource ?? "";
   const anchors = [
     ["@id derivation", "ORG_ID = `${SITE_URL}/#organization`"],
     ["logo", "logo: `${SITE_URL}/logo.png`"],
     ["name", `name: "${EXPECTED.name}"`],
-    ["sameAs", `"${EXPECTED.sameAs[0]}"`],
   ];
   for (const [field, needle] of anchors) {
     if (!src.includes(needle))
@@ -118,6 +146,19 @@ export function checkWwwDrift({ metadataSource, structuredDataSource }) {
           "reconcile docs with www.",
       );
   }
+  // sameAs: exact-array comparison against www's ACTUAL Organization sameAs (fail closed if unreadable).
+  let orgSameAs = null;
+  try {
+    orgSameAs = extractOrgSameAs(structuredDataSource);
+  } catch (e) {
+    errors.push(`could not read www Organization sameAs (${e.message}) — reconcile docs with www.`);
+  }
+  if (orgSameAs && !arraysEqual(orgSameAs, EXPECTED.sameAs))
+    errors.push(
+      `www Organization sameAs is ${JSON.stringify(orgSameAs)} but EXPECTED.sameAs is ` +
+        `${JSON.stringify(EXPECTED.sameAs)} — docs.json seo.organization must mirror www's Organization ` +
+        "sameAs exactly (add/remove entries in both, in the same order).",
+    );
   return errors;
 }
 
