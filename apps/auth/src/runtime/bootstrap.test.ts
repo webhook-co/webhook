@@ -1,7 +1,10 @@
+import { personalOrgId } from "@webhook-co/db";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   bootstrapForUser,
+  extractFirstTouch,
+  firstTouchFromUrl,
   makeBootstrapHooks,
   MAX_SLUG_ATTEMPTS,
   personalOrgName,
@@ -145,6 +148,7 @@ function deps(over: Partial<BootstrapDeps> = {}): BootstrapDeps {
       endpointId: "ep_1",
       created: true,
     })) as unknown as BootstrapDeps["bootstrap"],
+    stamp: vi.fn(async () => {}) as unknown as BootstrapDeps["stamp"],
     makeHasher: vi.fn(() => ({}) as never) as unknown as BootstrapDeps["makeHasher"],
     // The self-heal is handed a bare userId, so bootstrapForUser reads the profile back. Stubbed here; the
     // real one selects (name, email) from "user" over the same webhook_app client.
@@ -374,5 +378,172 @@ describe("makeBootstrapHooks", () => {
     expect(waitUntil.mock.calls[0][0]).toBeInstanceOf(Promise);
     await waitUntil.mock.calls[0][0]; // settle the deferred work
     expect(d.bootstrap).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The magic-link VERIFY request that fires user.create.after: utm ride the Better Auth callbackURL (the login
+// page folded them in from the marketing CTA's ?utm_* on /login), so they arrive nested in the callbackURL
+// query param of the verify URL. OAuth signup instead creates the user on the provider callback, whose URL
+// carries only an opaque `state` — so its first-touch is best-effort null (by design).
+const verifyUrl = (callbackUrl: string): string =>
+  `https://auth.webhook.co/api/auth/magic-link/verify?token=tok_123&callbackURL=${encodeURIComponent(callbackUrl)}`;
+
+describe("firstTouchFromUrl", () => {
+  it("extracts utm nested inside the callbackURL (the magic-link verify shape)", () => {
+    const cb =
+      "https://app.webhook.co/session/handoff?utm_source=Google&utm_medium=cpc&utm_campaign=launch";
+    expect(firstTouchFromUrl(verifyUrl(cb))).toEqual({
+      source: "Google",
+      medium: "cpc",
+      campaign: "launch",
+    });
+  });
+
+  it("resolves a RELATIVE callbackURL and reads its utm", () => {
+    const cb = "/session/handoff?utm_source=twitter&utm_medium=social";
+    expect(firstTouchFromUrl(verifyUrl(cb))).toEqual({
+      source: "twitter",
+      medium: "social",
+      campaign: undefined,
+    });
+  });
+
+  it("falls back to utm sitting directly on the request URL (no callbackURL nesting)", () => {
+    expect(
+      firstTouchFromUrl("https://auth.webhook.co/login?utm_source=hn&utm_campaign=beta"),
+    ).toEqual({ source: "hn", medium: undefined, campaign: "beta" });
+  });
+
+  it("prefers the nested callbackURL utm over a top-level one (the carried value wins)", () => {
+    const cb = "/x?utm_source=nested";
+    const url = `https://auth.webhook.co/api/auth/magic-link/verify?utm_source=toplevel&callbackURL=${encodeURIComponent(cb)}`;
+    expect(firstTouchFromUrl(url).source).toBe("nested");
+  });
+
+  it("returns all-undefined for no-utm, undefined, or malformed input (never throws)", () => {
+    expect(firstTouchFromUrl(undefined)).toEqual({
+      source: undefined,
+      medium: undefined,
+      campaign: undefined,
+    });
+    expect(firstTouchFromUrl("::::not a url::::")).toEqual({
+      source: undefined,
+      medium: undefined,
+      campaign: undefined,
+    });
+    expect(firstTouchFromUrl("https://auth.webhook.co/login")).toEqual({
+      source: undefined,
+      medium: undefined,
+      campaign: undefined,
+    });
+  });
+});
+
+describe("extractFirstTouch", () => {
+  it("reads + NORMALIZES the first-touch from a magic-link verify context", () => {
+    const cb = "https://app.webhook.co/h?utm_source=Google&utm_medium=CPC&utm_campaign=Launch-Week";
+    const context = { request: { url: verifyUrl(cb) } };
+    // Normalized: lowercased, bounded slugs.
+    expect(extractFirstTouch(context)).toEqual({
+      source: "google",
+      medium: "cpc",
+      campaign: "launch-week",
+    });
+  });
+
+  it("yields an all-null touch for an OAuth-style callback (opaque state, no utm)", () => {
+    const context = {
+      request: {
+        url: "https://auth.webhook.co/api/auth/callback/google?state=OPAQUE32CHARS&code=xyz",
+      },
+    };
+    expect(extractFirstTouch(context)).toEqual({ source: null, medium: null, campaign: null });
+  });
+
+  it("drops a hostile utm value (whitespace/control) to null via normalization", () => {
+    const cb = "/h?utm_source=" + encodeURIComponent("goo gle") + "&utm_medium=email";
+    expect(extractFirstTouch({ request: { url: verifyUrl(cb) } })).toEqual({
+      source: null,
+      medium: "email",
+      campaign: null,
+    });
+  });
+
+  it("never throws on a malformed / absent context", () => {
+    expect(extractFirstTouch(undefined)).toEqual({ source: null, medium: null, campaign: null });
+    expect(extractFirstTouch(null)).toEqual({ source: null, medium: null, campaign: null });
+    expect(extractFirstTouch({})).toEqual({ source: null, medium: null, campaign: null });
+    expect(extractFirstTouch({ request: {} })).toEqual({
+      source: null,
+      medium: null,
+      campaign: null,
+    });
+  });
+});
+
+describe("bootstrapForUser — first-touch signup stamp", () => {
+  const firstTouch = { source: "google", medium: "cpc", campaign: "launch" };
+
+  it("stamps the signup milestone on the SAME client, for the user's personal org", async () => {
+    const d = deps();
+    await bootstrapForUser(d, user(), firstTouch);
+    const stamp = d.stamp as ReturnType<typeof vi.fn>;
+    expect(stamp).toHaveBeenCalledTimes(1);
+    const client = (d.createClient as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(stamp).toHaveBeenCalledWith(client, personalOrgId(user().id), firstTouch);
+    // The stamp completes BEFORE the client is closed (it reuses this client).
+    expect(client.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("self-heal (no first-touch) still stamps signed_up_at when it ACTUALLY creates the org", async () => {
+    // A create-path bootstrap that blipped is recovered by the session self-heal (created: true). It carries
+    // no utm, but must still record signed_up_at (all-null touch) so the org is in the signups funnel — else
+    // an inactive such org would be missing until the rollup someday backfills it.
+    const d = deps(); // default bootstrap → created: true
+    await bootstrapForUser(d, user()); // no firstTouch arg (self-heal shape)
+    expect(d.stamp).toHaveBeenCalledWith(expect.anything(), personalOrgId(user().id), {
+      source: null,
+      medium: null,
+      campaign: null,
+    });
+  });
+
+  it("does NOT stamp for an ALREADY-bootstrapped user (created: false) — the every-login self-heal no-op", async () => {
+    const d = deps({
+      bootstrap: vi.fn(async () => ({
+        orgId: "org_1",
+        endpointId: "ep_1",
+        created: false, // org already existed → nothing to stamp, no extra write per login
+      })) as unknown as BootstrapDeps["bootstrap"],
+    });
+    await bootstrapForUser(d, user()); // self-heal, no firstTouch
+    expect(d.stamp).not.toHaveBeenCalled();
+  });
+
+  it("swallows a stamp failure — a signup is never undone by a first-touch write error", async () => {
+    const log = vi.fn();
+    const d = deps({
+      log,
+      stamp: vi.fn(async () => {
+        throw new Error("milestone write blipped");
+      }) as unknown as BootstrapDeps["stamp"],
+    });
+    await expect(bootstrapForUser(d, user(), firstTouch)).resolves.toBeUndefined();
+    expect(log.mock.calls.map((c) => c[0])).toContain("auth.first_touch_stamp_failed");
+    // The org bootstrap still succeeded and the client still closed.
+    expect(d.bootstrap).toHaveBeenCalledTimes(1);
+    const client = (d.createClient as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(client.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the extracted first-touch end-to-end through the create hook", async () => {
+    const d = deps();
+    const cb = "https://app.webhook.co/h?utm_source=producthunt&utm_medium=referral";
+    await makeBootstrapHooks(d).user.create.after(user(), { request: { url: verifyUrl(cb) } });
+    expect(d.stamp).toHaveBeenCalledWith(expect.anything(), personalOrgId(user().id), {
+      source: "producthunt",
+      medium: "referral",
+      campaign: null,
+    });
   });
 });
