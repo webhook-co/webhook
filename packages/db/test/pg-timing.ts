@@ -60,6 +60,54 @@ export function setupHookTimeoutMs(url = process.env.TEST_DATABASE_URL): number 
   return isRemoteTestDatabase(url) ? REMOTE_SETUP_HOOK_TIMEOUT_MS : LOCAL_SETUP_HOOK_TIMEOUT_MS;
 }
 
+// A round-trip-heavy test (the GIN write-amp benchmark issues ~630 sequential EXPLAIN ANALYZE
+// inserts) is bounded by RTT × round-trips, not by the per-test testTimeout tuned for a typical
+// handful-of-queries test. Its ASSERTION is already RTT-immune — it reads Postgres's own "Execution
+// Time", never the wall clock — but its DURATION is not. On a slow/contended Neon night the WHOLE db
+// suite ran ~4.4x slower (run 29734739727: 1577s → 6971s across 1495 tests), which dragged this one
+// test from a comfortable 47s over the 120s ceiling and false-RED'd an otherwise-green run, twice.
+// This gives such a test a budget sized to its round-trip count on remote — a wide ceiling, not an
+// expected duration — while local keeps the tight budget (630 round-trips over a unix socket is a
+// few seconds). Same shape as setupHookTimeoutMs: a per-call literal overrides the config testTimeout.
+const REMOTE_ROUND_TRIP_HEAVY_TEST_TIMEOUT_MS = 300_000;
+
+/**
+ * Timeout (ms) for a single round-trip-heavy test, passed at the call site as
+ * `it(name, fn, roundTripHeavyTestTimeoutMs())`. Remote (Neon) gets a wide budget so RTT variance on
+ * a slow night cannot false-fail a test whose assertion never depended on the wall clock; local stays
+ * at the tight per-test budget. Reach for this ONLY for tests that legitimately do far more
+ * round-trips than a typical one — it is a latency ceiling, not a licence to write slow tests.
+ */
+export function roundTripHeavyTestTimeoutMs(url = process.env.TEST_DATABASE_URL): number {
+  return isRemoteTestDatabase(url)
+    ? REMOTE_ROUND_TRIP_HEAVY_TEST_TIMEOUT_MS
+    : LOCAL_TIMEOUTS.testTimeout;
+}
+
+// Per-migration budget + a fixed base, for a test that peels/re-applies the migration stack with
+// dbmate (migrateDown / migrateDownAll). Each step spawns a FRESH dbmate connection, so cost is
+// O(migrations) in connection setups — on the nightly Neon path (TLS + SCRAM per connect over the
+// network) that scales past the default 30s as migrations accumulate. Sizing to the work makes the
+// budget auto-scale with the migration count instead of needing a bump every few migrations (local
+// ephemeral PG runs the whole loop in ~1s; this only bites on Neon). Unlike roundTripHeavyTestTimeoutMs
+// (a FLAT remote ceiling for a FIXED round-trip count, e.g. the GIN benchmark's 630 inserts), this
+// budget GROWS with the schema — the right model when the round-trip count itself grows over time.
+const MIGRATION_STEP_BUDGET_MS = 6_000;
+const MIGRATION_ROUNDTRIP_BASE_MS = 30_000;
+
+/**
+ * Per-test timeout (ms) for a migration reversibility/roundtrip test, passed at the call site as
+ * `it(name, fn, migrationRoundtripTimeoutMs(migrationCount()))`. Scales with the number of migrations
+ * because each dbmate down/up step is O(1) connection setups and the loop peels O(migrations) of them;
+ * a fixed literal silently drifts toward the ceiling as migrations land (migration-0055-roundtrip sat
+ * at ~109s of the 120s default on the 2026-07-20 Neon night — one slow night, or a few new migrations,
+ * from a false RED). Deliberately un-guarded on remote/local: the generous budget is a harmless ceiling
+ * on the fast local path and only bites on Neon.
+ */
+export function migrationRoundtripTimeoutMs(migrationCount: number): number {
+  return migrationCount * MIGRATION_STEP_BUDGET_MS + MIGRATION_ROUNDTRIP_BASE_MS;
+}
+
 // The harness names each per-run test database `webhook_test_<hex>` (test/pg.ts). The
 // trailing underscore is required so the bare local default `webhook_test`, and real app
 // databases (`webhook`, `webhook_prod`, `neondb`, …), can never match.

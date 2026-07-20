@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   isRemoteTestDatabase,
+  migrationRoundtripTimeoutMs,
   orphanTestDatabases,
   remoteTestTimeouts,
+  roundTripHeavyTestTimeoutMs,
   setupHookTimeoutMs,
   waitForDatabase,
 } from "./pg-timing";
@@ -88,6 +90,56 @@ describe("setupHookTimeoutMs", () => {
     expect(setupHookTimeoutMs()).toBe(90_000);
     vi.stubEnv("TEST_DATABASE_URL", "postgres://owner:secret@ep-x.neon.tech/db?sslmode=require");
     expect(setupHookTimeoutMs()).toBe(180_000);
+  });
+});
+
+describe("roundTripHeavyTestTimeoutMs", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("keeps the tight per-test local budget for a local/ephemeral target", () => {
+    // Same value as the config's local testTimeout — 630 round-trips over a unix socket is seconds.
+    expect(roundTripHeavyTestTimeoutMs("postgres://postgres@127.0.0.1:5432/webhook_test")).toBe(
+      remoteTestTimeouts("postgres://postgres@127.0.0.1:5432/webhook_test").testTimeout,
+    );
+  });
+
+  it("widens the budget well past the config ceiling for a remote Neon target", () => {
+    const remote = roundTripHeavyTestTimeoutMs(
+      "postgres://owner:secret@ep-x.neon.tech/db?sslmode=require",
+    );
+    // Must clear the 120s config testTimeout the round-trip-heavy test would otherwise inherit — a
+    // ~4.4x slow-night suite slowdown put the 47s benchmark at ~207s, over that ceiling.
+    expect(remote).toBeGreaterThan(
+      remoteTestTimeouts("postgres://owner:secret@ep-x.neon.tech/db?sslmode=require").testTimeout,
+    );
+    expect(remote).toBeGreaterThanOrEqual(300_000);
+    // And it must exceed the local budget (the whole point).
+    expect(remote).toBeGreaterThan(
+      roundTripHeavyTestTimeoutMs("postgres://postgres@127.0.0.1:5432/db"),
+    );
+  });
+
+  it("falls back to TEST_DATABASE_URL when the url arg is omitted", () => {
+    vi.stubEnv("TEST_DATABASE_URL", "");
+    expect(roundTripHeavyTestTimeoutMs()).toBe(30_000);
+    vi.stubEnv("TEST_DATABASE_URL", "postgres://owner:secret@ep-x.neon.tech/db?sslmode=require");
+    expect(roundTripHeavyTestTimeoutMs()).toBe(300_000);
+  });
+});
+
+describe("migrationRoundtripTimeoutMs", () => {
+  it("scales with the migration count (auto-grows instead of drifting toward a fixed ceiling)", () => {
+    // 6s/migration + 30s base — sized to dbmate's O(migrations) connection setups on Neon.
+    expect(migrationRoundtripTimeoutMs(0)).toBe(30_000);
+    expect(migrationRoundtripTimeoutMs(91)).toBe(91 * 6_000 + 30_000);
+    // Strictly monotonic in the count — a bigger stack always gets a bigger budget.
+    expect(migrationRoundtripTimeoutMs(100)).toBeGreaterThan(migrationRoundtripTimeoutMs(50));
+  });
+
+  it("clears the default remote per-test ceiling for a realistic stack (the 07-20 near-miss)", () => {
+    // migration-0055-roundtrip sat at ~109s of the 120s default; a real stack (>=15 migrations) must
+    // budget well past 120s so it cannot false-RED on a slow Neon night or as migrations accumulate.
+    expect(migrationRoundtripTimeoutMs(20)).toBeGreaterThan(120_000);
   });
 });
 

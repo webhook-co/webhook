@@ -33,6 +33,11 @@ let pg: EphemeralPostgres;
 let app: Sql;
 let meter: Sql;
 let admin: Sql;
+// The SCHEMA OWNER. `admin` (the provider role) has BYPASSRLS + DML — enough for the seed INSERTs and
+// the afterEach DELETEs — but on the nightly's Neon branch it owns NOTHING, so it cannot create a
+// trigger (CREATE TRIGGER needs table ownership → 42501). The poison-trigger DDL below runs on this
+// handle instead, exactly as org-lifecycle.test.ts does. (remote-db-test-guard R1 enforces it.)
+let owner: Sql;
 
 function fakeSink(failFor?: Set<string>): {
   sink: MeterReportSink;
@@ -125,6 +130,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
   admin = createClient(pg.providerUrl);
+  owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
 }, setupHookTimeoutMs());
 
 afterEach(async () => {
@@ -142,6 +148,7 @@ afterAll(async () => {
   await app?.end();
   await meter?.end();
   await admin?.end();
+  await owner?.end();
   await pg?.stop();
 });
 
@@ -259,12 +266,12 @@ describe("flushOrgTail", () => {
 
     // Poison the 3rd reroll day: a BEFORE trigger raises when rollup_usage upserts the 07-05 row, aborting
     // ONLY that day's transaction. If the re-roll shared one transaction, this would roll back ALL four days.
-    await admin`create or replace function tf_poison_637() returns trigger language plpgsql as $$
+    await owner`create or replace function tf_poison_637() returns trigger language plpgsql as $$
       begin
         if new.window_start::date = date '2026-07-05' then raise exception 'tf_poison_637'; end if;
         return new;
       end $$`;
-    await admin`create trigger tf_poison_637_trg before insert or update on usage
+    await owner`create trigger tf_poison_637_trg before insert or update on usage
       for each row execute function tf_poison_637()`;
 
     try {
@@ -277,8 +284,8 @@ describe("flushOrgTail", () => {
       expect(partial.every((d) => !d.finalized)).toBe(true);
       expect(await outbox(orgId)).toEqual([]);
     } finally {
-      await admin`drop trigger tf_poison_637_trg on usage`;
-      await admin`drop function tf_poison_637()`;
+      await owner`drop trigger tf_poison_637_trg on usage`;
+      await owner`drop function tf_poison_637()`;
     }
 
     // Resume: a re-run completes every day, finalizes the whole pre-boundary tail, and drains to Stripe with
