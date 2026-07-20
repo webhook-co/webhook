@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { readActivationWeeklyReview } from "../src/activation-review";
 import { runActivationRollup } from "../src/activation-rollup";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
@@ -500,5 +501,56 @@ describe("runActivationRollup per-org isolation (unit, fakes)", () => {
 
     expect(result.capped).toBe(true);
     expect(capped).toHaveLength(1);
+  });
+});
+
+describe("readActivationWeeklyReview (typed reader)", () => {
+  it("maps activation_weekly_review() rows to a typed, camel-cased shape (numbers, ISO week)", async () => {
+    // Fresh cohort in an ISO week no other test touches (Mon 2026-06-15 = isoWeek(3), which the shared
+    // rollupOrg helper re-rolls). Every one of the six count/derived fields is given a DISTINCT value so the
+    // mapping test can catch any column swap (a passthrough reader's whole job is the column→field mapping):
+    //   signups 5 ≠ reachedCapture 4 ≠ reachedForward 3 ≠ activatedOrgs 2 ≠ activationRate 0.6 ≠ ttfv.
+    const wSignup = Date.UTC(2026, 5, 15, 9); // Mon 2026-06-15
+    const wk = "2026-06-15";
+    const HOUR = 3_600_000;
+    // a, b: signup + capture + forward all in-week → both cohort-forwarders AND activated-in-week.
+    const a = await seedOrg("rd-a", wSignup, wSignup + 5 * 60_000);
+    await seedDelivery(a.orgId, a.eventId, "forwarded", wSignup + 1 * HOUR);
+    const b = await seedOrg("rd-b", wSignup, wSignup + 5 * 60_000);
+    await seedDelivery(b.orgId, b.eventId, "forwarded", wSignup + 1.5 * HOUR);
+    // c: signup + capture, NO forward → in reachedCapture, not reachedForward/activated.
+    const c = await seedOrg("rd-c", wSignup, wSignup + 5 * 60_000);
+    // e: signup only, NO capture → in signups, not reachedCapture. (signups 5 ≠ reachedCapture 4)
+    const e = await seedOrg("rd-e", wSignup, null);
+    // f: signup + capture in-week, but FORWARDS a week later (Mon 2026-06-22). So f is an ever-forwarder in
+    // the Jun-15 signup cohort (reachedForward counts it) but is NOT activated in the Jun-15 activity week
+    // (its forward lands in Jun-22). This is what makes reachedForward 3 ≠ activatedOrgs 2.
+    const f = await seedOrg("rd-f", wSignup, wSignup + 5 * 60_000);
+    await seedDelivery(f.orgId, f.eventId, "forwarded", wSignup + 168 * HOUR); // +7 days → Jun-22 week
+    for (const o of [a, b, c, e, f]) await rollupOrg(o.orgId);
+
+    // Read via the owner/ops (provider) connection — webhook_app is denied EXECUTE by design.
+    const rows = await readActivationWeeklyReview(provider);
+    const row = rows.find((r) => r.isoWeek === wk);
+
+    expect(row).toBeDefined();
+    // Typed + camel-cased, with SQL bigints/numerics coerced to JS numbers (not strings). All-distinct values
+    // mean any swapped column assignment in the reader flips at least one field here.
+    expect(row).toEqual({
+      isoWeek: wk,
+      signups: 5,
+      reachedCapture: 4,
+      reachedForward: 3,
+      activatedOrgs: 2,
+      activationRate: expect.closeTo(0.6, 4), // reached_forward 3 / signups 5
+      ttfvMedianHours: expect.closeTo(1.5, 4), // median of [1h, 1.5h, 168h]
+      ttfvP90Hours: expect.closeTo(134.7, 2), // p90 of [1h, 1.5h, 168h]
+    });
+    // Guard the string→number coercion explicitly (a raw postgres.js row returns bigints as strings).
+    expect(typeof row!.signups).toBe("number");
+    expect(typeof row!.activationRate).toBe("number");
+    // Rows are ordered oldest→newest.
+    const weeks = rows.map((r) => r.isoWeek);
+    expect(weeks).toEqual([...weeks].sort());
   });
 });
