@@ -1,12 +1,19 @@
-# webhook.co
+<p align="center">
+  <a href="https://www.webhook.co"><img src="https://www.webhook.co/logo.png" alt="webhook.co" width="120" height="120" /></a>
+</p>
 
-**A free, permanent, signed webhook URL you can inspect and replay to localhost — from the CLI, API,
-dashboard, or MCP.**
+<h1 align="center">webhook.co</h1>
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
-[![CLI on npm](https://img.shields.io/npm/v/%40webhook-co%2Fcli?label=cli&logo=npm)](https://www.npmjs.com/package/@webhook-co/cli)
-[![CI](https://img.shields.io/github/actions/workflow/status/webhook-co/webhook/ci.yml?branch=main&label=ci)](https://github.com/webhook-co/webhook/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-docs.webhook.co-informational)](https://docs.webhook.co)
+<p align="center">
+  <strong>A free, permanent, signed webhook URL you can inspect and replay to localhost — from the CLI, API, dashboard, or MCP.</strong>
+</p>
+
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0" /></a>
+  <a href="https://www.npmjs.com/package/@webhook-co/cli"><img src="https://img.shields.io/npm/v/%40webhook-co%2Fcli?label=cli&logo=npm" alt="CLI on npm" /></a>
+  <a href="https://github.com/webhook-co/webhook/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/webhook-co/webhook/ci.yml?branch=main&label=ci" alt="CI" /></a>
+  <a href="https://docs.webhook.co"><img src="https://img.shields.io/badge/docs-docs.webhook.co-informational" alt="Docs" /></a>
+</p>
 
 `webhook.co` captures the webhooks other services send you, so you can see exactly what arrived,
 check the signature, and replay it to your local dev server without redeploying. The same operations
