@@ -111,7 +111,7 @@ test("mutation test: a real page with a SINGLE token changed is still caught as 
   assert.equal(findNearDuplicates([a, b]).length, 1);
 });
 
-test("flags thin content (below the word / shingle floor)", () => {
+test("flags thin content via the WORD floor (a short stub)", () => {
   const thin = checkThinContent([
     {
       id: "stub",
@@ -124,6 +124,28 @@ test("flags thin content (below the word / shingle floor)", () => {
     thin.map((t) => t.id),
     ["stub"],
   );
+});
+
+test("flags thin content via the SHINGLE floor independently of the word floor", () => {
+  // A LONG page (clears MIN_BODY_WORDS) that is the SAME boilerplate phrase repeated + a brand name —
+  // exactly the doorway page the word floor alone would miss. After neutralizing the brand, its unique
+  // 5-gram count collapses below MIN_UNIQUE_SHINGLES. Fails if neutralization is dropped from
+  // pageShingles OR the shingle floor is ignored (the regression the guard exists to catch).
+  const phrase =
+    "Verify Acme webhook signatures with webhook co using the Acme signing secret today. ";
+  const padded = phrase.repeat(16); // ~200 words of near-zero unique substance
+  const thin = checkThinContent([{ id: "padded", name: "Acme", text: padded }]);
+  assert.equal(thin.length, 1, "the padded boilerplate page must be flagged thin");
+  assert.ok(thin[0].wordCount >= 150, `wordCount ${thin[0].wordCount} must CLEAR the word floor`);
+  assert.ok(
+    thin[0].shingleCount < 40,
+    `shingleCount ${thin[0].shingleCount} must FAIL the shingle floor`,
+  );
+});
+
+test("does NOT flag a diverse page that clears BOTH floors", () => {
+  const thin = checkThinContent([{ id: "stripe", name: "Stripe", text: stripePage }]);
+  assert.equal(thin.length, 0);
 });
 
 test("FLOOR: analyzePages refuses to report clean on an empty or non-array page set", () => {
