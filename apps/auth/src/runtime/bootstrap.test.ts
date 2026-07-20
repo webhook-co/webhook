@@ -1,11 +1,14 @@
 import { personalOrgId } from "@webhook-co/db";
+import { encodeFirstTouch, FIRST_TOUCH_COOKIE } from "@webhook-co/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   bootstrapForUser,
   extractFirstTouch,
+  firstTouchFromContext,
   firstTouchFromUrl,
   makeBootstrapHooks,
+  resolveFirstTouch,
   MAX_SLUG_ATTEMPTS,
   personalOrgName,
   personalOrgSlug,
@@ -481,6 +484,75 @@ describe("extractFirstTouch", () => {
   });
 });
 
+// The first-party cookie is the PRIMARY first-touch source (it rides to auth automatically over the shared
+// `.webhook.co` apex, incl. OAuth signups). The PR4 callbackURL path stays as a fallback.
+const ctxWithCookie = (raw: Record<string, string>, url?: string): unknown => ({
+  request: {
+    url: url ?? "https://auth.webhook.co/api/auth/magic-link/verify?token=t",
+    headers: new Headers({ cookie: `${FIRST_TOUCH_COOKIE}=${encodeFirstTouch(raw)}` }),
+  },
+});
+
+describe("firstTouchFromContext", () => {
+  it("reads + normalizes the first-touch from the wh_first_touch cookie", () => {
+    expect(
+      firstTouchFromContext(
+        ctxWithCookie({ source: "Google", medium: "CPC", campaign: "Launch-Week" }),
+      ),
+    ).toEqual({ source: "google", medium: "cpc", campaign: "launch-week" });
+  });
+
+  it("survives a cookie whose value contains = and & (the compact s=…&m=… encoding)", () => {
+    // The Cookie-header split must not truncate our value at its internal '='/'&'.
+    expect(firstTouchFromContext(ctxWithCookie({ source: "a-b", medium: "email" }))).toEqual({
+      source: "a-b",
+      medium: "email",
+      campaign: null,
+    });
+  });
+
+  it("is all-null when the cookie is absent, and never throws on a malformed context", () => {
+    expect(firstTouchFromContext({ request: { headers: new Headers() } })).toEqual({
+      source: null,
+      medium: null,
+      campaign: null,
+    });
+    expect(firstTouchFromContext(undefined)).toEqual({
+      source: null,
+      medium: null,
+      campaign: null,
+    });
+    expect(firstTouchFromContext({})).toEqual({ source: null, medium: null, campaign: null });
+    expect(firstTouchFromContext({ request: {} })).toEqual({
+      source: null,
+      medium: null,
+      campaign: null,
+    });
+  });
+});
+
+describe("resolveFirstTouch (cookie primary, callbackURL fallback)", () => {
+  it("prefers the cookie over the callbackURL utm", () => {
+    const cb = "https://app.webhook.co/h?utm_source=fromurl&utm_medium=fromurl";
+    const url = `https://auth.webhook.co/api/auth/magic-link/verify?token=t&callbackURL=${encodeURIComponent(cb)}`;
+    expect(resolveFirstTouch(ctxWithCookie({ source: "fromcookie" }, url))).toEqual({
+      source: "fromcookie",
+      medium: null,
+      campaign: null,
+    });
+  });
+
+  it("falls back to the callbackURL utm when the cookie carries nothing", () => {
+    const cb = "https://app.webhook.co/h?utm_source=fromurl&utm_medium=referral";
+    const url = `https://auth.webhook.co/api/auth/magic-link/verify?token=t&callbackURL=${encodeURIComponent(cb)}`;
+    expect(resolveFirstTouch({ request: { url, headers: new Headers() } })).toEqual({
+      source: "fromurl",
+      medium: "referral",
+      campaign: null,
+    });
+  });
+});
+
 describe("bootstrapForUser — first-touch signup stamp", () => {
   const firstTouch = { source: "google", medium: "cpc", campaign: "launch" };
 
@@ -543,6 +615,16 @@ describe("bootstrapForUser — first-touch signup stamp", () => {
     expect(d.stamp).toHaveBeenCalledWith(expect.anything(), personalOrgId(user().id), {
       source: "producthunt",
       medium: "referral",
+      campaign: null,
+    });
+  });
+
+  it("passes the COOKIE first-touch end-to-end through the create hook (primary source)", async () => {
+    const d = deps();
+    await makeBootstrapHooks(d).user.create.after(user(), ctxWithCookie({ source: "hackernews" }));
+    expect(d.stamp).toHaveBeenCalledWith(expect.anything(), personalOrgId(user().id), {
+      source: "hackernews",
+      medium: null,
       campaign: null,
     });
   });

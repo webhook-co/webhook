@@ -24,6 +24,7 @@ import {
   type Sql,
   type UserProfile,
 } from "@webhook-co/db";
+import { decodeFirstTouch, FIRST_TOUCH_COOKIE } from "@webhook-co/shared";
 
 export interface BootstrapUser {
   id: string;
@@ -324,6 +325,45 @@ export function extractFirstTouch(context: unknown): FirstTouch {
   return normalizeFirstTouch(firstTouchFromUrl(url));
 }
 
+/** The `Cookie` request header off the Better Auth endpoint context (Web `Headers`), or undefined. Total. */
+function requestCookieHeader(context: unknown): string | undefined {
+  if (typeof context !== "object" || context === null) return undefined;
+  const headers = (context as { request?: { headers?: unknown } }).request?.headers;
+  if (headers && typeof (headers as Headers).get === "function") {
+    const v = (headers as Headers).get("cookie");
+    return typeof v === "string" ? v : undefined;
+  }
+  return undefined;
+}
+
+/** Read one cookie's raw value out of a `Cookie` header (`a=b; c=d`). Splits on the FIRST `=`, so a value that
+ *  itself contains `=`/`&` (our compact `s=…&m=…` encoding) survives intact. Total. */
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return undefined;
+}
+
+/** First-touch from the `wh_first_touch` cookie on the create request — the PRIMARY source (a first-party
+ *  `.webhook.co` cookie rides to auth automatically, incl. OAuth). Total: no cookie / malformed → all-null. */
+export function firstTouchFromContext(context: unknown): FirstTouch {
+  const value = cookieValue(requestCookieHeader(context), FIRST_TOUCH_COOKIE);
+  return normalizeFirstTouch(decodeFirstTouch(value ?? ""));
+}
+
+/** Resolve first-touch at signup: prefer the cookie (rides reliably, incl. OAuth); fall back to the
+ *  callbackURL utm (PR4 path) only when the cookie carries nothing. */
+export function resolveFirstTouch(context: unknown): FirstTouch {
+  const fromCookie = firstTouchFromContext(context);
+  const hasCookieTouch =
+    fromCookie.source !== null || fromCookie.medium !== null || fromCookie.campaign !== null;
+  return hasCookieTouch ? fromCookie : extractFirstTouch(context);
+}
+
 /** Better Auth databaseHooks that bootstrap on user creation + self-heal on session creation. */
 export function makeBootstrapHooks(deps: BootstrapDeps) {
   return {
@@ -333,7 +373,7 @@ export function makeBootstrapHooks(deps: BootstrapDeps) {
     user: {
       create: {
         after: async (user: BootstrapUser, context?: unknown): Promise<void> => {
-          await bootstrapForUser(deps, user, extractFirstTouch(context));
+          await bootstrapForUser(deps, user, resolveFirstTouch(context));
         },
       },
     },
