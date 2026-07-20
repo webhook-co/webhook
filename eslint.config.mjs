@@ -18,6 +18,9 @@ export default tseslint.config(
       "**/out/**",
       "**/coverage/**",
       "**/node_modules/**",
+      // Generated provider-recipes golden — its canonical format is renderGolden()'s raw JSON.stringify
+      // output, drift-checked byte-for-byte; eslint --fix must not reformat it (see .prettierignore).
+      "**/webhooks-recipes/src/recipes.generated.ts",
     ],
   },
 

@@ -37,9 +37,17 @@ export {
   PROVIDERS,
   ProviderSchema,
   SW_SECRET_PROVIDERS,
+  // The full config-driven recipe map — consumed by @webhook-co/webhooks-recipes to derive the
+  // human-facing signature recipes (build-time only; pure data, no crypto pulled into a DOM bundle).
+  PROVIDER_CONFIGS,
   type Provider,
   type HmacProviderConfig,
   type MessagePart,
+  type SignatureFormat,
+  type TimestampSource,
+  type SignatureEncoding,
+  type HmacDigest,
+  type KeyDerivation,
 } from "./adapters/config";
 export { makeHmacAdapter } from "./adapters/factory";
 // Tier-4 non-cryptographic authenticity: the operator-configured-header provider set + its secret
