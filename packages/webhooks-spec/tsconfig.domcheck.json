@@ -1,0 +1,16 @@
+{
+  // Enforces that the verification engine stays importable into a BROWSER (lib.dom) TS program — the
+  // interactive signature verifier in apps/www imports it directly. Same sources as the main tsconfig,
+  // but with `types: []` (drop @cloudflare/workers-types) + lib.dom, which has a STRICTER `BufferSource`
+  // (`Uint8Array<ArrayBuffer>`, no SharedArrayBuffer). WebCrypto byte args must be narrowed with
+  // `domBytes()` (bytes.ts) to satisfy it. Run by `pnpm --filter @webhook-co/webhooks-spec typecheck:dom`
+  // (part of the package's typecheck). If this reds, the engine has drifted out of browser-compatibility.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".turbo", "src/**/*.test.ts"]
+}

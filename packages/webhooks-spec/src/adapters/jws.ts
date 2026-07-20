@@ -10,7 +10,13 @@
 // Per-provider claim binding (payload_hash, url_hash, iss, exp, qsh) lives in each bespoke adapter — this
 // stays provider-agnostic. The HMAC step reuses the audited primitives in ../bytes (no new crypto).
 
-import { b64urlToBytes, importHmacKeyForHash, timingSafeEqual, utf8Encoder } from "../bytes";
+import {
+  b64urlToBytes,
+  domBytes,
+  importHmacKeyForHash,
+  timingSafeEqual,
+  utf8Encoder,
+} from "../bytes";
 import type { WebhookScheme } from "../scheme";
 import { verificationFailed, type VerificationResult } from "../verification";
 
@@ -119,7 +125,9 @@ export async function verifyCompactHs(
 
   for (const c of candidates) {
     const key = await importHmacKeyForHash(c.bytes, hash);
-    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, parsed.signingInput));
+    const mac = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, domBytes(parsed.signingInput)),
+    );
     if (timingSafeEqual(mac, parsed.signature)) {
       return { ok: true, secretIndex: c.index, payload: parsed.payload };
     }

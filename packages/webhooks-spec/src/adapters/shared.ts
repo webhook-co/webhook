@@ -15,6 +15,7 @@ import {
   b64ToBytes,
   b64urlToBytes,
   bytesToHex,
+  domBytes,
   hexToBytes,
   type HmacHash,
   importHmacKeyForHash,
@@ -322,7 +323,7 @@ async function verifyHmacCore(params: HmacCoreParams): Promise<VerificationResul
   // 1) The happy path: does any secret's MAC over the exact raw bytes match any expected sig?
   const message = buildMessage(rawBody);
   for (const c of keyed) {
-    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", c.key, message));
+    const mac = new Uint8Array(await crypto.subtle.sign("HMAC", c.key, domBytes(message)));
     for (const exp of expected) {
       if (timingSafeEqual(mac, exp)) return verificationOk(c.keyId, scheme);
     }
@@ -335,7 +336,7 @@ async function verifyHmacCore(params: HmacCoreParams): Promise<VerificationResul
     if (mutated === null) continue;
     const probeMessage = buildMessage(mutated);
     for (const c of keyed) {
-      const mac = new Uint8Array(await crypto.subtle.sign("HMAC", c.key, probeMessage));
+      const mac = new Uint8Array(await crypto.subtle.sign("HMAC", c.key, domBytes(probeMessage)));
       for (const exp of expected) {
         if (timingSafeEqual(mac, exp)) {
           return verificationFailed({
