@@ -13,7 +13,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev:db": "scripts/dev-db.sh",
-    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run no-early-db-close && pnpm run cap-cron-sync-guard && pnpm run deploy-token-pr-guard && pnpm run hyperdrive-binding-guard && pnpm run tracing-safety-guard && pnpm run remote-db-test-guard && pnpm run adr-no-dup && pnpm run docs-nav-guard && pnpm run docs-structured-data-guard && pnpm run test:scripts",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run no-early-db-close && pnpm run cap-cron-sync-guard && pnpm run deploy-token-pr-guard && pnpm run hyperdrive-binding-guard && pnpm run tracing-safety-guard && pnpm run remote-db-test-guard && pnpm run adr-no-dup && pnpm run docs-nav-guard && pnpm run docs-structured-data-guard && pnpm run content-dup-guard && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -33,6 +33,7 @@
     "adr-no-dup": "node scripts/adr-no-dup.mjs",
     "docs-nav-guard": "node scripts/docs-nav-guard.mjs",
     "docs-structured-data-guard": "node scripts/docs-structured-data-guard.mjs",
+    "content-dup-guard": "node scripts/content-dup-guard.mjs",
     "docs-live-structured-data-check": "node scripts/docs-live-structured-data-check.mjs",
     "test:scripts": "node --test 'scripts/**/*.test.mjs' 'apps/*/scripts/**/*.test.mjs'",
     "prepare": "husky",
