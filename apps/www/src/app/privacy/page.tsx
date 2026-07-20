@@ -142,6 +142,13 @@ export default function PrivacyPage() {
             follow you across sites — so it can't be tied back to you.
           </p>
           <p>
+            <strong>Acquisition source (attribution):</strong> separately, if you arrive from a
+            marketing link <em>and</em> accept our cookie banner, we set one first-party cookie
+            recording <em>only</em> that link's campaign (UTM) tags — never personal data — so we
+            can see, in aggregate, which channels bring developers to webhook.co. If you decline, we
+            don't set it. See <a href="#cookies">Cookies</a> below.
+          </p>
+          <p>
             <strong>Support communications:</strong> if you email us, we keep the correspondence to
             help you.
           </p>
@@ -168,6 +175,12 @@ export default function PrivacyPage() {
               <strong>To understand and improve the Service</strong> (anonymous CLI telemetry,
               aggregate cookieless website analytics) — <em>legitimate interests</em>; you can opt
               out of CLI telemetry.
+            </li>
+            <li>
+              <strong>To see which channels bring developers to us</strong> (the first-party
+              attribution cookie, <code>wh_first_touch</code>) — <em>your consent</em> (Art
+              6(1)(a)), which you give or decline through the cookie banner and can withdraw at any
+              time.
             </li>
             <li>
               <strong>To respond to support requests</strong> — <em>legitimate interests</em> /{" "}
@@ -308,20 +321,28 @@ export default function PrivacyPage() {
           </p>
           <ul>
             <li>
-              a <strong>session cookie</strong> that keeps you signed in, and
+              a <strong>session cookie</strong> that keeps you signed in,
             </li>
             <li>
               short-lived <strong>security cookies</strong> used during Google/GitHub sign-in (to
-              prevent cross-site request forgery).
+              prevent cross-site request forgery), and
+            </li>
+            <li>
+              a small cookie that remembers your <strong>cookie choice</strong>, so we don't ask
+              again.
             </li>
           </ul>
           <p>
-            Separately, when you arrive from a marketing link we set one{" "}
-            <strong>first-party attribution cookie</strong> (<code>wh_first_touch</code>) that
+            Separately, when you arrive from a marketing link we ask — through a{" "}
+            <strong>cookie banner</strong> — whether we may set one{" "}
+            <strong>first-party attribution cookie</strong> (<code>wh_first_touch</code>). It
             records <em>only</em> that link's marketing source — its UTM campaign tags, never
             personal data — so we can understand, in aggregate, which channels bring developers to
-            webhook.co. It's tied to your organisation when you sign up (not to a browsing profile),
-            expires after 90 days, and is set once — a later visit never overwrites it.
+            webhook.co. We set it <strong>only if you accept</strong>; if you decline, we don't set
+            it — and either way we remember your choice so we don't ask again. When set, it's tied
+            to your organisation at signup (not to a browsing profile), expires after 90 days, and
+            is written once — a later visit never overwrites it. To withdraw consent, clear the
+            cookie in your browser.
           </p>
           <p>
             The strictly-necessary cookies aren't used for tracking or advertising. Our login page

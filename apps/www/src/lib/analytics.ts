@@ -11,7 +11,8 @@
 //
 // The same handler ALSO sets the first-party first-touch acquisition cookie (activation follow-up) — see
 // withFirstTouchCookie / first-touch-capture.ts. That IS a cookie (utm only, no PII), first-touch-wins,
-// disclosed on /privacy. (Whether it needs a consent banner is a founder/legal call — flagged, not assumed.)
+// disclosed on /privacy. Because it is non-essential, it is CONSENT-GATED: the worker sets it only once the
+// visitor has accepted via the cookie banner (consent.ts / consent-banner.tsx), never before.
 
 import { withFirstTouchCookie } from "./first-touch-capture";
 

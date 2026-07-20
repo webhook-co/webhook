@@ -91,7 +91,15 @@ endpoint** is deliberately deferred: it needs a dedicated read-only reviewer DB 
 (the first HTTP surface for platform-wide aggregates), which a background session can't provision — so it is
 a founder-run follow-up, not shipped dark. See "Deferred" below.
 
-### First-touch acquisition attribution (cookieless)
+### First-touch acquisition attribution
+
+> **Amended 2026-07-20 — superseded in part by [ADR-0128](0128-first-touch-consent-cookie.md).** The
+> "cookieless" URL-param mechanism described in this section was replaced during implementation by a
+> **consent-gated first-party `.webhook.co` cookie** (`wh_first_touch`), set by the marketing site only
+> after the visitor accepts a cookie banner and read by the auth signup hook. The milestone/rollup design
+> above is unchanged; only *how the utm reaches signup* changed — and the cookie also gives OAuth signups
+> attribution, which the URL-param approach could not. See ADR-0128 for the rationale and the ePrivacy
+> consent decision.
 
 At signup we stamp `signed_up_at` + a normalized first-touch onto the org's milestone row, **first-touch
 wins**. The mechanism is cookieless: the marketing CTA appends `?utm_*` to the auth `/login` URL; the login

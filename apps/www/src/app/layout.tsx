@@ -3,6 +3,7 @@ import { themeInitScript } from "@webhook-co/ui";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 
+import { ConsentBanner } from "@/components/marketing/consent-banner";
 import { StructuredData } from "@/components/marketing/structured-data";
 import { siteMetadata, siteViewport } from "./metadata";
 import "./globals.css";
@@ -59,6 +60,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
         <StructuredData />
         {children}
+        <ConsentBanner />
       </body>
     </html>
   );
