@@ -166,13 +166,19 @@ test("checkWwwDrift: www dropping the org name or the github sameAs fails", () =
 // A syntactically-valid but obviously-fake 32-hex token, BUILT at runtime (never a 32-char literal in
 // source) so the secret scanner can't mistake a test fixture for a leaked generic-api-key.
 const FAKE_TOKEN = "a".repeat(32);
+
+// The SHIPPED form: a CLASSIC injected <script> carrying the token in the data-cf-beacon attribute.
+// Cloudflare's beacon resolves its own <script> via document.currentScript (null for MODULE scripts) or
+// a script[data-cf-beacon] querySelector fallback, then reads the token from data-cf-beacon or ?token=.
+// A classic script + attribute reports through both paths; a module + ?token= injection loads but
+// silently reports nothing. The guard requires the attribute token and rejects module scripts.
 const beacon = (token) =>
-  `(function(){var s=document.createElement("script");s.defer=true;` +
+  `(function(){const s=document.createElement("script");s.defer=true;` +
   `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
   `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${token}"}));` +
   `document.head.appendChild(s);})();`;
 
-test("checkAnalyticsBeacon: a real 32-hex token beacon passes", () => {
+test("checkAnalyticsBeacon: a real 32-hex classic data-cf-beacon beacon passes", () => {
   assert.deepEqual(checkAnalyticsBeacon(beacon(FAKE_TOKEN)), []);
 });
 
@@ -186,7 +192,35 @@ test("checkAnalyticsBeacon: a non-32-hex token fails", () => {
 
 test("checkAnalyticsBeacon: a beacon missing the cloudflareinsights src fails", () => {
   const noSrc =
-    `(function(){var s=document.createElement("script");` +
-    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}"}));})();`;
+    `(function(){const s=document.createElement("script");` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}"}));` +
+    `document.head.appendChild(s);})();`;
   assert.ok(checkAnalyticsBeacon(noSrc).some((e) => e.includes("beacon.min.js")));
+});
+
+test("checkAnalyticsBeacon: a MODULE-type beacon is rejected (currentScript is null → dead)", () => {
+  // Verified against the live beacon.min.js: document.currentScript is always null for a module script,
+  // so the beacon can't find its token and never reports. The guard must reject it, not pass it.
+  const moduleForm =
+    `(function(){const s=document.createElement("script");s.type="module";` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}"}));` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(moduleForm).some((e) => e.includes("module")),
+    "a module-type beacon must be rejected",
+  );
+});
+
+test("checkAnalyticsBeacon: a bare ?token= src (no data-cf-beacon attribute) is rejected", () => {
+  // Without the attribute there is no querySelector fallback, so the beacon depends on currentScript
+  // alone. Require the attribute form, which resolves through both paths.
+  const queryForm =
+    `(function(){const s=document.createElement("script");s.defer=true;` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js?token=${FAKE_TOKEN}";` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(queryForm).some((e) => e.includes("token")),
+    "a bare ?token= src must be rejected",
+  );
 });
