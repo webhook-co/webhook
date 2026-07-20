@@ -24,3 +24,8 @@ packages/openapi/src/openapi.json
 # (openapi-typescript over the golden spec) and enforced by that package's drift test; Prettier must not
 # reformat them or the two would disagree.
 packages/sdk-ts/src/generated/schema.d.ts
+
+# Generated provider recipes. Canonical format is produced by `renderGolden()` in
+# packages/webhooks-recipes/src/build-all.ts and enforced by that package's byte-compare drift test;
+# Prettier must not reformat it or `generate` and the drift check would disagree.
+packages/webhooks-recipes/src/recipes.generated.ts

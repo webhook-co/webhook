@@ -1,0 +1,21 @@
+{
+  "name": "@webhook-co/webhooks-recipes",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data": "./src/recipes.generated.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
+    "generate": "WEBHOOK_RECIPES_WRITE=1 vitest run src/recipes.generated.test.ts"
+  },
+  "dependencies": {
+    "@webhook-co/webhooks-spec": "workspace:*"
+  }
+}
