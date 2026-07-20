@@ -13,7 +13,7 @@
 // signatureAlgorithms (ecdsa-p256 / rsa-pss / rsa) are not handled here (MALFORMED). Verified against
 // self-generated vectors (keygen.test.ts); the scheme is byte-exact per Keygen's Signatures docs.
 
-import { b64ToBytes, bytesToB64, hexToBytes, utf8Encoder } from "../../bytes";
+import { b64ToBytes, bytesToB64, domBytes, hexToBytes, utf8Encoder } from "../../bytes";
 import type { VerifyAdapter, VerifyInput } from "../../adapter";
 import { verificationFailed, verificationOk, type VerificationResult } from "../../verification";
 import { verifyEd25519 } from "../asymmetric";
@@ -32,7 +32,7 @@ function parseCavageParams(headerValue: string): Record<string, string> | null {
 }
 
 async function sha256Base64(body: Uint8Array): Promise<string> {
-  return bytesToB64(new Uint8Array(await crypto.subtle.digest("SHA-256", body)));
+  return bytesToB64(new Uint8Array(await crypto.subtle.digest("SHA-256", domBytes(body))));
 }
 
 export function makeKeygenAdapter(): VerifyAdapter {

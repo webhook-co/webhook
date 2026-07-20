@@ -11,7 +11,7 @@
 //     wants the signature as IEEE-P1363 raw r||s (64 bytes), NOT DER, so SendGrid's DER sig is converted.
 //   - RSASSA-PKCS1-v1_5 SHA-256 (Wise): importKey("spki", DER) + verify("RSASSA-PKCS1-v1_5").
 
-import { b64ToBytes } from "../bytes";
+import { b64ToBytes, domBytes } from "../bytes";
 
 /**
  * Verify an Ed25519 (RFC 8032) signature. All inputs are raw bytes: a 32-byte public key, the exact signed
@@ -24,10 +24,14 @@ export async function verifyEd25519(
 ): Promise<boolean> {
   if (publicKeyRaw.length !== 32 || signature.length !== 64) return false;
   try {
-    const key = await crypto.subtle.importKey("raw", publicKeyRaw, { name: "Ed25519" }, false, [
-      "verify",
-    ]);
-    return await crypto.subtle.verify("Ed25519", key, signature, message);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      domBytes(publicKeyRaw),
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    return await crypto.subtle.verify("Ed25519", key, domBytes(signature), domBytes(message));
   } catch {
     return false;
   }
@@ -47,12 +51,17 @@ export async function verifyRsaPkcs1(
   try {
     const key = await crypto.subtle.importKey(
       "spki",
-      spkiDer,
+      domBytes(spkiDer),
       { name: "RSASSA-PKCS1-v1_5", hash },
       false,
       ["verify"],
     );
-    return await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, message);
+    return await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      key,
+      domBytes(signature),
+      domBytes(message),
+    );
   } catch {
     return false;
   }
@@ -84,7 +93,12 @@ export async function verifyRsaPkcs1Sha256Jwk(
       false,
       ["verify"],
     );
-    return await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, message);
+    return await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      key,
+      domBytes(signature),
+      domBytes(message),
+    );
   } catch {
     return false;
   }
@@ -104,7 +118,7 @@ export async function verifyEcdsaP256Sha256(
   try {
     const key = await crypto.subtle.importKey(
       "spki",
-      spkiDer,
+      domBytes(spkiDer),
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
@@ -112,8 +126,8 @@ export async function verifyEcdsaP256Sha256(
     return await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       key,
-      signatureRaw,
-      message,
+      domBytes(signatureRaw),
+      domBytes(message),
     );
   } catch {
     return false;
@@ -135,12 +149,17 @@ export async function verifyEcdsaP256Sha1(
   try {
     const key = await crypto.subtle.importKey(
       "spki",
-      spkiDer,
+      domBytes(spkiDer),
       { name: "ECDSA", namedCurve: "P-256" },
       false,
       ["verify"],
     );
-    return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-1" }, key, signatureRaw, message);
+    return await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-1" },
+      key,
+      domBytes(signatureRaw),
+      domBytes(message),
+    );
   } catch {
     return false;
   }
@@ -168,8 +187,8 @@ export async function verifyEcdsaP256Sha256Jwk(
     return await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       key,
-      signatureRaw,
-      message,
+      domBytes(signatureRaw),
+      domBytes(message),
     );
   } catch {
     return false;
