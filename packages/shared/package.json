@@ -11,7 +11,8 @@
     "./audit": "./src/audit.ts",
     "./bytes": "./src/bytes.ts",
     "./email-shell": "./src/email-shell.ts",
-    "./plans": "./src/plans.ts"
+    "./plans": "./src/plans.ts",
+    "./first-touch-cookie": "./src/first-touch-cookie.ts"
   },
   "scripts": {
     "build": "tsc",
