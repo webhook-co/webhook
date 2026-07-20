@@ -26,8 +26,8 @@ Prebuilt binaries for every platform are also attached to each [GitHub release](
 ```sh
 wbhk login                      # authenticate (opens your browser)
 wbhk listen <endpoint-id>       # stream live deliveries to your terminal
-wbhk listen <endpoint-id> --forward localhost:3000   # replay each one to your app
-wbhk replay <event-id> --forward localhost:3000   # replay a past event to your app
+wbhk listen <endpoint-id> --forward http://localhost:3000   # replay each one to your app
+wbhk replay <event-id> --forward http://localhost:3000   # replay a past event to your app
 wbhk doctor                     # check auth, connectivity, and config
 ```
 
