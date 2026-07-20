@@ -124,16 +124,42 @@ export function checkWwwDrift({ metadataSource, structuredDataSource }) {
 /**
  * Validate the Cloudflare Web Analytics beacon file (apps/docs/cf-analytics.js, PR #2). Only invoked
  * when the file exists. The token is public (embedded in every page's HTML), so it's fine in-repo —
- * but a placeholder or malformed token would ship a dead beacon, so require a real 32-hex token.
+ * but a placeholder, malformed token, or the wrong injection form would ship a DEAD beacon (a
+ * measurement that doesn't measure), so pin the one form that reports.
+ *
+ * apps/docs/cf-analytics.js is Mintlify custom JS that injects the beacon <script> at runtime.
+ * Cloudflare's beacon locates its own <script> via `document.currentScript` (or a
+ * `script[data-cf-beacon]` querySelector fallback), then reads the token from the `data-cf-beacon`
+ * attribute or the src `?token=`. Two traps this guard closes, both verified against the live
+ * beacon.min.js: (1) `document.currentScript` is ALWAYS null for a module script, so a module +
+ * `?token=` injection loads but never reports — reject any module script; (2) a bare `?token=` src has
+ * no attribute for the querySelector fallback, so it depends on currentScript alone — require the
+ * `data-cf-beacon` attribute token, which resolves through BOTH paths.
  */
 export function checkAnalyticsBeacon(jsSource) {
   const src = jsSource ?? "";
   const errors = [];
   if (!src.includes("static.cloudflareinsights.com/beacon.min.js"))
     errors.push("cf-analytics.js does not reference static.cloudflareinsights.com/beacon.min.js.");
+  // (1) A runtime-injected beacon must be a CLASSIC <script>: `document.currentScript` is always null
+  // for a module script, so Cloudflare's beacon can't find its element (or token) and never reports.
+  if (/type\s*[:=]\s*["']module["']/.test(src))
+    errors.push(
+      "cf-analytics.js injects a module script — document.currentScript is null for modules, so " +
+        "Cloudflare's beacon can't resolve its token and silently never reports. Inject a classic " +
+        "<script> instead (no module type).",
+    );
+  // (2) The token must ride in the data-cf-beacon attribute (`token: "<hex>"`), the form that resolves
+  // via both document.currentScript AND the script[data-cf-beacon] querySelector fallback. A bare
+  // `?token=` src depends on currentScript alone (and is outright dead under a module script).
   const m = /token:\s*["']([^"']*)["']/.exec(src);
   const token = m?.[1];
-  if (!token) errors.push("cf-analytics.js has no data-cf-beacon token.");
+  if (!token)
+    errors.push(
+      'cf-analytics.js has no data-cf-beacon token — set data-cf-beacon to JSON with `token: "<hex>"` ' +
+        "so Cloudflare's beacon resolves it through both currentScript and the querySelector fallback " +
+        "(a bare ?token= src is fragile and dead under a module script).",
+    );
   // The CF beacon token is PUBLIC (rendered into every page's HTML); this is a build-time equality
   // check against a placeholder, not a secret comparison, so constant-time matching is irrelevant.
   // eslint-disable-next-line security/detect-possible-timing-attacks
