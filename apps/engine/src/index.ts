@@ -19,7 +19,10 @@ import {
   DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_DELIVERY_STATS_ROLLUP_LIMIT,
   DELIVERY_STATS_SETTLE_DAYS,
+  DEFAULT_ACTIVATION_ROLLUP_LIMIT,
+  ACTIVATION_SETTLE_DAYS,
   DEFAULT_RECONCILE_LIMIT,
+  runActivationRollup,
   runDeliveryStatsRollup,
   makeCapTransitionEvictor,
   makeIngestHashEvictor,
@@ -948,6 +951,18 @@ export default {
         ),
       ),
     );
+    // Activation rollup (marketing measurement): DERIVE the signup→capture→forward funnel + weekly-activated
+    // NSM from tables the product already writes (no hot-path counter), into the durable activation snapshot
+    // so it survives retention pruning. Reuses the same webhook_meter/webhook_app Hyperdrive bindings as the
+    // delivery-stats rollup — no new binding or role. Independent of the others — one failing must not sink
+    // the rest.
+    ctx.waitUntil(
+      runActivationRollupCron(env).catch((err: unknown) =>
+        console.log(
+          JSON.stringify({ message: "activation rollup cron failed", error: String(err) }),
+        ),
+      ),
+    );
     // Outbound meter reporting (S4.4c): report each paying org's finalized daily usage to Stripe through
     // the outbox. Gated on BILLING_MODE — a no-op when off (the default), so it ships dark. Independent of
     // the rollup cron (it reads the frozen usage the rollup produces, but a failure must not sink it).
@@ -1313,6 +1328,33 @@ async function runDeliveryStatsRollupCron(env: Env): Promise<void> {
       log,
     });
     log("delivery_stats.rollup.done", { ...rollup });
+  } finally {
+    await Promise.all([meter.end(), app.end()]);
+  }
+}
+
+/**
+ * Wire the real deps and run one activation rollup pass (marketing measurement). Same two-connection shape as
+ * the delivery-stats rollup — webhook_meter enumerates active orgs cross-org (granted select on
+ * events(org_id, received_at) + delivery_attempts(org_id, created_at)), webhook_app re-rolls each org's
+ * milestones + touched ISO weeks under RLS. DERIVED off the hot path (no ingest/replay counter); the durable
+ * snapshot survives retention pruning of the source events/deliveries.
+ */
+async function runActivationRollupCron(env: Env): Promise<void> {
+  const meter = createClient(env.HYPERDRIVE_METER.connectionString);
+  const app = createClient(env.HYPERDRIVE_TENANT.connectionString);
+  const log = (message: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message, ...fields }));
+  try {
+    const rollup = await runActivationRollup({
+      meter,
+      app,
+      now: Date.now(),
+      settleDays: ACTIVATION_SETTLE_DAYS,
+      limit: DEFAULT_ACTIVATION_ROLLUP_LIMIT,
+      log,
+    });
+    log("activation.rollup.done", { ...rollup });
   } finally {
     await Promise.all([meter.end(), app.end()]);
   }

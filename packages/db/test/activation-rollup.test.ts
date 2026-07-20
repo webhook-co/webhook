@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { runActivationRollup } from "../src/activation-rollup";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
@@ -30,6 +31,9 @@ function isoWeek(weeksAgo: number): string {
 
 let pg: EphemeralPostgres;
 let app: Sql;
+// The least-privilege webhook_meter connection — cross-org org enumeration for the rollup driver (the exact
+// role + column grants the cron uses in prod).
+let meter: Sql;
 // The provider (RLS-bypassing) connection — the harness handle for ops writes/reads: seeding the
 // owner-managed metric-exclusions list, running the owner-only review fn, and simulating retention prunes.
 let provider: Sql;
@@ -139,11 +143,13 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
   provider = createClient(pg.providerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
+  await meter?.end();
   await provider?.end();
   await pg?.stop();
 });
@@ -329,5 +335,170 @@ describe("activation_org_exclusions is ops-only (no tenant access)", () => {
     await expect(
       app`insert into activation_org_exclusions (org_id, reason) values (${randomUUID()}, ${"x"})`,
     ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+describe("runActivationRollup (driver)", () => {
+  // Wed 2026-07-08 12:00Z — inside the isoWeek(0) week (Mon 2026-07-06). settleDays:2 → windows Jul 6/7/8,
+  // oldest = Jul 6 00:00Z, and the only ISO week the window touches is Mon Jul 6.
+  const NOW = Date.UTC(2026, 6, 8, 12);
+
+  it("enumerates active orgs (event OR forward) and rolls up milestones + weekly per org", async () => {
+    // FRESH orgs, deliberately NOT pre-rolled — their milestone/weekly rows exist after the run ONLY if the
+    // driver enumerated (via webhook_meter) and rolled them up (under webhook_app RLS).
+    const cap = Date.UTC(2026, 6, 6, 10);
+    const fwd = Date.UTC(2026, 6, 6, 11);
+    const a = await seedOrg("drv-a", Date.UTC(2026, 6, 6, 9), cap);
+    await seedDelivery(a.orgId, a.eventId, "forwarded", fwd);
+    // Capture-only org (no forward) — enumerated via its event, weekly.forwarded stays false.
+    const bCap = Date.UTC(2026, 6, 7, 10);
+    const b = await seedOrg("drv-b", Date.UTC(2026, 6, 6, 9), bCap);
+
+    const result = await runActivationRollup({ meter, app, now: NOW, settleDays: 2, limit: 1000 });
+
+    // Every enumerated org succeeded (the pass is idempotent over orgs other suites already rolled).
+    expect(result.orgsFailed).toBe(0);
+    expect(result.capped).toBe(false);
+    expect(result.orgsProcessed).toBe(result.orgsSucceeded);
+    expect(result.orgsProcessed).toBeGreaterThanOrEqual(2);
+
+    // The driver derived A's set-once milestones + this-week flags.
+    const ma = await milestonesOf(a.orgId);
+    expect(ma?.first_capture_at?.toISOString()).toBe(new Date(cap).toISOString());
+    expect(ma?.first_forward_at?.toISOString()).toBe(new Date(fwd).toISOString());
+    expect(await weeklyOf(a.orgId, isoWeek(0))).toEqual({ captured: true, forwarded: true });
+
+    // And B's — captured, never forwarded.
+    const mb = await milestonesOf(b.orgId);
+    expect(mb?.first_capture_at?.toISOString()).toBe(new Date(bCap).toISOString());
+    expect(mb?.first_forward_at).toBeNull();
+    expect(await weeklyOf(b.orgId, isoWeek(0))).toEqual({ captured: true, forwarded: false });
+  });
+
+  it("enumerates an org by a recent forward of an OLDER event (the delivery-arm of the union)", async () => {
+    // A developer replays a historical captured event to localhost today: the events row is old (received_at
+    // BEFORE the window) but the forward's created_at is INSIDE it. The events-arm of the enumeration would
+    // miss this org — only the delivery_attempts-arm catches it — so this proves the union's second arm is
+    // load-bearing. (delivery_attempts has a composite FK to events with ON DELETE CASCADE, so a forward can
+    // never outlive its event; the realistic "old capture, fresh forward" case keeps the event present.)
+    const now = Date.UTC(2026, 6, 15, 12); // Wed 2026-07-15 → settleDays:2 window = Jul 13/14/15, week Jul 13
+    const wk = new Date(Date.UTC(2026, 6, 13)).toISOString().slice(0, 10);
+    const oldCapture = Date.UTC(2026, 6, 6, 10); // Jul 6 — BEFORE the Jul 13 window
+    const replayForward = Date.UTC(2026, 6, 13, 12); // Jul 13 — inside the window
+    const { orgId, eventId } = await seedOrg("drv-replay", Date.UTC(2026, 6, 6, 9), oldCapture);
+    await seedDelivery(orgId, eventId, "forwarded", replayForward);
+
+    const result = await runActivationRollup({ meter, app, now, settleDays: 2, limit: 1000 });
+    expect(result.orgsFailed).toBe(0);
+
+    // Enumerated (via the forward) and rolled up: the replay week shows forwarded, not captured (the capture
+    // happened in an earlier week), and the milestone records the replay as this org's first forward.
+    expect(await weeklyOf(orgId, wk)).toEqual({ captured: false, forwarded: true });
+    expect((await milestonesOf(orgId))?.first_forward_at?.toISOString()).toBe(
+      new Date(replayForward).toISOString(),
+    );
+    // first_capture_at is the absolute MIN — the old event, not the replay.
+    expect((await milestonesOf(orgId))?.first_capture_at?.toISOString()).toBe(
+      new Date(oldCapture).toISOString(),
+    );
+  });
+
+  it("re-rolls EVERY ISO week the settle window straddles (a Monday-boundary run)", async () => {
+    // Run at 00:30 UTC on Monday 2026-07-13: settleDays:2 → windows Jul 11(Sat)/12(Sun)/13(Mon), which
+    // straddle TWO ISO weeks (Mon Jul 6 and Mon Jul 13). The driver must re-roll BOTH weeks, so an org
+    // active in the closing week AND an org active early on the new Monday each land in their own week. This
+    // is what makes `[...new Set(windows.map(isoWeekMonday))]` load-bearing — dropping the older week would
+    // silently delay the prior week's captured/forwarded flag for orgs that were active late in it.
+    const now = Date.UTC(2026, 6, 13, 0, 30);
+    const weekOld = "2026-07-06"; // Mon of the closing week
+    const weekNew = "2026-07-13"; // Mon of the new week (== now's week)
+
+    // Active late in the OLD week (Sat Jul 11).
+    const old = await seedOrg("drv-strad-old", Date.UTC(2026, 6, 6, 9), Date.UTC(2026, 6, 11, 10));
+    await seedDelivery(old.orgId, old.eventId, "forwarded", Date.UTC(2026, 6, 11, 11));
+    // Active early on the NEW Monday (Jul 13 00:05, before `now`).
+    const fresh = await seedOrg(
+      "drv-strad-new",
+      Date.UTC(2026, 6, 6, 9),
+      Date.UTC(2026, 6, 13, 0, 5),
+    );
+    await seedDelivery(fresh.orgId, fresh.eventId, "forwarded", Date.UTC(2026, 6, 13, 0, 10));
+
+    const result = await runActivationRollup({ meter, app, now, settleDays: 2, limit: 1000 });
+    expect(result.orgsFailed).toBe(0);
+
+    // The OLD-week org's flags land in the OLD week (the discriminating assertion — a dropped older week
+    // would leave this null), and it has no row in the new week.
+    expect(await weeklyOf(old.orgId, weekOld)).toEqual({ captured: true, forwarded: true });
+    expect(await weeklyOf(old.orgId, weekNew)).toBeNull();
+    // The NEW-week org's flags land in the new week, and it has no row in the old week.
+    expect(await weeklyOf(fresh.orgId, weekNew)).toEqual({ captured: true, forwarded: true });
+    expect(await weeklyOf(fresh.orgId, weekOld)).toBeNull();
+  });
+});
+
+describe("runActivationRollup per-org isolation (unit, fakes)", () => {
+  // One org's failure must not skip the rest of the pass. Deterministic fakes so the try/catch control flow
+  // is actually exercised (a real mid-rollup DB error is hard to force). Mirrors delivery-stats-rollup's
+  // isolation test: withTenant(app, orgId, cb) → app.begin(cb') where cb' runs `tx`select set_config(...)``
+  // first, so rejecting THAT call for one org fails exactly that org.
+  const NOW = Date.UTC(2026, 6, 8, 12);
+
+  function fakeApp(failOrg: string | null): Sql {
+    return {
+      begin: async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const text = strings.join("?");
+          if (failOrg && text.includes("set_config") && values.includes(failOrg)) {
+            return Promise.reject(new Error("boom"));
+          }
+          return Promise.resolve([]);
+        };
+        return cb(tx);
+      },
+    } as unknown as Sql;
+  }
+
+  it("isolates a failing org: logs it, counts it, and still processes the rest", async () => {
+    const enumerated = [{ org_id: "ok-1" }, { org_id: "fail-1" }, { org_id: "ok-2" }];
+    const fakeMeter = (() => Promise.resolve(enumerated)) as unknown as Sql;
+
+    const failedOrgs: string[] = [];
+    const result = await runActivationRollup({
+      meter: fakeMeter,
+      app: fakeApp("fail-1"),
+      now: NOW,
+      settleDays: 1,
+      limit: 1000,
+      log: (_message, fields) => {
+        if (fields?.orgId) failedOrgs.push(String(fields.orgId));
+      },
+    });
+
+    expect(result.orgsProcessed).toBe(3);
+    expect(result.orgsSucceeded).toBe(2);
+    expect(result.orgsFailed).toBe(1);
+    expect(result.capped).toBe(false);
+    expect(failedOrgs).toEqual(["fail-1"]);
+  });
+
+  it("flags + logs capped when the enumeration fills the limit", async () => {
+    const enumerated = [{ org_id: "c-1" }, { org_id: "c-2" }];
+    const fakeMeter = (() => Promise.resolve(enumerated)) as unknown as Sql;
+
+    const capped: string[] = [];
+    const result = await runActivationRollup({
+      meter: fakeMeter,
+      app: fakeApp(null),
+      now: NOW,
+      settleDays: 1,
+      limit: 2, // exactly the enumerated count → capped
+      log: (message) => {
+        if (message === "activation.rollup.capped") capped.push(message);
+      },
+    });
+
+    expect(result.capped).toBe(true);
+    expect(capped).toHaveLength(1);
   });
 });
