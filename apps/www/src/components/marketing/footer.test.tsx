@@ -73,19 +73,42 @@ describe("Footer", () => {
     expect(byLabel["Sub-processors"]).toBe("/sub-processors");
   });
 
-  it("links the GitHub social — the only one that exists", () => {
+  it("links the GitHub and LinkedIn socials to their real profiles", () => {
     render(<Footer />);
     expect(screen.getByRole("link", { name: /on GitHub/i })).toHaveAttribute(
       "href",
       "https://github.com/webhook-co/webhook",
     );
+    expect(screen.getByRole("link", { name: /on LinkedIn/i })).toHaveAttribute(
+      "href",
+      "https://www.linkedin.com/company/webhook-co",
+    );
   });
 
-  // X / LinkedIn / the status indicator have no destination in the product. They are rendered as
-  // TEXT, not as links to nowhere. An `href="#"` would be focusable, would announce as a link, and —
-  // with smooth scrolling enabled by any earlier click — would glide the reader from the footer back
-  // to the hero. Ships zero dead links. (About and Blog USED to be here; About is now a real page and
-  // Blog became Guides — both real links.)
+  // X/Twitter was a brand mark with no account behind it, rendered as inert decoration. The founder
+  // chose not to create the account (2026-07-20), so the mark is removed ENTIRELY rather than sitting
+  // there implying a presence that doesn't exist. The inert X had no accessible name (aria-hidden), so
+  // an a11y query can't see it either way — this counts the marks structurally: the socials row is now
+  // exactly GitHub + LinkedIn, both real links, no inert third mark.
+  it("shows exactly the two real socials (GitHub + LinkedIn), no inert X mark", () => {
+    const { container } = render(<Footer />);
+    // The socials <ul> is the first list in the footer — it precedes the column navs in the DOM.
+    const socials = container.querySelector("ul");
+    expect(socials).not.toBeNull();
+    const items = within(socials as HTMLElement).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    // Both are links now (X's removal + LinkedIn's wiring leave zero inert marks).
+    const links = within(socials as HTMLElement).getAllByRole("link");
+    expect(links.map((a) => a.getAttribute("aria-label")).sort()).toEqual([
+      "webhook.co on GitHub",
+      "webhook.co on LinkedIn",
+    ]);
+  });
+
+  // Every social now has a real destination. The site still ships zero dead links: an `href="#"`
+  // would be focusable, would announce as a link, and — with smooth scrolling enabled by any earlier
+  // click — would glide the reader from the footer back to the hero. (About and Blog USED to be inert
+  // here; About is now a real page and Blog became Guides — both real links.)
   it("ships no link that goes nowhere", () => {
     const { container } = render(<Footer />);
     expect(container.querySelectorAll('a[href="#"]')).toHaveLength(0);
@@ -95,7 +118,7 @@ describe("Footer", () => {
   });
 
   // "Blog" is gone entirely — renamed to Guides, no separate blog. Its former inert-text sibling
-  // "About" is now a real link. The socials that still have no account (X, LinkedIn) remain text.
+  // "About" is now a real link.
   it("no longer advertises a Blog, and never as inert text", () => {
     render(<Footer />);
     expect(screen.queryByText("Blog")).toBeNull();

@@ -4,7 +4,7 @@ import { createClient, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { bootstrapOwner, migrateDownAll, migrateUp, migrationCount } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
-import { setupHookTimeoutMs } from "./pg-timing";
+import { migrationRoundtripTimeoutMs, setupHookTimeoutMs } from "./pg-timing";
 
 // Migration reversibility (plan "Testing": apply up -> down -> up cleanly in CI).
 // A clean down leaves only dbmate's schema_migrations and removes the created non-owner
@@ -14,9 +14,10 @@ import { setupHookTimeoutMs } from "./pg-timing";
 // FRESH database connection — per migration, so its cost is O(migrations) in connection setups. On
 // the nightly Neon path (TLS + SCRAM handshake per connect over the network) that scales past the
 // default 30s as migrations accumulate, false-timing-out a rollback that is correct, just slow (local
-// ephemeral PG runs the whole file in ~1s — this budget only bites on Neon). Size it to the work, so
-// it auto-scales with the migration count instead of needing a bump every few migrations.
-const REVERSIBILITY_TIMEOUT_MS = migrationCount() * 6_000 + 30_000;
+// ephemeral PG runs the whole file in ~1s — this budget only bites on Neon). Sized to the work via the
+// shared helper, so it auto-scales with the migration count instead of needing a bump every few
+// migrations — the same budget the migration-NNNN roundtrip suites now use.
+const REVERSIBILITY_TIMEOUT_MS = migrationRoundtripTimeoutMs(migrationCount());
 
 let pg: EphemeralPostgres;
 let owner: Sql;

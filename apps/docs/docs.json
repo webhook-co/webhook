@@ -270,7 +270,11 @@
       "name": "webhook.co",
       "url": "https://www.webhook.co",
       "logo": "https://www.webhook.co/logo.png",
-      "sameAs": ["https://github.com/webhook-co"]
+      "sameAs": [
+        "https://github.com/webhook-co",
+        "https://www.linkedin.com/company/webhook-co",
+        "https://www.crunchbase.com/organization/webhook-co"
+      ]
     }
   },
   "contextual": {

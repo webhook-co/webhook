@@ -5,6 +5,7 @@ import {
   EXPECTED,
   checkSeoOrganization,
   extractSiteUrl,
+  extractOrgSameAs,
   checkWwwDrift,
   checkAnalyticsBeacon,
 } from "./docs-structured-data-guard.mjs";
@@ -63,7 +64,7 @@ test("checkSeoOrganization: a mismatched url/name/logo each fails", () => {
 
 test("checkSeoOrganization: a fabricated/extra sameAs entry fails (never-fabricate-sameAs)", () => {
   const org = validOrg();
-  org.sameAs = ["https://github.com/webhook-co", "https://x.com/webhookco"]; // invented profile
+  org.sameAs = [...EXPECTED.sameAs, "https://x.com/webhookco"]; // invented extra profile
   const errs = checkSeoOrganization(configWith(org));
   assert.ok(
     errs.some((e) => e.includes("sameAs")),
@@ -89,20 +90,68 @@ test("extractSiteUrl FLOOR: throws when SITE_URL is absent (fail-closed, not vac
   assert.throws(() => extractSiteUrl(""));
 });
 
-// ── checkWwwDrift: www's SOURCE must still produce EXPECTED ────────────────────
+// ── extractOrgSameAs + checkWwwDrift: www's SOURCE must still produce EXPECTED ──
 
 const wwwMetadata = `export const SITE_URL = "https://www.webhook.co";`;
+// A minimal stand-in for apps/www's structured-data: the Organization sameAs must equal EXPECTED, and a
+// Person node with a DIFFERENT sameAs is included so extractOrgSameAs's scoping is actually exercised.
 const wwwStructuredData = `
 export const ORG_ID = \`\${SITE_URL}/#organization\`;
 export function organizationNode() {
   return { name: "webhook.co", url: SITE_URL, logo: \`\${SITE_URL}/logo.png\`,
-    sameAs: ["https://github.com/webhook-co"] };
+    sameAs: [
+      "https://github.com/webhook-co",
+      "https://www.linkedin.com/company/webhook-co",
+      "https://www.crunchbase.com/organization/webhook-co",
+    ] };
+}
+export function personNode() {
+  return { name: "Sourabh Choraria",
+    sameAs: ["https://www.linkedin.com/in/choraria/", "https://github.com/choraria"] };
 }`;
+
+test("extractOrgSameAs: returns the Organization sameAs, scoped away from the Person node", () => {
+  assert.deepEqual(extractOrgSameAs(wwwStructuredData), [...EXPECTED.sameAs]);
+});
+
+test("extractOrgSameAs FLOOR: throws when organizationNode or its sameAs is absent", () => {
+  assert.throws(() => extractOrgSameAs("export const X = 1;"));
+  assert.throws(() =>
+    extractOrgSameAs('export function organizationNode() { return { name: "x" }; }'),
+  );
+});
 
 test("checkWwwDrift: passes when www's source still matches EXPECTED", () => {
   assert.deepEqual(
     checkWwwDrift({ metadataSource: wwwMetadata, structuredDataSource: wwwStructuredData }),
     [],
+  );
+});
+
+test("checkWwwDrift: www ADDING a sameAs entry docs doesn't mirror fails (catches additions, not just removals)", () => {
+  // The exact drift #690 introduced: www wired a new off-site profile, making docs a silent subset.
+  const src = wwwStructuredData.replace(
+    '"https://www.crunchbase.com/organization/webhook-co",',
+    '"https://www.crunchbase.com/organization/webhook-co",\n      "https://bsky.app/profile/webhook.co",',
+  );
+  assert.ok(
+    checkWwwDrift({ metadataSource: wwwMetadata, structuredDataSource: src }).some((e) =>
+      e.includes("sameAs"),
+    ),
+    "an added www sameAs entry must fail until docs mirrors it",
+  );
+});
+
+test("checkWwwDrift: www REMOVING a sameAs entry fails", () => {
+  const src = wwwStructuredData.replace(
+    '\n      "https://www.crunchbase.com/organization/webhook-co",',
+    "",
+  );
+  assert.ok(
+    checkWwwDrift({ metadataSource: wwwMetadata, structuredDataSource: src }).some((e) =>
+      e.includes("sameAs"),
+    ),
+    "a removed www sameAs entry must fail",
   );
 });
 
@@ -166,13 +215,19 @@ test("checkWwwDrift: www dropping the org name or the github sameAs fails", () =
 // A syntactically-valid but obviously-fake 32-hex token, BUILT at runtime (never a 32-char literal in
 // source) so the secret scanner can't mistake a test fixture for a leaked generic-api-key.
 const FAKE_TOKEN = "a".repeat(32);
+
+// The SHIPPED form: a CLASSIC injected <script> carrying the token in the data-cf-beacon attribute.
+// Cloudflare's beacon resolves its own <script> via document.currentScript (null for MODULE scripts) or
+// a script[data-cf-beacon] querySelector fallback, then reads the token from data-cf-beacon or ?token=.
+// A classic script + attribute reports through both paths; a module + ?token= injection loads but
+// silently reports nothing. The guard requires the attribute token and rejects module scripts.
 const beacon = (token) =>
-  `(function(){var s=document.createElement("script");s.defer=true;` +
+  `(function(){const s=document.createElement("script");s.defer=true;` +
   `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
   `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${token}"}));` +
   `document.head.appendChild(s);})();`;
 
-test("checkAnalyticsBeacon: a real 32-hex token beacon passes", () => {
+test("checkAnalyticsBeacon: a real 32-hex classic data-cf-beacon beacon passes", () => {
   assert.deepEqual(checkAnalyticsBeacon(beacon(FAKE_TOKEN)), []);
 });
 
@@ -186,7 +241,35 @@ test("checkAnalyticsBeacon: a non-32-hex token fails", () => {
 
 test("checkAnalyticsBeacon: a beacon missing the cloudflareinsights src fails", () => {
   const noSrc =
-    `(function(){var s=document.createElement("script");` +
-    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}"}));})();`;
+    `(function(){const s=document.createElement("script");` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}"}));` +
+    `document.head.appendChild(s);})();`;
   assert.ok(checkAnalyticsBeacon(noSrc).some((e) => e.includes("beacon.min.js")));
+});
+
+test("checkAnalyticsBeacon: a MODULE-type beacon is rejected (currentScript is null → dead)", () => {
+  // Verified against the live beacon.min.js: document.currentScript is always null for a module script,
+  // so the beacon can't find its token and never reports. The guard must reject it, not pass it.
+  const moduleForm =
+    `(function(){const s=document.createElement("script");s.type="module";` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}"}));` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(moduleForm).some((e) => e.includes("module")),
+    "a module-type beacon must be rejected",
+  );
+});
+
+test("checkAnalyticsBeacon: a bare ?token= src (no data-cf-beacon attribute) is rejected", () => {
+  // Without the attribute there is no querySelector fallback, so the beacon depends on currentScript
+  // alone. Require the attribute form, which resolves through both paths.
+  const queryForm =
+    `(function(){const s=document.createElement("script");s.defer=true;` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js?token=${FAKE_TOKEN}";` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(queryForm).some((e) => e.includes("token")),
+    "a bare ?token= src must be rejected",
+  );
 });

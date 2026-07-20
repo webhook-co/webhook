@@ -207,6 +207,74 @@ test("R1 allows a TRUNCATE the test EXPECTS to be rejected (rls.test.ts asserts 
   assert.deepEqual(remoteSafetyViolations("x.test.ts", src), []);
 });
 
+// ── R1 generalizes past TRUNCATE to every table-OWNERSHIP DDL ──────────────────────────────────
+// TRUNCATE was only the first owner-only statement to reach the nightly. CREATE/DROP TRIGGER,
+// CREATE/DROP INDEX, ALTER TABLE and the RLS policy DDL all require OWNERSHIP of the table too, and
+// all sailed past the TRUNCATE-only first cut. That is exactly how #637's poison trigger
+// (`create trigger … on usage` on the provider handle) reached Neon and failed `42501 permission
+// denied for table usage` on BOTH attempts, two nights running — while every OTHER DDL site in the
+// suite (org-lifecycle's poison trigger, gin-writeamp's CREATE INDEX, the audit ALTER TABLEs) was
+// already correctly on the owner handle.
+
+test("R1 flags a CREATE TRIGGER on a provider handle (the #637 poison-trigger shape)", () => {
+  const src = `const admin = createClient(pg.providerUrl);
+    await admin\`create trigger tf_poison_637_trg before insert or update on usage
+      for each row execute function tf_poison_637()\`;`;
+  const v = remoteSafetyViolations("x.test.ts", src);
+  assert.equal(v.length, 1);
+  assert.match(v[0], /create trigger/i);
+  assert.match(v[0], /admin/);
+  assert.match(v[0], /owner/i);
+});
+
+test("R1 flags CREATE OR REPLACE TRIGGER (PG14+) on a provider handle — the `create trigger` shortcut must not evade it", () => {
+  const src = `const admin = createClient(pg.providerUrl);
+    await admin\`create or replace trigger t before insert on usage for each row execute function f()\`;`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
+});
+
+test("R1 flags a DROP TRIGGER on a provider handle assigned in beforeAll", () => {
+  const src = `let admin: Sql;
+    beforeAll(async () => { admin = createClient(pg.providerUrl); });
+    await admin\`drop trigger tf_poison_637_trg on usage\`;`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
+});
+
+test("R1 flags a CREATE INDEX on a provider handle", () => {
+  const src = `const admin = createClient(pg.providerUrl);
+    await admin\`create index events_headers_trgm on events using gin ((headers::text) gin_trgm_ops)\`;`;
+  const v = remoteSafetyViolations("x.test.ts", src);
+  assert.equal(v.length, 1);
+  assert.match(v[0], /create index/i);
+});
+
+test("R1 flags an ALTER TABLE on a provider handle", () => {
+  const src = `const admin = createClient(pg.providerUrl);
+    await admin\`alter table events disable trigger all\`;`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
+});
+
+test("R1 allows the owner-only DDL verbs on the owner handle (org-lifecycle / gin-writeamp shape)", () => {
+  const src = `const owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+    await owner\`create trigger tf_poison_635_trg before insert on org_deletions
+      for each row execute function tf_poison_635()\`;
+    await owner\`drop trigger tf_poison_635_trg on org_deletions\`;
+    await owner\`create index events_headers_trgm on events using gin ((headers::text) gin_trgm_ops)\`;
+    await owner\`alter table audit_log disable trigger user\`;`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", src), []);
+});
+
+// CREATE/DROP FUNCTION is deliberately NOT owner-only: creating a function needs CREATE on the
+// SCHEMA, which the provider role holds on Neon. The proof is #637 itself — its `create or replace
+// function tf_poison_637()` on the provider handle SUCCEEDED (the nightly's 42501 was on the next
+// line, the `create trigger`). Flagging function DDL would be a false requirement.
+test("R1 does NOT flag CREATE/DROP FUNCTION on a provider handle (schema CREATE, not table ownership)", () => {
+  const src = `const admin = createClient(pg.providerUrl);
+    await admin\`create or replace function tf_poison_637() returns trigger language plpgsql as $$ begin return new; end $$\`;
+    await admin\`drop function tf_poison_637()\`;`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", src), []);
+});
+
 // ── R2: seeding a wall-clock rate-limit window with cap-many round-trips ───────────────────────
 // audit_log.created_at is stamped now() = the TRANSACTION timestamp. appendAuditEntry costs 3
 // round-trips (advisory lock, head read, insert). Looping it cap-many times inside one tx takes

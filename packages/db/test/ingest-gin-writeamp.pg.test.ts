@@ -10,7 +10,7 @@ import { createEndpoint } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
-import { setupHookTimeoutMs } from "./pg-timing";
+import { roundTripHeavyTestTimeoutMs, setupHookTimeoutMs } from "./pg-timing";
 
 // THE DECISION, not a check.
 //
@@ -141,32 +141,39 @@ describe("GIN-on-headers ingest write-amp (the measurement that refused option (
   // This test now ASSERTS THE REFUSAL, so the finding cannot rot into folklore: if a future Postgres, a
   // different GIN config, or a cheaper expression makes this affordable, it goes RED — and that is the signal
   // to revisit header-inclusive search, not a flake to silence.
-  it("a trigram GIN on (headers::text) costs far more than the rule allows — which is why it is not there", async () => {
-    // Warm: the first inserts pay page allocation and plan caching, which is not what we are measuring.
-    for (let i = 0; i < 30; i++) await insertOne(i);
+  it(
+    "a trigram GIN on (headers::text) costs far more than the rule allows — which is why it is not there",
+    async () => {
+      // Warm: the first inserts pay page allocation and plan caching, which is not what we are measuring.
+      for (let i = 0; i < 30; i++) await insertOne(i);
 
-    const before = await measure();
+      const before = await measure();
 
-    // `jsonb::text` must be IMMUTABLE for Postgres to index the expression. Believed yes (jsonb_out is
-    // provolatile='i'), but this is the empirical check: a non-immutable expression raises 42P17 right here
-    // rather than in a code review's opinion.
-    await owner`create index events_headers_trgm on events using gin ((headers::text) gin_trgm_ops)
+      // `jsonb::text` must be IMMUTABLE for Postgres to index the expression. Believed yes (jsonb_out is
+      // provolatile='i'), but this is the empirical check: a non-immutable expression raises 42P17 right here
+      // rather than in a code review's opinion.
+      await owner`create index events_headers_trgm on events using gin ((headers::text) gin_trgm_ops)
               with (fastupdate = on, gin_pending_list_limit = 1024)`;
 
-    const after = await measure();
+      const after = await measure();
 
-    const ratio = after.p99 / before.p99;
+      const ratio = after.p99 / before.p99;
 
-    console.log(
-      `[gin-writeamp] p99 ${before.p99.toFixed(2)}ms -> ${after.p99.toFixed(2)}ms (${ratio.toFixed(2)}x), ` +
-        `max ${after.max.toFixed(2)}ms | rule: p99 <= ${MAX_P99_REGRESSION}x AND max <= ${MAX_SINGLE_INSERT_MS}ms`,
-    );
+      console.log(
+        `[gin-writeamp] p99 ${before.p99.toFixed(2)}ms -> ${after.p99.toFixed(2)}ms (${ratio.toFixed(2)}x), ` +
+          `max ${after.max.toFixed(2)}ms | rule: p99 <= ${MAX_P99_REGRESSION}x AND max <= ${MAX_SINGLE_INSERT_MS}ms`,
+      );
 
-    // `jsonb::text` IS immutable enough to index — the CREATE INDEX above would have raised 42P17 otherwise.
-    // That was an open question resolved by running it, not by opinion. The cost is what refuses it.
-    expect(ratio).toBeGreaterThan(MAX_P99_REGRESSION);
+      // `jsonb::text` IS immutable enough to index — the CREATE INDEX above would have raised 42P17 otherwise.
+      // That was an open question resolved by running it, not by opinion. The cost is what refuses it.
+      expect(ratio).toBeGreaterThan(MAX_P99_REGRESSION);
 
-    // A single insert never approached the timeout — which is exactly the trap. Only the p99 refuses this.
-    expect(after.max).toBeLessThan(MAX_SINGLE_INSERT_MS);
-  });
+      // A single insert never approached the timeout — which is exactly the trap. Only the p99 refuses this.
+      expect(after.max).toBeLessThan(MAX_SINGLE_INSERT_MS);
+      // ~630 sequential EXPLAIN ANALYZE round-trips: on remote Neon the WALL CLOCK is RTT-bound (the
+      // ASSERTIONS above are not — they read the server's own Execution Time). A slow-night ~4.4x suite
+      // slowdown once dragged this past the 120s config ceiling; the wide remote budget stops that false RED.
+    },
+    roundTripHeavyTestTimeoutMs(),
+  );
 });
