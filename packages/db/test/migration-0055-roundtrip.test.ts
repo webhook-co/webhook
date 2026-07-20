@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { migrateDown, migrateUp, setupSchema } from "./migrate";
+import { migrateDown, migrateUp, migrationCount, setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
-import { setupHookTimeoutMs } from "./pg-timing";
+import { migrationRoundtripTimeoutMs, setupHookTimeoutMs } from "./pg-timing";
 
 /** True once the `delivery_attempts.billable` column (added by 0055) exists. */
 async function billableColumnExists(admin: Sql): Promise<boolean> {
@@ -40,23 +40,30 @@ afterAll(async () => {
 });
 
 describe("migration 0055 reversibility", () => {
-  it("rolls back to 0049 without stripping webhook_meter_audit's delivery_attempts read", async () => {
-    // Step down until 0055's `billable` column is gone — i.e. run 0055's OWN down, peeling whatever later
-    // migrations sit on top of it first. Data-driven (not a hardcoded count) so a new migration landing above
-    // 0055 never breaks this test. Bounded so a broken down-migration can't loop forever.
-    for (let i = 0; i < 50 && (await billableColumnExists(admin)); i++) migrateDown(pg);
-    expect(await billableColumnExists(admin)).toBe(false); // we actually reached 0055's down
+  it(
+    "rolls back to 0049 without stripping webhook_meter_audit's delivery_attempts read",
+    async () => {
+      // Step down until 0055's `billable` column is gone — i.e. run 0055's OWN down, peeling whatever later
+      // migrations sit on top of it first. Data-driven (not a hardcoded count) so a new migration landing above
+      // 0055 never breaks this test. Bounded so a broken down-migration can't loop forever.
+      for (let i = 0; i < 50 && (await billableColumnExists(admin)); i++) migrateDown(pg);
+      expect(await billableColumnExists(admin)).toBe(false); // we actually reached 0055's down
 
-    // The 0049-era grant (org_id, created_at) must survive — the reconciler reads exactly these as this role.
-    await expect(
-      audit`select org_id, created_at from delivery_attempts limit 0`,
-    ).resolves.toBeDefined();
+      // The 0049-era grant (org_id, created_at) must survive — the reconciler reads exactly these as this role.
+      await expect(
+        audit`select org_id, created_at from delivery_attempts limit 0`,
+      ).resolves.toBeDefined();
 
-    // …and `billable` is gone (the column was dropped), so a read of it fails.
-    await expect(audit`select billable from delivery_attempts limit 0`).rejects.toThrow();
+      // …and `billable` is gone (the column was dropped), so a read of it fails.
+      await expect(audit`select billable from delivery_attempts limit 0`).rejects.toThrow();
 
-    // Re-apply everything: the schema is whole again and `billable` is back.
-    migrateUp(pg);
-    await expect(audit`select billable from delivery_attempts limit 0`).resolves.toBeDefined();
-  });
+      // Re-apply everything: the schema is whole again and `billable` is back.
+      migrateUp(pg);
+      await expect(audit`select billable from delivery_attempts limit 0`).resolves.toBeDefined();
+      // Peels the whole stack down to 0055 with one dbmate connection per step — O(migrations) and
+      // GROWING as new migrations land above it. It sat at ~109s of the default 120s ceiling on the
+      // 2026-07-20 Neon night; a count-scaled budget stops both the slow-night and the accretion RED.
+    },
+    migrationRoundtripTimeoutMs(migrationCount()),
+  );
 });

@@ -9,8 +9,10 @@
 //
 // Anything the local superuser papers over is therefore invisible until the nightly goes red at
 // 04:00. This guard makes those two failure modes red at lint time instead. Both have already cost
-// a nightly (issue #383): R1 is the 2026-07-12 `42501 permission denied for table …` on TRUNCATE;
-// R2 is the false-passing rate-limiter class that also bit the reveal limiter in #413.
+// a nightly: R1 is owner-only DDL on the provider handle — the 2026-07-12 `42501 permission denied
+// for table …` on TRUNCATE (#383), then the 2026-07-19/20 poison CREATE TRIGGER on `usage` (#637)
+// that the TRUNCATE-only first cut let straight through; R2 is the false-passing rate-limiter class
+// that also bit the reveal limiter in #413.
 //
 // Wired into the `lint` script; the pure brain (remoteSafetyViolations) is unit-tested in
 // scripts/remote-db-test-guard.test.mjs against the REAL committed sources.
@@ -47,15 +49,34 @@ export function ownerHandles(src) {
 }
 
 /**
- * Every handle a TRUNCATE is issued on, with the line it happens on. Both postgres.js spellings:
- * a tagged template (``x`truncate …` ``) and `x.unsafe("truncate …")`.
- * @param {string} src @returns {{handle: string, line: number}[]}
+ * Every owner-only DDL statement, with the handle it runs on and the line. On a table you do NOT
+ * own, Postgres rejects TRUNCATE, CREATE/DROP TRIGGER, CREATE/DROP INDEX, ALTER TABLE, CREATE/DROP
+ * POLICY and COMMENT ON with `42501` — and on the nightly's Neon branch the provider role owns
+ * nothing. TRUNCATE was merely the first of these to reach the nightly (#383); a poison CREATE
+ * TRIGGER on `usage` was the second (#637), which the TRUNCATE-only first cut of this rule missed.
+ *
+ * CREATE/DROP FUNCTION is deliberately EXCLUDED: creating a function needs CREATE on the SCHEMA, not
+ * OWNERSHIP of a table, and the provider role holds it on Neon — #637's `create or replace function`
+ * on the provider handle SUCCEEDED (the 42501 was on its very next line, the `create trigger`).
+ * Flagging function DDL would be a false requirement.
+ *
+ * Both postgres.js spellings: a tagged template (``x`create trigger …` ``) and
+ * `x.unsafe("create trigger …")`. `ddl` is the matched verb, normalised for the message.
+ * @param {string} src @returns {{handle: string, line: number, ddl: string}[]}
  */
-export function truncateSites(src) {
+export function ownerOnlyDdlSites(src) {
+  const ddl = String.raw`truncate|create\s+(?:or\s+replace\s+|constraint\s+)?trigger|drop\s+trigger|create\s+(?:unique\s+)?index|drop\s+index|alter\s+table|create\s+policy|drop\s+policy|comment\s+on`;
+  const re = new RegExp(
+    String.raw`(\w+)(?:<[^\x60]*>)?(?:\x60\s*|\.unsafe\(\s*["'\x60]\s*)(${ddl})\b`,
+    "gi",
+  );
   const sites = [];
-  const re = /(\w+)(?:<[^`]*>)?(?:`\s*truncate\b|\.unsafe\(\s*["'`]\s*truncate\b)/gi;
   for (const m of src.matchAll(re)) {
-    sites.push({ handle: m[1], line: src.slice(0, m.index).split("\n").length });
+    sites.push({
+      handle: m[1],
+      line: src.slice(0, m.index).split("\n").length,
+      ddl: m[2].replace(/\s+/g, " ").toLowerCase(),
+    });
   }
   return sites;
 }
@@ -174,19 +195,22 @@ export function remoteSafetyViolations(file, rawSrc, fields) {
     }
   }
 
-  // R1 — TRUNCATE on anything that is not the schema owner. FAIL CLOSED: rather than enumerate the
-  // handles known to be wrong (which misses aliases, handles passed into helpers, and whatever the
-  // next author invents), require every TRUNCATE to sit on a handle this file binds to the OWNER.
-  // TRUNCATE needs ownership; on Neon the provider role owns nothing → 42501.
+  // R1 — owner-only DDL (TRUNCATE, CREATE/DROP TRIGGER, CREATE/DROP INDEX, ALTER TABLE, the policy
+  // DDL) on anything that is not the schema owner. FAIL CLOSED: rather than enumerate the handles
+  // known to be wrong (which misses aliases, handles passed into helpers, and whatever the next
+  // author invents), require every such statement to sit on a handle this file binds to the OWNER.
+  // These need ownership; on Neon the provider role owns nothing → 42501. TRUNCATE was the first to
+  // reach the nightly (#383), a poison CREATE TRIGGER on `usage` the second (#637) — same class,
+  // same 42501, both invisible to a local superuser and to the TRUNCATE-only first cut of this rule.
   const owners = ownerHandles(src);
-  for (const { handle, line } of truncateSites(src)) {
+  for (const { handle, line, ddl } of ownerOnlyDdlSites(src)) {
     if (owners.has(handle)) continue;
     violations.push(
-      `${file}:${line}: TRUNCATEs on \`${handle}\`, which is not bound to the schema owner in this ` +
-        `file. TRUNCATE requires OWNERSHIP, and on the nightly's Neon branch the provider role owns ` +
-        `nothing (it has BYPASSRLS + DML, but not the owner's rights) → 42501 permission denied. ` +
-        `Bind the handle with createClient(pg.ownerUrl) — RLS never filters TRUNCATE, so the owner's ` +
-        `FORCE RLS is not in the way.`,
+      `${file}:${line}: issues \`${ddl}\` on \`${handle}\`, which is not bound to the schema owner in ` +
+        `this file. ${ddl.toUpperCase()} requires OWNERSHIP of the table, and on the nightly's Neon ` +
+        `branch the provider role owns nothing (it has BYPASSRLS + DML, but not the owner's rights) → ` +
+        `42501 permission denied. Bind the handle with createClient(pg.ownerUrl) — this is exactly ` +
+        `what broke nightly-rls on #383 (TRUNCATE) and #637 (a poison CREATE TRIGGER on \`usage\`).`,
     );
   }
 
