@@ -304,8 +304,7 @@ export default function PrivacyPage() {
 
           <AnchoredHeading id={PRIVACY_ANCHORS.cookies}>10. Cookies</AnchoredHeading>
           <p>
-            We use only <strong>strictly-necessary</strong> cookies, so we don't show a cookie
-            banner. These are:
+            We keep cookies to a minimum. The <strong>strictly-necessary</strong> ones are:
           </p>
           <ul>
             <li>
@@ -317,12 +316,19 @@ export default function PrivacyPage() {
             </li>
           </ul>
           <p>
-            They're essential to run the Service and aren't used for tracking or advertising. Our
-            login page also loads <strong>Cloudflare Turnstile</strong> (bot protection), which may
-            set its own security cookies as a third-party service. Your dark-mode preference is
-            stored in your browser's local storage, not a cookie.{" "}
-            <strong>We don't use analytics or advertising cookies</strong>, and the marketing site
-            sets no cookies at all.
+            Separately, when you arrive from a marketing link we set one{" "}
+            <strong>first-party attribution cookie</strong> (<code>wh_first_touch</code>) that
+            records <em>only</em> that link's marketing source — its UTM campaign tags, never
+            personal data — so we can understand, in aggregate, which channels bring developers to
+            webhook.co. It's tied to your organisation when you sign up (not to a browsing profile),
+            expires after 90 days, and is set once — a later visit never overwrites it.
+          </p>
+          <p>
+            The strictly-necessary cookies aren't used for tracking or advertising. Our login page
+            also loads <strong>Cloudflare Turnstile</strong> (bot protection), which may set its own
+            security cookies as a third-party service. Your dark-mode preference is stored in your
+            browser's local storage, not a cookie. We <strong>don't</strong> use advertising
+            cookies.
           </p>
 
           <AnchoredHeading id={PRIVACY_ANCHORS.children}>11. Children</AnchoredHeading>
