@@ -16,7 +16,8 @@ globalThis.ResizeObserver = class ResizeObserver {
   disconnect() {}
 };
 
-// jsdom doesn't implement matchMedia; ThemeToggle reads it on mount. Default to "light".
+// jsdom doesn't implement matchMedia; stub it so any component that reads it works. (ThemeToggle no
+// longer consults it — the theme defaults to dark, independent of the OS `prefers-color-scheme`.)
 window.matchMedia = (query) => ({
   matches: false,
   media: query,

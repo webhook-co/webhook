@@ -62,17 +62,21 @@ two can't silently disagree.
 
 ## Theming
 
-Light is the canonical brand surface; dark is a first-class product preference. Both
-live in the token layer. Dark is activated by `data-theme="dark"` on any ancestor
-(usually `<html>`):
+**Dark is the default.** The bare `:root` carries the dark tokens, so a surface with no
+`data-theme` renders dark — a deliberate, brand-first default, independent of the OS
+`prefers-color-scheme`. `[data-theme="light"]` opts a subtree into light and
+`[data-theme="dark"]` forces dark (e.g. a local dark island inside a light-scoped page):
 
 ```html
-<html data-theme="dark">
+<html data-theme="light">
+<!-- ...or omit the attribute for the dark default -->
 ```
 
 Because the Tailwind theme maps utilities to the live CSS variables, switching the
-attribute swaps the entire surface — no recompiled classes. The marketing site stays
-light-only; the app earns a real toggle.
+attribute swaps the entire surface — no recompiled classes. Every surface (the marketing
+site and the app) ships the light/dark toggle (`ThemeToggle`); the choice is persisted
+under `wh-theme` and, along with the toggle, always wins over the default. Pair the toggle
+with `themeInitScript` in `<head>` to stamp `data-theme` before paint and avoid a flash.
 
 ## Wiring it into an app (Tailwind v4)
 
@@ -80,7 +84,7 @@ In your global stylesheet, after importing Tailwind:
 
 ```css
 @import "tailwindcss";
-@import "@webhook-co/ui/styles/theme.css"; /* the --wh-* variables + dark overrides */
+@import "@webhook-co/ui/styles/theme.css"; /* the --wh-* variables: dark :root default + light/dark scopes */
 @import "@webhook-co/ui/styles/preset.css"; /* maps Tailwind utilities to the tokens */
 @import "@webhook-co/ui/styles/base.css"; /* optional page defaults + reduced-motion */
 

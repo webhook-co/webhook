@@ -5,7 +5,7 @@
  * raw ink stops. That indirection is what makes light/dark a free swap: each theme
  * supplies its own values for the same names.
  *
- * Light is the canonical brand surface; dark is a first-class product preference.
+ * Dark is the default surface (the bare `:root`); light is an explicit `[data-theme]` scope.
  * Functional colors (ok / warn / danger / info) are the only chroma in the UI and
  * exist solely to carry state. The chart ramp is deliberately desaturated so data
  * viz stays calm next to the vivid state colors.

@@ -71,9 +71,11 @@ export const siteMetadata: Metadata = {
 };
 
 export const siteViewport: Viewport = {
-  // The marketing site is light-only by design; the browser chrome follows suit.
-  colorScheme: "light",
-  themeColor: "#f8fafc",
+  // The marketing site defaults to dark (with a toggle to light). `dark light` advertises both
+  // schemes with dark preferred so native chrome tracks the default, and the browser-UI tint uses
+  // the dark surface. A stored `wh-theme=light` still flips the page — the toggle owns the choice.
+  colorScheme: "dark light",
+  themeColor: "#0b0f14",
 };
 
 /**

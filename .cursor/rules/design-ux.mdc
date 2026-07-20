@@ -15,8 +15,8 @@ alwaysApply: false
 - **Sentence case** for headings, buttons, and labels. Brand names stay lowercase (`webhook.co`,
   `wbhk.my`). UI copy follows the `writing-voice` rule: clear, developer-peer, quietly opinionated.
 - **Respect user preferences:** honor `prefers-reduced-motion`, support theming where it's offered
-  (the dashboard is light/dark; the marketing site is light-only), and don't trap focus or autoplay
-  motion.
+  (the dashboard and the marketing site are both light/dark, defaulting to dark with a toggle to
+  light), and don't trap focus or autoplay motion.
 - **States are part of the design.** Always handle loading, empty, error, and permission-denied
   states — empty states should teach the next action. Inspection/replay views must stay fast and
   legible with large payloads.

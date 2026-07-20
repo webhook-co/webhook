@@ -166,7 +166,7 @@ describe("FAQ ↔ pricing-tiers drift", () => {
 // posture tightens again, BILLING_TERMS is the list to re-guard.
 describe("the billing disclosure on /pricing", () => {
   beforeEach(() => {
-    mockMatchMedia(true); // the Nav renders a ThemeToggle, which reads prefers-color-scheme
+    mockMatchMedia(true); // jsdom lacks matchMedia; the Nav's tree may read it (the ThemeToggle no longer does)
   });
 
   it("opens the BILLABLE UNIT on load — it must be readable without a click", () => {

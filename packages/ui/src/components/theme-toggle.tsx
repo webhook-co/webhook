@@ -8,26 +8,29 @@ type Theme = "light" | "dark";
 
 const STORAGE_KEY = "wh-theme";
 
-function systemTheme(): Theme {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
+/** The product default: dark, brand-first, independent of the OS `prefers-color-scheme`. */
+const DEFAULT_THEME: Theme = "dark";
 
 function applyTheme(theme: Theme) {
   document.documentElement.setAttribute("data-theme", theme);
 }
 
 /**
- * Light/dark switch for the app surface (the marketing site stays light-only; in-app,
- * engineers get a real toggle). Persists the choice under `wh-theme` and falls back to the
- * system preference on first visit. Icon-only — a moon in light mode, a sun in dark. Pair
- * it with {@link themeInitScript} in the document head so a saved or system dark preference
- * never flashes light before hydration.
+ * Light/dark switch shown across every surface (marketing site and in-app). The product defaults
+ * to dark on first visit — a deliberate brand-first choice, independent of the OS preference — and
+ * this toggle lets anyone switch to light. The choice is persisted under `wh-theme` and always wins
+ * on return. Icon-only — a moon in light mode, a sun in dark. Pair it with {@link themeInitScript}
+ * in the document head so the dark default (or a saved preference) never flashes the other theme
+ * before hydration.
  */
 export function ThemeToggle() {
-  const [theme, setTheme] = React.useState<Theme>("light");
+  const [theme, setTheme] = React.useState<Theme>(DEFAULT_THEME);
 
   React.useEffect(() => {
-    const resolved = (window.localStorage.getItem(STORAGE_KEY) as Theme | null) ?? systemTheme();
+    // Any value other than an explicit "light" resolves to the default — mirroring themeInitScript, so
+    // the pre-paint stamp and this mount resolution never disagree (even on a garbage stored value).
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    const resolved: Theme = stored === "light" ? "light" : DEFAULT_THEME;
     setTheme(resolved);
     // RE-APPLY, don't just remember. The pre-paint script stamps `data-theme` on <html> before React
     // exists; React then hydrates the <html> element and can drop an attribute it never rendered. When
@@ -80,8 +83,9 @@ export function ThemeToggle() {
 }
 
 /**
- * Inline, render-blocking script that sets `data-theme` before paint, so a saved or system
- * dark preference never flashes light first. Inject it in the document head via
- * `dangerouslySetInnerHTML`.
+ * Inline, render-blocking script that stamps `data-theme` before paint, so the dark default (or a
+ * saved `wh-theme` preference) never flashes the other theme first. With nothing stored it defaults
+ * to dark, independent of the OS `prefers-color-scheme`; only an explicit stored `"light"` opts out.
+ * Inject it in the document head via `dangerouslySetInnerHTML`.
  */
-export const themeInitScript = `(function(){try{var t=localStorage.getItem("${STORAGE_KEY}");if(!t){t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();`;
+export const themeInitScript = `(function(){try{var t=localStorage.getItem("${STORAGE_KEY}");document.documentElement.setAttribute("data-theme",t==="light"?"light":"dark");}catch(e){}})();`;

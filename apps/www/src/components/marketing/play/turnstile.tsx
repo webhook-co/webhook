@@ -4,8 +4,10 @@ import { useEffect, useRef } from "react";
 
 // The Cloudflare Turnstile challenge for the /play mint. Adapted from apps/auth's login widget: an
 // EXPLICIT render (not the implicit auto-render), so the solved token arrives in a closure rather than
-// a global — the React-friendly path. The theme observer from that version is dropped: the marketing
-// site is light-only (see layout.tsx), so there is no in-app toggle to track.
+// a global — the React-friendly path. The widget theme is resolved from `<html data-theme>` at mount
+// so the challenge card matches the page — which defaults to dark (with a nav toggle to light) — rather
+// than the OS. It is read once at render time (the token is single-use and remounts anyway); a live
+// toggle mid-challenge is not tracked, unlike the login widget's observer.
 //
 // WHY IT EXISTS: minting a sandbox is unauthenticated and costs us a Durable Object. Without a
 // challenge, /play is a free, scriptable resource generator on our highest-traffic page. In prod the
@@ -54,6 +56,16 @@ declare global {
   }
 }
 
+/**
+ * The widget theme to match the page's current mode — the `data-theme` attribute on `<html>` (set by
+ * the shared pre-paint init script), defaulting to the product default (dark) when unset, independent
+ * of the OS. Read at render, inside the mount effect, where `data-theme` is already stamped.
+ */
+function resolveTheme(): "light" | "dark" {
+  const attr = document.documentElement.getAttribute("data-theme");
+  return attr === "light" ? "light" : "dark";
+}
+
 let scriptPromise: Promise<void> | null = null;
 
 /** Load Cloudflare's Turnstile script once; subsequent callers await the same promise. */
@@ -97,7 +109,7 @@ export function Turnstile({ onToken }: { onToken: (token: string | null) => void
           sitekey: playSitekey(),
           action: TURNSTILE_ACTION,
           size: "flexible",
-          theme: "light", // the marketing site is light-only
+          theme: resolveTheme(), // match the page theme (dark by default), not the OS
           callback: (token) => onToken(token),
           "expired-callback": () => onToken(null),
           "error-callback": () => onToken(null),

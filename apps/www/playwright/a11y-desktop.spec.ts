@@ -18,6 +18,9 @@ import { expect, test, type Page } from "@playwright/test";
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
 async function expectClean(page: Page) {
+  // Non-vacuous guard: prove the light seed took effect, so a broken seed fails red instead of silently
+  // scanning the dark default (mirrors a11y-dark.spec.ts).
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   const { violations } = await new AxeBuilder({ page }).withTags(WCAG).analyze();
   expect(
     violations.map((v) => ({
@@ -29,6 +32,18 @@ async function expectClean(page: Page) {
     })),
   ).toEqual([]);
 }
+
+// The product defaults to DARK; this desktop scan is part of the LIGHT-mode a11y coverage, so pin a
+// stored light preference before navigating (dark is audited by a11y-dark.spec.ts).
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("wh-theme", "light");
+    } catch {
+      /* opaque origin — ignore */
+    }
+  });
+});
 
 test.describe("desktop-only nav controls", () => {
   test("no violations with the Product nav dropdown open", async ({ page }) => {

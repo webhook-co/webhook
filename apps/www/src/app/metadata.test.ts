@@ -33,8 +33,11 @@ describe("site metadata", () => {
     expect((siteMetadata.description as string).length).toBeGreaterThan(0);
   });
 
-  it("is a light-only site", () => {
-    expect(siteViewport.colorScheme).toBe("light");
+  it("defaults to dark (light still supported via the toggle)", () => {
+    // The site defaults to dark; `dark light` tells the UA both are supported with dark preferred,
+    // and the mobile browser-chrome tint matches the dark surface.
+    expect(siteViewport.colorScheme).toBe("dark light");
+    expect(siteViewport.themeColor).toBe("#0b0f14");
   });
 });
 

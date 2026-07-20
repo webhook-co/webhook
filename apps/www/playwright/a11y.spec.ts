@@ -18,6 +18,10 @@ async function settle(page: Page) {
 }
 
 async function expectClean(page: Page) {
+  // Non-vacuous guard: prove the light seed actually took effect. Without this, a broken seed would let
+  // every page render in the DARK default and this "light" contrast pass would go green while auditing
+  // the wrong palette (mirrors the data-theme="dark" assert in a11y-dark.spec.ts).
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   const { violations } = await new AxeBuilder({ page }).withTags(WCAG).analyze();
   // Map to a readable shape so a failure prints the rule + offending selector + contrast detail.
   expect(
@@ -30,6 +34,19 @@ async function expectClean(page: Page) {
     })),
   ).toEqual([]);
 }
+
+// The product defaults to DARK. This suite is the LIGHT-mode audit (dark is covered by
+// a11y-dark.spec.ts), so pin a stored light preference before any navigation — otherwise every page
+// here would render dark and this light contrast pass would silently stop auditing light mode.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("wh-theme", "light");
+    } catch {
+      /* opaque origin — ignore */
+    }
+  });
+});
 
 // EVERY human-facing page, DERIVED from the route manifest (`a11y: true`) — including `/` and
 // `/pricing`. Coverage is coupled to the manifest, not to a hand-maintained exclusion list: a new

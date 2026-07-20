@@ -31,6 +31,9 @@
    The fetched favicons (the 64 brands with no vector mark) are raster and cannot be recoloured, and
    they are a mix — some opaque-light (a white box on a dark page), some transparent-dark (invisible).
    They sit on a permanently light chip instead, which is correct in both themes. */
+/* Match the bare `:root` dark DEFAULT (no `data-theme` stamped yet / JS disabled) AND any explicit
+   dark scope (the `data-theme="dark"` terminal island), so the correction holds whenever pixels are dark. */
+:root:not([data-theme="light"]) .provider-mark path,
 [data-theme="dark"] .provider-mark path {
   fill: currentColor;
 }
@@ -43,7 +46,10 @@
 
    Redefining the two variables LOCALLY is the honest fix: every utility in the band resolves through
    them, so the background, the text, the /60 and /75 alpha variants and the pill borders all flip
-   together and stay coherent. Overriding just the background would have left dark ink on a dark slab. */
+   together and stay coherent. Overriding just the background would have left dark ink on a dark slab.
+   Keyed on the bare `:root` dark DEFAULT plus any explicit dark scope, so the fix holds even before the
+   init script stamps `data-theme` (or with JS off), now that dark is the default. */
+:root:not([data-theme="light"]) .trust-band,
 [data-theme="dark"] .trust-band {
   --wh-surface-inverse: var(--wh-surface-sunken);
   --wh-text-on-inverse: var(--wh-text-primary);
