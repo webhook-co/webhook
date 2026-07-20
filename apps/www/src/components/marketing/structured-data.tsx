@@ -53,9 +53,14 @@ export function organizationNode(): OrganizationNode {
     // Google's Organization logo wants a raster (it can drop SVGs) → the rendered PNG mark.
     logo: `${SITE_URL}/logo.png`,
     founder: { "@id": PERSON_ID },
-    // The ONLY verified profile today. The founder's X/LinkedIn don't exist yet; when they do, add
-    // them to the Person's sameAs (below) — never invent one.
-    sameAs: ["https://github.com/webhook-co"],
+    // Every entry is a REAL, founder-confirmed profile for the Organization itself — never invent one.
+    // These off-site nodes are what let search/answer engines resolve "webhook.co" as one entity: the
+    // LinkedIn company page and Crunchbase org were created 2026-07-20 and cross-link back to the site.
+    sameAs: [
+      "https://github.com/webhook-co",
+      "https://www.linkedin.com/company/webhook-co/",
+      "https://www.crunchbase.com/organization/webhook-co",
+    ],
   };
 }
 
