@@ -40,12 +40,17 @@ describe("structured-data builders", () => {
     // confirming it first, then adding it to this list — never the other way round.
     const CONFIRMED = new Set([
       "https://github.com/webhook-co", // the org
+      "https://www.linkedin.com/company/webhook-co", // company page, founder-confirmed 2026-07-20
+      "https://www.crunchbase.com/organization/webhook-co", // founder-confirmed 2026-07-20
       "https://www.linkedin.com/in/choraria/", // founder-confirmed 2026-07-12
       "https://github.com/choraria", // founder-confirmed 2026-07-12
     ]);
 
     const org = organizationNode();
     expect(org.sameAs).toContain("https://github.com/webhook-co");
+    // The corroborating org profiles (created 2026-07-20) that make the entity resolve off-site.
+    expect(org.sameAs).toContain("https://www.linkedin.com/company/webhook-co");
+    expect(org.sameAs).toContain("https://www.crunchbase.com/organization/webhook-co");
 
     const person = personNode();
     // Non-vacuous: the Person really does carry profiles now (the entity work depends on it).
