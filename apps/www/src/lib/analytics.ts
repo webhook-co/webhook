@@ -3,11 +3,18 @@
 // only — writes ONE aggregate data point to Cloudflare Workers Analytics Engine. This module is the
 // pure, testable core: it decides what we record and, just as importantly, what we never record.
 //
-// Privacy posture (why this needs no cookie banner and no privacy-policy retraction): we store NO IP,
-// NO cookie, NO device/user identifier, NO full referrer (host only), and NO query string beyond the
-// five standard UTM attribution keys. Country is coarse (country-level, from Cloudflare's edge). It is
-// aggregate measurement, disclosed under GDPR Art. 13 on /privacy. Mirrors apps/telemetry's collector:
-// known fields only, bounded lengths, bots dropped.
+// Privacy posture: the analytics DATA POINT stores NO IP, NO device/user identifier, NO full referrer
+// (host only), and NO query string beyond the five standard UTM attribution keys, and sets no analytics
+// cookie. Country is coarse (country-level, from Cloudflare's edge). It is aggregate measurement, disclosed
+// under GDPR Art. 13 on /privacy. Mirrors apps/telemetry's collector: known fields only, bounded lengths,
+// bots dropped.
+//
+// The same handler ALSO sets the first-party first-touch acquisition cookie (activation follow-up) — see
+// withFirstTouchCookie / first-touch-capture.ts. That IS a cookie (utm only, no PII), first-touch-wins,
+// disclosed on /privacy. Because it is non-essential, it is CONSENT-GATED: the worker sets it only once the
+// visitor has accepted via the cookie banner (consent.ts / consent-banner.tsx), never before.
+
+import { withFirstTouchCookie } from "./first-touch-capture";
 
 /** A Workers Analytics Engine data point: up to 20 blobs (strings), doubles (numbers), one index. */
 export interface AnalyticsEvent {
@@ -153,5 +160,8 @@ export async function handleAnalyticsRequest(
   } catch {
     /* analytics must never break serving the page */
   }
-  return res;
+  // First-touch acquisition capture: on an HTML view carrying utm, set the first-party `.webhook.co`
+  // first-touch cookie the auth signup hook reads (first-touch-wins). Best-effort + total — returns the
+  // asset response untouched on any issue, so serving the page never depends on it.
+  return withFirstTouchCookie(request, res);
 }
