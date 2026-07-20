@@ -7,6 +7,8 @@ import {
 } from "@webhook-co/contract";
 import type { CapabilityHandlers, ReplayHandler } from "@webhook-co/db";
 import { matchRoute, type RouteDef } from "@webhook-co/openapi/routes";
+
+import { handleActivationReview, type ActivationReviewDep } from "./activation-review.js";
 import {
   ADVISORY_HEADER,
   DEPRECATION_HEADER,
@@ -29,6 +31,12 @@ import { httpStatusForCapabilityError } from "./http-status.js";
 export interface ApiDeps {
   readonly authDeps: ApiAuthDeps;
   readonly handlers: CapabilityHandlers;
+  /**
+   * Internal founder-only weekly activation review (activation follow-up). Route-specific, bound ONLY by
+   * apps/api, and present only when both the reviewer Hyperdrive binding and the `INTERNAL_REVIEW_TOKEN`
+   * secret exist — absent → `GET /v1/internal/activation/weekly` returns 404 (ships dark).
+   */
+  readonly activationReview?: ActivationReviewDep;
   /**
    * The payloads R2 bucket — consumed ONLY by the events.getPayload route (the other routes are pure
    * DB reads through `handlers`). Optional in this router bag because it's route-specific; production
@@ -113,6 +121,14 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
 
 async function routeRequest(request: Request, deps: ApiDeps): Promise<Response> {
   const url = new URL(request.url);
+
+  // Internal founder-only weekly review — matched HERE, before the spec-driven `matchRoute`, because it is
+  // deliberately NOT a public capability (it returns platform-wide aggregates and must stay out of the
+  // OpenAPI spec/SDKs). Token-gated; unconfigured → 404 (dark).
+  if (request.method === "GET" && url.pathname === "/v1/internal/activation/weekly") {
+    return handleActivationReview(request, deps.activationReview);
+  }
+
   const segments = url.pathname.split("/").filter((s) => s.length > 0);
 
   const matched = matchRoute(request.method, segments, url.searchParams);

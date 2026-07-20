@@ -9,6 +9,7 @@ import {
   API_RESOURCE,
   buildCapabilityHandlers,
   createClient,
+  readActivationWeeklyReview,
   createCredentialHasherFromBase64,
   createReplayDestinationHandlers,
   createReplayHandler,
@@ -36,6 +37,7 @@ import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { createRemoteReplayHandler } from "./remote-replay.js";
 import { runBillingCancellationCron } from "./billing-cancellation-cron.js";
 import { runRetentionReconcileCron } from "./retention-reconcile-cron.js";
+import { type ActivationReviewDep } from "./activation-review.js";
 import { handleRequest, type ApiDeps } from "./router.js";
 import { handleGithubSecretScanning } from "./secret-scanning.js";
 import { handleStripeWebhook } from "./stripe-webhook.js";
@@ -151,6 +153,14 @@ export interface Env {
   STRIPE_SECRET_KEY?: SecretsStoreSecret;
   /** The Stripe Billing Meter event_name the tail-flush reports against (config var; matches the engine's). */
   STRIPE_METER_EVENT_NAME?: string;
+  /**
+   * Reviewer Hyperdrive (caching off) — the least-privilege `webhook_activation_reviewer` read for the
+   * internal weekly-review endpoint (activation follow-up). Present only once provisioned; absent → the
+   * endpoint 404s (dark).
+   */
+  HYPERDRIVE_ACTIVATION_REVIEWER?: Hyperdrive;
+  /** Bearer token gating the internal weekly-review endpoint. Absent → the endpoint 404s (dark). */
+  INTERNAL_REVIEW_TOKEN?: SecretsStoreSecret;
 }
 
 // Built once at module load (pure); served on the public PRM route with no tenant deps.
@@ -264,6 +274,26 @@ async function buildDeps(
     // subscriptions.* (S3 Slice 3): auto-delivery routing, bound ONLY here (dedicated map, mcp-exempt). No
     // sealer — subscriptions mint no secret. Mutates under RLS with an in-tx audit row.
     subscriptions: createSubscriptionHandlers({ tenant, auditKey }),
+    // Internal founder-only weekly review (activation follow-up): present only when BOTH the reviewer
+    // Hyperdrive + the token secret are provisioned (else the endpoint 404s / ships dark). The token secret is
+    // resolved LAZILY (only when the route is hit — never on the capability hot path); each call opens + closes
+    // its own least-privilege reviewer connection (low QPS, aggregate-only read).
+    activationReview: ((): ActivationReviewDep | undefined => {
+      const hd = env.HYPERDRIVE_ACTIVATION_REVIEWER;
+      const secret = env.INTERNAL_REVIEW_TOKEN;
+      if (!hd || !secret) return undefined;
+      return {
+        token: () => readSecretBinding(secret),
+        read: async () => {
+          const reviewer = createClient(hd.connectionString, { max: 1 });
+          try {
+            return await readActivationWeeklyReview(reviewer);
+          } finally {
+            await reviewer.end();
+          }
+        },
+      };
+    })(),
   };
   return {
     deps,
