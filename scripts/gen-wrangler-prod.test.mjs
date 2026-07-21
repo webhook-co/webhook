@@ -50,6 +50,7 @@ const BILLING_KEYS = [
   // assertions flap.
   "HYPERDRIVE_PURGE_ID",
   "HYPERDRIVE_RETENTION_ID",
+  "HYPERDRIVE_ACTIVATION_REVIEWER_ID",
 ];
 
 /** Run the generator with BASE + `extra`. Inherits the ambient env (PATH etc.) but CLEARS any billing vars
@@ -77,6 +78,8 @@ test("DARK (no billing vars): optional bindings stripped, vars empty, valid JSON
   assert.equal(hasHyperdrive(api, "HYPERDRIVE_BILLING"), false);
   assert.equal(hasSecret(api, "STRIPE_WEBHOOK_SIGNING_SECRET"), false);
   assert.equal(hasSecret(api, "STRIPE_SECRET_KEY"), false); // WS3: tail-flush key dark when billing off
+  assert.equal(hasHyperdrive(api, "HYPERDRIVE_ACTIVATION_REVIEWER"), false); // ADR-0127: reviewer dark by default
+  assert.equal(hasSecret(api, "INTERNAL_REVIEW_TOKEN"), false); // ADR-0127: bearer secret dark by default
   assert.equal(api.vars.BILLING_MODE, "");
   assert.equal(api.vars.STRIPE_METER_EVENT_NAME, ""); // WS3: flush meter name empty → dark
   const engine = readProd("engine");
@@ -112,6 +115,16 @@ test("PROVISIONED (BILLING_MODE=test + ids): bindings kept with ids, secrets inj
   assert.deepEqual(JSON.parse(web.vars.STRIPE_PLANS), {
     pro: { base: "price_b", overage: "price_o" },
   });
+});
+
+test("the activation-reviewer endpoint bindings are billing-INDEPENDENT (Hyperdrive + bearer secret injected, no BILLING_MODE)", () => {
+  gen({ HYPERDRIVE_ACTIVATION_REVIEWER_ID: "har" }); // provisioned id, billing OFF
+  const api = readProd("api");
+  assert.equal(
+    api.hyperdrive.find((h) => h.binding === "HYPERDRIVE_ACTIVATION_REVIEWER")?.id,
+    "har",
+  );
+  assert.equal(hasSecret(api, "INTERNAL_REVIEW_TOKEN"), true); // bearer secret injected alongside the Hyperdrive
 });
 
 test("the meter-audit Hyperdrive is billing-INDEPENDENT (kept without BILLING_MODE; no Stripe secret)", () => {

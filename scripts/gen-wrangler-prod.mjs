@@ -34,6 +34,12 @@ const STORE = reqEnv("SECRETS_STORE_ID");
 const BILLING_ON = !!(process.env.BILLING_MODE && process.env.BILLING_MODE !== "off");
 const whenBilling = (names) => (BILLING_ON ? names : []);
 
+// The internal activation-review endpoint (ADR-0127) needs BOTH its reviewer Hyperdrive and its bearer
+// secret to go live; gating the secret on the SAME GH var that gates the Hyperdrive keeps the two halves
+// activating/stripping together (set the var → both bound → live; unset → both stripped → 404 dark).
+const whenActivationReviewer = (names) =>
+  process.env.HYPERDRIVE_ACTIVATION_REVIEWER_ID ? names : [];
+
 /** Escape a value for embedding INSIDE a JSON string literal (quotes, backslashes, control chars). */
 const jsonStringBody = (v) => JSON.stringify(v).slice(1, -1);
 
@@ -163,7 +169,12 @@ const APPS = {
     domain: "api.webhook.co",
     // STRIPE_WEBHOOK_SIGNING_SECRET (S4.5) verifies the inbound webhook signature; STRIPE_SECRET_KEY (WS3)
     // lets the invoice.created TAIL-FLUSH REPORT meter usage outbound. Both bound only when billing is on.
-    secrets: [...SHARED, ...whenBilling(["STRIPE_WEBHOOK_SIGNING_SECRET", "STRIPE_SECRET_KEY"])],
+    secrets: [
+      ...SHARED,
+      // The internal activation weekly-review bearer — bound with the reviewer Hyperdrive (ADR-0127).
+      ...whenActivationReviewer(["INTERNAL_REVIEW_TOKEN"]),
+      ...whenBilling(["STRIPE_WEBHOOK_SIGNING_SECRET", "STRIPE_SECRET_KEY"]),
+    ],
     placeholders: [
       "<HYPERDRIVE_AUTHN_ID>",
       "<HYPERDRIVE_TENANT_ID>",
@@ -181,7 +192,9 @@ const APPS = {
       "webhook-payloads-dev",
     ],
     // HYPERDRIVE_BILLING (S4.5) — kept only when HYPERDRIVE_BILLING_ID is provisioned, else stripped.
-    optionalHyperdrives: ["HYPERDRIVE_BILLING_ID"],
+    // HYPERDRIVE_ACTIVATION_REVIEWER (ADR-0127) — same keep-when-provisioned rule; pairs with the
+    // INTERNAL_REVIEW_TOKEN secret above (both gated on HYPERDRIVE_ACTIVATION_REVIEWER_ID).
+    optionalHyperdrives: ["HYPERDRIVE_BILLING_ID", "HYPERDRIVE_ACTIVATION_REVIEWER_ID"],
     // Service bindings to the engine's WorkerEntrypoints — deploy-injected (NOT committed), exactly like
     // mcp's AUTH_ISSUER: the engine entrypoints are already LIVE, so CF late-binds them fine; committing
     // them would block a cold deploy.
