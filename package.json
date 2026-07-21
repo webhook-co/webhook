@@ -35,6 +35,7 @@
     "docs-structured-data-guard": "node scripts/docs-structured-data-guard.mjs",
     "content-dup-guard": "node scripts/content-dup-guard.mjs",
     "docs-live-structured-data-check": "node scripts/docs-live-structured-data-check.mjs",
+    "gsc-ranking": "node scripts/gsc-provider-ranking.mjs",
     "test:scripts": "node --test 'scripts/**/*.test.mjs' 'apps/*/scripts/**/*.test.mjs'",
     "prepare": "husky",
     "no-early-db-close": "node scripts/no-early-db-close.mjs"
