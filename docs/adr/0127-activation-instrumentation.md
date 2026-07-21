@@ -138,9 +138,17 @@ denominator no longer depends on the rollup, which only ever sees orgs that beca
   rebuilt from migrations silently lacked the read path, `pnpm dev:db` failed its required-login-role check,
   and the production caller's grant was pinned by no test. Its entire privilege set is USAGE on schema public
   + EXECUTE on `activation_weekly_review()` — deliberately **no table grants at all**, since the SECURITY
-  DEFINER function does the reading, so a leaked reviewer credential yields exactly the aggregate series the
-  endpoint already returns. This is the first `grant execute` in the schema aimed at a least-privilege role
-  rather than `webhook_app`; the review no longer runs as owner SQL.
+  DEFINER function does the reading. This is the first `grant execute` in the schema aimed at a
+  least-privilege role rather than `webhook_app`; the review no longer runs as owner SQL.
+- **Shipped (migration 0094 — schema-wide hardening surfaced by the review of 0093):** no table grants is only
+  half a boundary, because USAGE on schema public also carries PUBLIC's **default EXECUTE** on any function
+  that has not revoked it. A SECURITY DEFINER supplies its own privilege, so EXECUTE is the *entire* access
+  control on one — which made the explicit `grant … to webhook_app` on the identity/directory definers
+  (`current_user_profile` 0068, `user_org_directory` 0067, `org_member_directory` 0066) decorative: every
+  least-privilege role already had it by default, and their only gate is a GUC the caller sets. 0094 revokes
+  PUBLIC from all three, leaving `webhook_app` — the only role that ever called them — as the sole caller.
+  Pinned over the FINAL migrated schema in `packages/db/test/rls.test.ts`, because `create or replace`
+  preserves an ACL but `drop`+`create` resets it, and several later migrations rebuild these.
 - **Deferred (founder-run):**
   1. The **www → auth handoff** that turns first-touch on (below). Until it ships, `signed_up_at` is captured
      for every signup but `first_touch_*` stays null.

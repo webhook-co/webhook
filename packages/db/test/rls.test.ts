@@ -1691,6 +1691,39 @@ describe("no unexpected SECURITY DEFINER functions", () => {
     expect(definers.map((d) => d.proname)).toEqual(ALLOWED_SECURITY_DEFINERS);
   });
 
+  it("no identity/directory definer is executable by PUBLIC — a definer is not a public API", async () => {
+    // A SECURITY DEFINER supplies its OWN privilege, so EXECUTE is the entire access control on it. Postgres
+    // grants EXECUTE to PUBLIC by default, which made the explicit `grant … to webhook_app` on these three
+    // decorative: any role that can log in and holds USAGE on schema public — all twelve least-privilege
+    // roles, incl. webhook_ingest on the unauthenticated hot path — could call them. And their only gate is a
+    // GUC the CALLER sets, so `set_config('app.current_user', <victim>)` + current_user_profile() returned a
+    // victim's name and email. 0094 revokes PUBLIC; this pins it.
+    //
+    // Asserted over the FINAL migrated schema on purpose: `create or replace` preserves an ACL but
+    // `drop`+`create` RESETS it, and 0069/0070/0082/0083/0091 all recreate these. So a future migration that
+    // rebuilds one of them hands PUBLIC its EXECUTE back — and fails here rather than in the wild.
+    const leaky = await owner<{ proname: string }[]>`
+      select p.proname
+        from pg_proc p, aclexplode(p.proacl) a
+       where p.pronamespace = 'public'::regnamespace
+         and a.grantee = 0
+         and a.privilege_type = 'EXECUTE'
+         and p.proname in ('current_user_profile', 'user_org_directory', 'org_member_directory',
+                           'activation_weekly_review')
+       order by 1`;
+    expect(leaky.map((r) => r.proname)).toEqual([]);
+  });
+
+  it("webhook_app KEEPS execute on the identity definers — the revoke must not break the request path", async () => {
+    // The other half of 0094: revoking PUBLIC is only safe because the request-path role holds an explicit
+    // grant. If a rebuild ever drops that, the members list and org switcher break at runtime, not here.
+    const [priv] = await owner<{ profile: boolean; userdir: boolean; orgdir: boolean }[]>`
+      select has_function_privilege(${DB_ROLES.app}, 'current_user_profile()', 'EXECUTE') as profile,
+             has_function_privilege(${DB_ROLES.app}, 'user_org_directory()', 'EXECUTE') as userdir,
+             has_function_privilege(${DB_ROLES.app}, 'org_member_directory()', 'EXECUTE') as orgdir`;
+    expect(priv).toEqual({ profile: true, userdir: true, orgdir: true });
+  });
+
   it("webhook_app cannot read the identity table directly — the function is the ONLY path", async () => {
     // If this ever passes, the isolation argument above has collapsed: the tenant role could enumerate
     // every user in the system, in any org.

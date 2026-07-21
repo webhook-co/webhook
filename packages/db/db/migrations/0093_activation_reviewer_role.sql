@@ -12,11 +12,16 @@
 -- meter_audit, 0047 billing, 0050 meter_transport, 0051 purge, 0053 retention, 0084 capreconciler, 0091
 -- reaper) is created by its migration; this one now is too.
 --
--- ITS ENTIRE PRIVILEGE SET is USAGE on schema public + EXECUTE on that ONE function. Deliberately NO table
+-- WHAT IT IS GRANTED HERE is USAGE on schema public + EXECUTE on that ONE function. Deliberately NO table
 -- grants — not even SELECT on the three activation tables — because the SECURITY DEFINER function does the
--- reading. So a leaked reviewer credential yields exactly the aggregate series the endpoint already returns
--- and nothing per-tenant; it cannot read activation_org_milestones / _weekly / _exclusions directly, and it
--- cannot reach any product table. (Asserted in packages/db/test/activation-rollup.test.ts.)
+-- reading. So it holds ZERO table privileges and cannot read activation_org_milestones / _weekly /
+-- _exclusions, orgs or events directly. (Asserted in packages/db/test/activation-rollup.test.ts.)
+--
+-- ⚠️ Note that holding no TABLE grants is not by itself containment. USAGE on schema public also carries
+-- PUBLIC's default EXECUTE on every function that has not revoked it — so before 0094 this role, like the
+-- eleven other least-privilege roles that hold the same USAGE, could reach the identity SECURITY DEFINER
+-- helpers whose only gate is a caller-settable GUC. 0094 (the very next migration) revokes PUBLIC from those
+-- three, which is what makes the narrow grant list above an actual boundary rather than a description.
 --
 -- This is the FIRST `grant execute` in the schema aimed at a least-privilege role rather than webhook_app,
 -- and it narrows activation_weekly_review()'s ACL from owner-only to {owner, reviewer} — which the

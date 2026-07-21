@@ -327,11 +327,15 @@ describe("activation_weekly_review (SECURITY DEFINER, aggregate-only)", () => {
     );
   });
 
-  it("the reviewer holds EXECUTE and NOTHING else — no table reaches it, not even the activation tables", async () => {
-    // The whole safety argument for handing a network-reachable endpoint its own DB role: the SECURITY
-    // DEFINER function does the reading, so the reviewer needs no table grants at all. A leaked reviewer
-    // credential therefore yields exactly the aggregate series the endpoint already returns — never a
-    // per-org row. If a future migration hands it `select` on any of these, this fails.
+  it("the reviewer holds EXECUTE and ZERO table privileges — no activation table, no orgs, no events", async () => {
+    // Half the safety argument for handing a network-reachable endpoint its own DB role: the SECURITY
+    // DEFINER function does the reading, so the reviewer needs no table grants at all. If a future migration
+    // hands it `select` on any of these, this fails.
+    //
+    // Scope, precisely: this pins TABLE privileges only. The other half of the boundary is EXECUTE — USAGE
+    // on schema public carries PUBLIC's default EXECUTE on anything that has not revoked it, which is why
+    // 0094 revokes it from the identity definers (pinned in rls.test.ts). Neither assertion alone is
+    // containment; together they are.
     const [priv] = await provider<
       {
         exec: boolean;

@@ -355,16 +355,26 @@ test("R2 allows a small bounded loop that is not cap-many", () => {
 // The owner-only SET IS DERIVED from the migrations — never hand-listed — so a future
 // `revoke execute … from public` is covered the day it lands.
 
-test("ownerOnlyFunctions derives the set from the REAL migrations (exactly the revoked one)", async () => {
+test("ownerOnlyFunctions derives the restricted set + its grantees from the REAL migrations", async () => {
   const migrations = await readMigrationSources();
   assert.ok(migrations.length > 90, `expected the migration set, got ${migrations.length}`);
   const acl = ownerOnlyFunctions(migrations.map((m) => m.src));
-  assert.deepEqual([...acl.keys()], ["activation_weekly_review"]);
-  // Revoked from PUBLIC by 0092, granted back to exactly ONE least-privilege role by 0093 — so the
-  // entitled callers are {webhook_owner, webhook_activation_reviewer}. This list is DERIVED from the
-  // migrations, never hand-written here: when 0093 landed, this assertion flipped on its own, which is
-  // precisely the property that keeps R5 honest as the schema moves.
+
+  // Every function whose PUBLIC execute was revoked, with the roles granted it back. This list is
+  // DERIVED, never hand-written: it flipped on its own when 0093 granted the reviewer, and again when
+  // 0094 revoked PUBLIC from the three identity definers — which is exactly the property that keeps R5
+  // honest as the schema moves.
+  assert.deepEqual([...acl.keys()].sort(), [
+    "activation_weekly_review",
+    "current_user_profile",
+    "org_member_directory",
+    "user_org_directory",
+  ]);
   assert.deepEqual([...acl.get("activation_weekly_review")], ["webhook_activation_reviewer"]);
+  // The identity definers stay reachable by the request-path role and nothing else.
+  for (const fn of ["current_user_profile", "user_org_directory", "org_member_directory"]) {
+    assert.deepEqual([...acl.get(fn)], ["webhook_app"], `unexpected grantees for ${fn}`);
+  }
 });
 
 test("FLOOR: ownerOnlyFunctions over zero migrations derives nothing (main() must fail closed)", () => {
@@ -614,4 +624,51 @@ test("readMigrationSources returns ONLY numbered migrations (not .better-auth.sc
   for (const m of migrations) {
     assert.match(m.file, /\d{4}_[\w-]+\.sql$/, `not a numbered migration: ${m.file}`);
   }
+});
+
+// ── R5: a transaction handle INHERITS the role of the connection it came from ──────────────────
+// Discovered by running the rule after 0094 revoked PUBLIC from the identity definers: five real,
+// correct call sites were flagged because they run on `tx`, a callback parameter, not on a bound
+// handle. `app.begin(async (tx) => …)` and the `withTenant`/`withUser` helpers all hand out a
+// transaction scoped to the SAME connection — so `tx` is exactly as entitled as `app` is. Failing
+// closed on it would push authors to silence the guard, which is worse than the bug it prevents.
+
+test("R5 follows `handle.begin(async (tx) => …)` — tx inherits the connection's role", () => {
+  const src = `const app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+    const rows = await app.begin(async (tx) => {
+      return tx\`select org_id from user_org_directory()\`;
+    });`;
+  const acl = new Map([["user_org_directory", new Set(["webhook_app"])]]);
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx({ ownerOnly: acl })), []);
+});
+
+test("R5 follows the withTenant/withUser helpers — tx inherits the handle passed in", () => {
+  const src = `const app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+    const rows = await withUser(
+      app,
+      userId,
+      (tx) => tx\`select name, email from current_user_profile()\`,
+    );`;
+  const acl = new Map([["current_user_profile", new Set(["webhook_app"])]]);
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx({ ownerOnly: acl })), []);
+});
+
+test("R5 STILL flags a tx derived from a handle that is NOT entitled", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await provider.begin(async (tx) => {
+      return tx\`select * from activation_weekly_review()\`;
+    });`;
+  assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
+});
+
+test("R5 fails closed when the same tx name is derived from CONFLICTING roles in one file", () => {
+  // Two different connections both hand their callback a `tx`; we cannot tell which one a given call
+  // site belongs to, so the safe answer is "unbound" — i.e. still a violation.
+  const src = `const app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+    const provider = createClient(pg.providerUrl);
+    await app.begin(async (tx) => tx\`select 1\`);
+    await provider.begin(async (tx) => {
+      return tx\`select * from activation_weekly_review()\`;
+    });`;
+  assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
 });

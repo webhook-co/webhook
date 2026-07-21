@@ -180,11 +180,15 @@ export const DB_ROLES = {
    * the reviewer Hyperdrive and calls `activation_weekly_review()` — a SECURITY DEFINER, AGGREGATE-ONLY
    * function (per-week counts + TTFV percentiles; never an org_id, never PII).
    *
-   * Its entire privilege set is USAGE on schema public + EXECUTE on that ONE function. It holds NO table
-   * grants at all — not even SELECT on the three activation tables — because the definer does the reading;
-   * so a leaked reviewer credential yields exactly the aggregate series the endpoint already returns, and
-   * nothing per-tenant. This is the first EXECUTE grant in the schema aimed at a least-privilege role rather
-   * than webhook_app. NON-OWNER, NOSUPERUSER, NOBYPASSRLS. Password injected out of band.
+   * What 0093 grants it is USAGE on schema public + EXECUTE on that ONE function. It holds NO table grants at
+   * all — not even SELECT on the three activation tables — because the definer does the reading. This is the
+   * first EXECUTE grant in the schema aimed at a least-privilege role rather than webhook_app. NON-OWNER,
+   * NOSUPERUSER, NOBYPASSRLS. Password injected out of band.
+   *
+   * Holding no table grants is only half the boundary: USAGE on schema public also carries PUBLIC's default
+   * EXECUTE on any function that has not revoked it. Migration 0094 revokes PUBLIC from the identity/directory
+   * definers (they are reachable by `webhook_app` alone), which is what makes this role's reach actually equal
+   * to its grant list rather than merely look like it.
    */
   activationReviewer: "webhook_activation_reviewer",
 } as const;
