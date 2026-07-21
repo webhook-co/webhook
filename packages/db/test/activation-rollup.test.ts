@@ -35,9 +35,12 @@ let app: Sql;
 // The least-privilege webhook_meter connection — cross-org org enumeration for the rollup driver (the exact
 // role + column grants the cron uses in prod).
 let meter: Sql;
-// The provider (RLS-bypassing) connection — the harness handle for ops writes/reads: seeding the
-// owner-managed metric-exclusions list, running the owner-only review fn, and simulating retention prunes.
+// The provider (RLS-bypassing) connection — the harness handle for cross-org ops writes/reads: seeding the
+// owner-managed metric-exclusions list and simulating retention prunes.
 let provider: Sql;
+// The SCHEMA OWNER connection. activation_weekly_review() has EXECUTE revoked from PUBLIC and granted to
+// nobody, so webhook_owner is the ONLY role that may call it — and `provider` is NOT it on Neon (#717).
+let owner: Sql;
 
 /** Seed an org (with an explicit created_at = signup time) + one endpoint + optionally one event at
  *  `eventAtMs`. received_at is trigger-stamped to now() on INSERT (events_received_at_biu), so the fixture
@@ -146,12 +149,14 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
   provider = createClient(pg.providerUrl);
+  owner = createClient(pg.ownerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
   await meter?.end();
   await provider?.end();
+  await owner?.end();
   await pg?.stop();
 });
 
@@ -272,9 +277,12 @@ describe("activation_weekly_review (SECURITY DEFINER, aggregate-only)", () => {
     // never writes them.
     await provider`insert into activation_org_exclusions (org_id, reason) values (${d.orgId}, ${"test"})`;
 
-    // Called via the ops/owner connection (how the founder review runs in prod) — NOT webhook_app, which
-    // must never read cross-org platform aggregates (asserted below).
-    const rows = await provider<
+    // Called via the SCHEMA OWNER connection — the only role holding EXECUTE. 0092 revokes it from PUBLIC
+    // and grants it to nobody, so the ACL is `{webhook_owner=X/webhook_owner}`. NOT `provider`: on the
+    // nightly's Neon branch that role holds webhook_owner membership with inherit_option = f AND
+    // set_option = f, so it carries none of the owner's rights (`42501`, #717) — a local superuser papers
+    // over it. And NOT webhook_app, which must never read cross-org platform aggregates (asserted below).
+    const rows = await owner<
       {
         iso_week: Date;
         signups: string;
@@ -313,6 +321,25 @@ describe("activation_weekly_review (SECURITY DEFINER, aggregate-only)", () => {
     await expect(app`select * from activation_weekly_review()`).rejects.toThrow(
       /permission denied/i,
     );
+  });
+
+  it("EXECUTE is pinned to the schema owner ALONE — PUBLIC revoked, no role granted it back", async () => {
+    // The declarative counterpart to the rejection above, and the invariant #717 turned on: 0092 revokes
+    // EXECUTE from PUBLIC and grants it to nobody, so `webhook_owner` is the only caller. Two ways this
+    // can silently rot: a future `grant execute … to webhook_app` (every tenant could then enumerate
+    // platform-wide signup/activation), or a re-grant to PUBLIC (same, for every role at once). Asserted
+    // with has_function_privilege + aclexplode, never information_schema — that view only shows grants
+    // visible to the QUERYING role, so on Neon it reports [] and the assertion would false-pass (#413).
+    const [acl] = await provider<
+      { owner_exec: boolean; app_exec: boolean; public_exec: boolean }[]
+    >`
+      select has_function_privilege(${DB_ROLES.owner}, 'activation_weekly_review()', 'EXECUTE') as owner_exec,
+             has_function_privilege(${DB_ROLES.app}, 'activation_weekly_review()', 'EXECUTE') as app_exec,
+             exists (
+               select 1 from pg_proc p, aclexplode(p.proacl) a
+                where p.proname = 'activation_weekly_review' and a.grantee = 0
+             ) as public_exec`;
+    expect(acl).toEqual({ owner_exec: true, app_exec: false, public_exec: false });
   });
 });
 
@@ -529,8 +556,9 @@ describe("readActivationWeeklyReview (typed reader)", () => {
     await seedDelivery(f.orgId, f.eventId, "forwarded", wSignup + 168 * HOUR); // +7 days → Jun-22 week
     for (const o of [a, b, c, e, f]) await rollupOrg(o.orgId);
 
-    // Read via the owner/ops (provider) connection — webhook_app is denied EXECUTE by design.
-    const rows = await readActivationWeeklyReview(provider);
+    // Read via the SCHEMA OWNER connection — readActivationWeeklyReview's own contract ("`sql` MUST be an
+    // OWNER connection"). webhook_app is denied EXECUTE by design; so is the Neon provider role (#717).
+    const rows = await readActivationWeeklyReview(owner);
     const row = rows.find((r) => r.isoWeek === wk);
 
     expect(row).toBeDefined();

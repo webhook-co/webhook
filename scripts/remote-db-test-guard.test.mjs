@@ -6,10 +6,18 @@ import { fileURLToPath } from "node:url";
 
 import {
   blankComments,
+  blankQuotedStrings,
+  dbRoles,
   harnessFields,
+  ownerOnlyExecuteViolations,
+  ownerOnlyFunctions,
+  ownerOnlyReaders,
+  readDbSrcSources,
   readDbTestSources,
+  readMigrationSources,
   remoteSafetyViolations,
   testDbSerializationViolations,
+  unmodelableExecuteRevokes,
 } from "./remote-db-test-guard.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -329,4 +337,278 @@ test("R2 allows a small bounded loop that is not cap-many", () => {
       await appendAuditEntry(tx, auditKey, entry);
     }`;
   assert.deepEqual(remoteSafetyViolations("x.test.ts", src), []);
+});
+
+// ── R5: EXECUTE on an owner-only function through a non-owner handle ───────────────────────────
+// The fourth provider-vs-owner incident (#717, 2026-07-21). Postgres grants EXECUTE to PUBLIC by
+// default, so every function in the schema is callable by the provider role — EXCEPT one whose
+// PUBLIC grant was explicitly REVOKED. `activation_weekly_review()` (0092) is that one, and the
+// nightly died on `42501 permission denied for function activation_weekly_review`.
+//
+// This is NOT DDL, so R1 was structurally blind to it: R1 keys on owner-only DDL VERBS, and this is
+// a plain `select fn()`. Measured on the real Neon branch, the provider role
+// (`neondb_owner`, pg_has_role USAGE = false / MEMBER = true / set_option = false) has:
+//   SELECT/INSERT/UPDATE/DELETE on owner-owned tables = true   (so R1 rightly allows DML)
+//   TRUNCATE = false, owner-only DDL = false                    (R1)
+//   has_function_privilege('activation_weekly_review()','EXECUTE') = false   (R5)
+//
+// The owner-only SET IS DERIVED from the migrations — never hand-listed — so a future
+// `revoke execute … from public` is covered the day it lands.
+
+test("ownerOnlyFunctions derives the set from the REAL migrations (exactly the revoked one)", async () => {
+  const migrations = await readMigrationSources();
+  assert.ok(migrations.length > 90, `expected the migration set, got ${migrations.length}`);
+  const acl = ownerOnlyFunctions(migrations.map((m) => m.src));
+  assert.deepEqual([...acl.keys()], ["activation_weekly_review"]);
+  // Revoked from PUBLIC and granted to NO role ⇒ the schema owner is the only caller.
+  assert.deepEqual([...acl.get("activation_weekly_review")], []);
+});
+
+test("FLOOR: ownerOnlyFunctions over zero migrations derives nothing (main() must fail closed)", () => {
+  assert.equal(ownerOnlyFunctions([]).size, 0);
+  assert.equal(ownerOnlyFunctions(["-- revoke execute on function f() from public"]).size, 0);
+});
+
+test("dbRoles parses the REAL DB_ROLES (never a hand-maintained role list)", () => {
+  const roles = dbRoles(readFileSync(join(ROOT, "packages/db/src/constants.ts"), "utf8"));
+  assert.equal(roles.get("owner"), "webhook_owner");
+  assert.equal(roles.get("app"), "webhook_app");
+  assert.ok(roles.size > 10, `expected the full role map, got ${roles.size}`);
+});
+
+const ACL = new Map([["activation_weekly_review", new Set()]]);
+const ROLES = new Map([
+  ["owner", "webhook_owner"],
+  ["app", "webhook_app"],
+  ["activationReviewer", "webhook_activation_reviewer"],
+]);
+const ctx = (extra = {}) => ({ ownerOnly: ACL, roles: ROLES, readers: new Set(), ...extra });
+
+test("R5 flags an owner-only function called on a provider handle (the #717 shape)", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    const rows = await provider\`select iso_week from activation_weekly_review() where x = 1\`;`;
+  const v = ownerOnlyExecuteViolations("x.test.ts", src, ctx());
+  assert.equal(v.length, 1);
+  assert.match(v[0], /activation_weekly_review/);
+  assert.match(v[0], /provider/);
+});
+
+test("R5 flags it on a handle assigned in beforeAll (module-scope let)", () => {
+  const src = `let provider: Sql;
+    beforeAll(async () => { provider = createClient(pg.providerUrl); });
+    await provider\`select * from activation_weekly_review()\`;`;
+  assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
+});
+
+test("R5 FAILS CLOSED on a handle the file never binds (alias, helper-supplied, renamed)", () => {
+  const src = `await mystery\`select * from activation_weekly_review()\`;`;
+  assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
+});
+
+test("R5 allows the owner handle — both spellings", () => {
+  const viaField = `const owner = createClient(pg.ownerUrl);
+    await owner\`select * from activation_weekly_review()\`;`;
+  const viaUrlFor = `const owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+    await owner\`select * from activation_weekly_review()\`;`;
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", viaField, ctx()), []);
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", viaUrlFor, ctx()), []);
+});
+
+test("R5 allows a call the test EXPECTS to be rejected (the webhook_app denial assertion)", () => {
+  const src = `const app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+    await expect(app\`select * from activation_weekly_review()\`).rejects.toThrow(/permission denied/i);`;
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx()), []);
+});
+
+test("R5 does NOT flag a function that keeps its PUBLIC execute (the provider may call it)", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await provider\`select rollup_activation_milestones()\`;`;
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx()), []);
+});
+
+test("R5 allows a handle bound to a role the migrations GRANTED execute to", () => {
+  const granted = new Map([["activation_weekly_review", new Set(["webhook_activation_reviewer"])]]);
+  const src = `const reviewer = createClient(pg.urlFor({ role: DB_ROLES.activationReviewer }));
+    await reviewer\`select * from activation_weekly_review()\`;`;
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx({ ownerOnly: granted })), []);
+  // …and still refuses the provider, which holds no grant.
+  const bad = `const provider = createClient(pg.providerUrl);
+    await provider\`select * from activation_weekly_review()\`;`;
+  assert.equal(ownerOnlyExecuteViolations("x.test.ts", bad, ctx({ ownerOnly: granted })).length, 1);
+});
+
+test("R5 does not trip on the function name in a comment (blankComments applies)", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    // never call activation_weekly_review() on the provider handle
+    await provider\`select 1\`;`;
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx()), []);
+});
+
+// ── R5, one hop: the reader wrapper ───────────────────────────────────────────────────────────
+// #717's SECOND failure never named the function in the test at all — it went through
+// readActivationWeeklyReview(provider), whose body issues the call. A rule that only reads the test
+// file's own SQL misses half the incident, so the reader set is derived from packages/db/src.
+
+test("ownerOnlyReaders finds the REAL wrapper that calls the owner-only function", async () => {
+  const sources = await readDbSrcSources();
+  assert.ok(sources.length > 5, `expected packages/db/src, got ${sources.length}`);
+  const readers = ownerOnlyReaders(sources, ACL);
+  assert.ok(
+    readers.has("readActivationWeeklyReview"),
+    `expected readActivationWeeklyReview, got ${[...readers]}`,
+  );
+});
+
+test("R5 flags the reader wrapper invoked with a provider handle", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    const rows = await readActivationWeeklyReview(provider);`;
+  const v = ownerOnlyExecuteViolations(
+    "x.test.ts",
+    src,
+    ctx({
+      readers: new Set(["readActivationWeeklyReview"]),
+    }),
+  );
+  assert.equal(v.length, 1);
+  assert.match(v[0], /readActivationWeeklyReview/);
+});
+
+test("R5 allows the reader wrapper invoked with the owner handle", () => {
+  const src = `const owner = createClient(pg.ownerUrl);
+    const rows = await readActivationWeeklyReview(owner);`;
+  assert.deepEqual(
+    ownerOnlyExecuteViolations(
+      "x.test.ts",
+      src,
+      ctx({
+        readers: new Set(["readActivationWeeklyReview"]),
+      }),
+    ),
+    [],
+  );
+});
+
+test("R5 is skipped entirely when no context is supplied (unit cases above stay honest)", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await provider\`select * from activation_weekly_review()\`;`;
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, undefined), []);
+});
+
+// The assertion that actually blocks the bug. The unit cases above pin the brain's edges; this runs
+// the whole derived rule over every real source the nightly executes against Neon.
+test("R5: every source the nightly runs holds under the owner-only EXECUTE rule", async () => {
+  const [sources, migrations, dbSrc] = await Promise.all([
+    readDbTestSources(),
+    readMigrationSources(),
+    readDbSrcSources(),
+  ]);
+  const roles = dbRoles(readFileSync(join(ROOT, "packages/db/src/constants.ts"), "utf8"));
+  const ownerOnly = ownerOnlyFunctions(migrations.map((m) => m.src));
+  const readers = ownerOnlyReaders(dbSrc, ownerOnly);
+  // Vacuity checks: a rule that derives an EMPTY owner-only set, or never finds the wrapper, is a
+  // no-op that reads as clean — the exact failure mode this repo has been bitten by before.
+  assert.ok(ownerOnly.size > 0, "derived no owner-only functions — the rule would be a no-op");
+  assert.ok(readers.size > 0, "derived no owner-only wrappers — the one-hop arm would be a no-op");
+  assert.ok(sources.length > 40, `expected the db test suite, got ${sources.length}`);
+  const violations = sources.flatMap(({ file, src }) =>
+    ownerOnlyExecuteViolations(file, src, { ownerOnly, roles, readers }),
+  );
+  assert.deepEqual(violations, []);
+});
+
+test("R5 does not read a wrapper's name out of a describe() TITLE (a string is not a call)", () => {
+  // The real shape that tripped the first cut: `describe("readActivationWeeklyReview (typed reader)")`
+  // parses as a call to the wrapper with a handle named `typed`.
+  const src = `describe("readActivationWeeklyReview (typed reader)", () => {
+      it("maps rows", async () => {
+        const rows = await readActivationWeeklyReview(owner);
+      });
+    });
+    const owner = createClient(pg.ownerUrl);`;
+  assert.deepEqual(
+    ownerOnlyExecuteViolations(
+      "x.test.ts",
+      src,
+      ctx({
+        readers: new Set(["readActivationWeeklyReview"]),
+      }),
+    ),
+    [],
+  );
+});
+
+test("blankQuotedStrings preserves offsets and leaves backtick SQL alone", () => {
+  const src = `const a = "hello"; await sql\`select 1\`;`;
+  const out = blankQuotedStrings(src);
+  assert.equal(out.length, src.length);
+  assert.doesNotMatch(out, /hello/);
+  assert.match(out, /select 1/);
+});
+
+test("R5 does not flag INTROSPECTION that names the function in a SQL string literal", () => {
+  // has_function_privilege(role, 'fn()', 'EXECUTE') pins the ACL — it does not call the function.
+  // Flagging it would block the very test that stops an accidental GRANT to webhook_app.
+  const src = `const provider = createClient(pg.providerUrl);
+    const [acl] = await provider\`
+      select has_function_privilege('webhook_app', 'activation_weekly_review()', 'EXECUTE') as app\`;`;
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx()), []);
+});
+
+test("R5 still flags a REAL call sitting in the same file as an introspection query", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await provider\`select has_function_privilege('webhook_app', 'activation_weekly_review()', 'EXECUTE')\`;
+    await provider\`select * from activation_weekly_review()\`;`;
+  assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
+});
+
+// ── R5 derivation hardening (found by probing the first cut, not by reading it) ────────────────
+
+test("ownerOnlyFunctions IGNORES the migrate:down section (a rollback grant is not a live grant)", () => {
+  // Down-section `grant execute` statements really exist (0028, 0030, 0069, 0091 …). Reading them
+  // would mark a function reachable by a role that only regains it on ROLLBACK, silently switching
+  // the rule off for that function.
+  const sql = `revoke execute on function f() from public;
+-- migrate:down
+grant execute on function f() to webhook_app;`;
+  const acl = ownerOnlyFunctions([sql]);
+  assert.deepEqual([...acl.keys()], ["f"]);
+  assert.deepEqual([...acl.get("f")], [], "a down-section grant must not count as a live grantee");
+});
+
+test("ownerOnlyFunctions still reads a LIVE grant in the up section", () => {
+  const sql = `revoke execute on function f() from public;
+grant execute on function f() to webhook_reviewer;
+-- migrate:down
+drop function f();`;
+  assert.deepEqual([...ownerOnlyFunctions([sql]).get("f")], ["webhook_reviewer"]);
+});
+
+test("ownerOnlyFunctions parses every REVOKE spelling Postgres accepts", () => {
+  const spellings = [
+    ["schema-qualified", `revoke execute on function public.f() from public;`],
+    ["no argument list", `revoke execute on function f from public;`],
+    ["ROUTINE synonym", `revoke execute on routine f() from public;`],
+    ["typed arguments", `revoke execute on function f(date, text) from public;`],
+    ["GROUP PUBLIC", `revoke execute on function f() from group public;`],
+    ["comma-separated list", `revoke execute on function g(), f(int) from public;`],
+  ];
+  for (const [label, sql] of spellings) {
+    assert.ok(ownerOnlyFunctions([sql]).has("f"), `missed the ${label} spelling: ${sql}`);
+  }
+});
+
+test("a blanket `revoke … on ALL functions in schema` is UNMODELABLE and must fail closed", () => {
+  // The rule maps names to handles; a schema-wide revoke has no name to map, so silently deriving
+  // nothing from it would be the worst outcome — a rule that reads as clean.
+  const sql = `revoke execute on all functions in schema public from public;`;
+  assert.equal(unmodelableExecuteRevokes([sql]).length, 1);
+  assert.deepEqual(unmodelableExecuteRevokes([`revoke execute on function f() from public;`]), []);
+});
+
+test("readMigrationSources returns ONLY numbered migrations (not .better-auth.schema.sql)", async () => {
+  const migrations = await readMigrationSources();
+  assert.ok(migrations.length > 90, `expected the migration set, got ${migrations.length}`);
+  for (const m of migrations) {
+    assert.match(m.file, /\d{4}_[\w-]+\.sql$/, `not a numbered migration: ${m.file}`);
+  }
 });
