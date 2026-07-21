@@ -83,9 +83,17 @@ describe("provider tutorials", () => {
   });
 
   it("FAQ answers are plain text — they are emitted as JSON-LD, not rendered as markdown", () => {
+    // Underscores are checked as EMPHASIS (`_like this_`), not as characters: real identifiers are
+    // snake_case, and GitLab's answer names the `auto_disabling_web_hooks` feature flag — which is the
+    // single most useful string in it for anyone searching. Flagging every underscore would have cost
+    // that. Backticks, asterisks, hashes, brackets and raw HTML are still rejected outright.
+    const markdownEmphasisUnderscore = /(^|\s)_|_(\s|$)/;
     for (const t of TUTORIALS) {
       for (const item of t.faq) {
-        expect(item.answer, `${t.slug}: "${item.question}"`).not.toMatch(/[*_`#[\]]|<[a-z]/i);
+        expect(item.answer, `${t.slug}: "${item.question}"`).not.toMatch(/[*`#[\]]|<[a-z]/i);
+        expect(item.answer, `${t.slug}: "${item.question}" uses markdown emphasis`).not.toMatch(
+          markdownEmphasisUnderscore,
+        );
       }
     }
   });
@@ -132,14 +140,21 @@ describe("provider tutorials", () => {
   });
 
   it("names real event identifiers and never an empty list", () => {
+    // Not "no whitespace": GitLab's X-Gitlab-Event values are title-cased with spaces — `Push Hook`,
+    // `Merge Request Hook` — and those ARE the verbatim strings. An earlier version of this assertion
+    // rejected them, which would have meant either dropping GitLab or printing an identifier it does
+    // not use. What actually signals prose is quoting, newlines, stray padding, or a sentence's worth
+    // of length, so check for those instead.
     for (const t of TUTORIALS) {
       expect(t.eventExamples.length, `${t.slug} lists no events`).toBeGreaterThan(0);
       for (const ev of t.eventExamples) {
-        expect(ev.trim(), `${t.slug} has a blank event example`).not.toBe("");
-        // A verbatim identifier never carries surrounding punctuation or prose.
-        expect(ev, `${t.slug}: "${ev}" looks like prose, not an identifier`).not.toMatch(
-          /\s|["'`]/,
-        );
+        expect(ev, `${t.slug} has a blank event example`).not.toBe("");
+        expect(ev, `${t.slug}: "${ev}" is padded`).toBe(ev.trim());
+        expect(ev, `${t.slug}: "${ev}" is quoted or spans lines`).not.toMatch(/["'`\n]/);
+        expect(
+          ev.length,
+          `${t.slug}: "${ev}" reads like prose, not an identifier`,
+        ).toBeLessThanOrEqual(48);
       }
     }
   });
