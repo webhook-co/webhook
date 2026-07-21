@@ -12,9 +12,23 @@ describe("VerifyTool — rendering + XSS-inert (the render half of the secret-sa
   });
 
   it("switching providers relabels the signature header (recipe-driven)", () => {
+    // Drives the picker the way a person does — open the popover, choose the option — rather than
+    // firing a change event at a native select. The control is the shared Combobox the dashboard uses,
+    // so there is no `<select>` to set a value on, and this exercises the path a user actually takes.
     render(<VerifyTool initialProvider="github" />);
-    fireEvent.change(screen.getByLabelText(/provider/i), { target: { value: "shopify" } });
+    fireEvent.click(screen.getByLabelText(/provider/i));
+    fireEvent.click(screen.getByRole("option", { name: /shopify/i }));
     expect(screen.getByText(/x-shopify-hmac-sha256/i)).toBeTruthy();
+  });
+
+  it("the provider picker shows a brand mark for every option, not a bare list", () => {
+    // The whole point of moving off the native <select>: an <option> cannot carry an image, so the
+    // 122 providers had no logos. Every client-verifiable provider resolves to a real mark (an inline
+    // CC0 vector or a committed favicon), so the open popover should be full of marks.
+    render(<VerifyTool initialProvider="github" />);
+    fireEvent.click(screen.getByLabelText(/provider/i));
+    const marks = screen.getByRole("listbox").querySelectorAll("svg, img");
+    expect(marks.length, "the popover renders no provider marks").toBeGreaterThan(50);
   });
 
   it("a sig-in-body provider (adyen) hides the signature header field", () => {
