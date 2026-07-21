@@ -48,6 +48,7 @@ jobs:
   deploy:
     name: deploy-web
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Same-repo only: fork PRs don't receive secrets/vars, so a deploy/dry-run can't authenticate.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     env:

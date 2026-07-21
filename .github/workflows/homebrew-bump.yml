@@ -24,6 +24,7 @@ jobs:
     # Only the CLI's own releases (the repo may publish other tags).
     if: startsWith(github.event.release.tag_name, 'cli-v')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup

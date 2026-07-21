@@ -1,19 +1,35 @@
 name: nightly-rls
 
-# M4: run the RLS / tenant-leak suite nightly against a REAL Neon branch, not just the
-# local/CI Postgres. Neon (PG 15+) can differ from local PG 14 in role/RLS behavior, so
-# the freeze's isolation guarantees are re-verified on the actual managed engine.
+# M4: run the RLS / tenant-leak suite nightly against a REAL Neon branch, not just the local/CI
+# Postgres. The managed engine can differ from a local cluster in role/RLS behaviour, so the
+# isolation guarantees are re-verified where they actually have to hold.
 #
-# Auth: the harness auto-detects password mode from TEST_DATABASE_URL (a Neon branch URL
-# has a password + sslmode=require) and mints per-run SCRAM passwords for the
-# webhook_owner/app/ingest roles — no credentials in source. Point NEON_TEST_DATABASE_URL
-# at a disposable Neon BRANCH (the harness creates a fresh database per test file on it).
+# Auth: the harness auto-detects password mode from TEST_DATABASE_URL (a Neon branch URL has a
+# password + sslmode=require) and mints a per-run SCRAM password for EVERY role in DB_ROLES (all 18,
+# derived from the constant rather than hand-listed — a hand-listed subset is exactly what caused the
+# 28P01 nightly in #423). No credentials in source. It creates a fresh database per test file.
 #
-# Until the Neon project + secret exist, this workflow SKIPS cleanly (no red nightly).
+# ⚠️ The suite refuses to run unless the repo variable NEON_TEST_DATABASE_HOST names the same host the
+# secret points at (#727) — it rotates CLUSTER-GLOBAL role passwords and drops databases, so it must
+# never do that to a cluster nobody named.
+#
+# ⚠️ THE BRANCH IS NOT DISPOSABLE. The CI Neon project has exactly ONE branch, which is `primary`,
+# `default`, and has NO PARENT — so there is NO `reset_from_parent` recovery path if its
+# CLUSTER-GLOBAL role state gets wedged. That matters here specifically: this harness rotates
+# cluster-global role passwords on every run, and several migrations' down-sections DROP those
+# roles. Treat the branch as precious, not as scratch. (Earlier wording here promised a recovery
+# path that does not exist.)
+#
+# ⚠️ DO NOT DERIVE A "WHEN IS THE BRANCH BUSY" WINDOW FROM THE CRON. The schedule below is 07:17
+# UTC, but GitHub queues scheduled runs and observed starts cluster HOURS later; single runs have
+# taken ~4h. No clock-based assumption about branch availability is sound — if you need the branch,
+# check for an in-flight run rather than reasoning from the cron.
+#
+# Until the Neon secret + expected-host variable exist, this workflow SKIPS cleanly (no red nightly).
 
 on:
   schedule:
-    - cron: "17 7 * * *" # 07:17 UTC daily
+    - cron: "17 7 * * *" # 07:17 UTC daily — but see the dispatch-delay warning above
   workflow_dispatch: {}
 
 permissions:
@@ -27,25 +43,41 @@ jobs:
   rls-neon:
     name: rls-neon
     runs-on: ubuntu-latest
+    # A cap, not a target: the suite's own step is bounded below, and this backstops anything else
+    # that hangs. Paired with open-issue-on-failure's `cancelled` gate — a job timeout CANCELS the
+    # job, and `failure()` is false for cancelled, so a cap without that gate would silence the
+    # alert instead of raising it. scripts/workflow-timeout-guard.mjs enforces the pairing.
+    timeout-minutes: 320
     # Surfaced to open-issue-on-failure so the issue it files names WHAT broke, not just that
     # something did. Both are empty when the suite dies before its own classifier runs.
     outputs:
       classification: ${{ steps.suite.outputs.classification }}
       signature: ${{ steps.suite.outputs.signature }}
     steps:
-      - name: Check for Neon secret
+      - name: Check for the Neon secret and the expected-host variable
         id: guard
         env:
           NEON: ${{ secrets.NEON_TEST_DATABASE_URL }}
+          EXPECTED_HOST: ${{ vars.NEON_TEST_DATABASE_HOST }}
         run: |
           if [ -z "$NEON" ]; then
             echo "NEON_TEST_DATABASE_URL is not set — skipping. Provision a Neon branch and add" \
                  "the secret (a branch connection URL with sslmode=require) to enable the nightly" \
                  "real-engine leak suite (M4)."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # The harness itself fails closed without this (packages/db/test/expected-host.ts), because
+          # it rotates CLUSTER-GLOBAL role passwords and drops databases — operations that must never
+          # land on a cluster nobody named. Checking here too turns "a cryptic refusal 40 minutes in"
+          # into "a one-line explanation before anything starts".
+          if [ -z "$EXPECTED_HOST" ]; then
+            echo "::error title=nightly-rls::NEON_TEST_DATABASE_URL is set but the repo variable" \
+                 "NEON_TEST_DATABASE_HOST is not. The suite refuses to mutate an unproven cluster." \
+                 "Set the variable to the hostname of the branch the secret points at."
+            exit 1
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: steps.guard.outputs.enabled == 'true'
       - uses: ./.github/actions/setup
@@ -63,34 +95,28 @@ jobs:
       - name: RLS / tenant-leak suite vs Neon branch (retry once on TRANSIENT failure)
         id: suite
         if: steps.guard.outputs.enabled == 'true'
+        # Bounds the suite itself, inside the job's backstop above. A STEP timeout fails the step,
+        # so a runaway suite reports through the normal failure path with a real classification;
+        # the job cap only fires for something that hangs outside this step. Either way the
+        # widened gate below files an issue — the reporting does not depend on which one trips.
+        timeout-minutes: 300
         env:
           TEST_DATABASE_URL: ${{ secrets.NEON_TEST_DATABASE_URL }}
-        # The suite is latency-sensitive against the real Neon branch (a globalSetup
-        # pre-warms the compute and the remote-path timeouts are widened), but a rare
-        # transient Neon blip can still fail a run. Retry the whole suite once — but ONLY
-        # when the failure looks transient (a timeout / connection error). A deterministic
-        # failure (e.g. an assertion or a type error) is re-run for nothing and just delays
-        # the alert, so fail fast on it instead.
+          # #727: the harness refuses to touch a cluster this does not name. Never the secret's
+          # value — just the host it must equal.
+          TEST_DATABASE_EXPECTED_HOST: ${{ vars.NEON_TEST_DATABASE_HOST }}
+        # The suite is latency-sensitive against the real Neon branch (a globalSetup pre-warms the
+        # compute and the remote-path timeouts are widened), but a rare transient Neon blip can still
+        # fail a run. Retry the whole suite once — but ONLY when the failure looks transient. A
+        # deterministic failure is re-run for nothing and just delays the alert.
+        #
+        # The verdict comes from scripts/nightly-rls-classify.mjs, NOT from shell inlined here, so it
+        # can be unit-tested against real logs. It was not, and both of its defects were the kind
+        # only a fixture catches: the signature was scraped from the WHOLE log (so lines printed by
+        # PASSING tests were published as the failure signature — #717's issue led with two of them),
+        # and there was no CONTENTION bucket, so a `28P01` caused by another consumer rotating the
+        # cluster-global roles was certified as "a real bug".
         run: |
-          # Markers of a transient Neon/network failure worth one retry. A plain
-          # AssertionError / TypeError / syntax error matches none of these -> fail fast.
-          transient='CONNECT_TIMEOUT|Test timed out|Hook timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|Connection terminated|terminating connection|the database system is (starting up|shutting down)|too many clients|Client has encountered a connection error|fetch failed'
-
-          # Hand the failure job a machine-readable verdict + a bounded signature, so the issue it
-          # files says WHAT broke without a human opening the run. The signature is built from a
-          # FIXED set of error shapes rather than raw log lines: an allowlist can't accidentally
-          # carry something unexpected out of the log and into a public issue body.
-          emit() {
-            {
-              echo "classification=$1"
-              echo 'signature<<SIGEOF'
-              sed 's/\x1b\[[0-9;]*m//g' test-db.out \
-                | grep -aoE "PostgresError: [^\"]{0,70}|AssertionError: [^\"]{0,70}|permission denied for table [a-z_]+|password authentication failed for user .?[a-z_]+|Test timed out in [0-9]+ms|Hook timed out in [0-9]+ms|CONNECT_TIMEOUT|FAIL +[A-Za-z0-9/._-]+\.test\.ts" \
-                | sort -u | head -8
-              echo 'SIGEOF'
-            } >> "$GITHUB_OUTPUT"
-          }
-
           for attempt in 1 2; do
             echo "::group::pnpm test:db (attempt ${attempt}/2)"
             set +e
@@ -101,36 +127,38 @@ jobs:
             if [ "${status}" -eq 0 ]; then
               exit 0
             fi
-            if [ "${attempt}" -eq 2 ]; then
-              echo "::error title=nightly-rls::test:db failed after 2 attempts (exit ${status})"
-              emit "transient-looking, but failed BOTH attempts"
-              exit "${status}"
-            fi
-            if grep -qiE "${transient}" test-db.out; then
+            # Exit status 0 from --retryable means "a retry is advised" (a TRANSIENT first attempt).
+            if node scripts/nightly-rls-classify.mjs test-db.out --attempt "${attempt}" --retryable; then
               echo "::warning title=nightly-rls::attempt ${attempt} failed (exit ${status}) with a transient-looking error; retrying once"
               sleep 15
             else
-              echo "::error title=nightly-rls::attempt ${attempt} failed (exit ${status}) with a non-transient error; not retrying"
-              emit "NON-TRANSIENT (a deterministic failure — not Neon latency)"
+              node scripts/nightly-rls-classify.mjs test-db.out --attempt "${attempt}" --emit
+              echo "::error title=nightly-rls::test:db failed on attempt ${attempt} (exit ${status})"
               exit "${status}"
             fi
           done
 
-  # On a real failure (not the clean skip when the secret is unset — that leaves rls-neon
-  # green), file a NEW issue — one per failing run, never a comment on a previous one.
+  # On a real failure (not the clean skip when the secret is unset — that leaves rls-neon green),
+  # file a NEW issue — one per failing run, never a comment on a previous one.
   #
-  # This used to append to a single rolling issue. That thread became a pile of unrelated
-  # incidents under one title, so each new failure inherited the last one's diagnosis: the
-  # 2026-07-12 outage (#512) was three deterministic bugs, but the thread's standing advice said
-  # "failures are usually transient Neon latency" and it read as another slow night for days.
-  # One issue per failure means each has its own signature, its own state, and closes on its own.
+  # This used to append to a single rolling issue. That thread became a pile of unrelated incidents
+  # under one title, so each new failure inherited the last one's diagnosis: the 2026-07-12 outage
+  # (#512) was three deterministic bugs, but the thread's standing advice said "failures are usually
+  # transient Neon latency" and it read as another slow night for days. One issue per failure means
+  # each has its own signature, its own state, and closes on its own.
   #
   # The issue is left unassigned on purpose: a human comments @claude on it to investigate.
   open-issue-on-failure:
     name: open-issue-on-failure
     needs: rls-neon
-    if: failure()
+    # `failure()` alone is NOT enough once rls-neon has a timeout: a job-level timeout CANCELS the
+    # job, and `failure()` is FALSE for a cancelled job — so the cap would have silenced this alert
+    # rather than raising it. Both results are covered, and a cancellation is reported honestly as a
+    # cancellation (it may also be a superseding run under the concurrency group, or a manual stop)
+    # instead of being dressed up as a deterministic bug.
+    if: ${{ always() && (needs.rls-neon.result == 'failure' || needs.rls-neon.result == 'cancelled') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: write
@@ -141,6 +169,7 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ID: ${{ github.run_id }}
+          RESULT: ${{ needs.rls-neon.result }}
           CLASSIFICATION: ${{ needs.rls-neon.outputs.classification }}
           SIGNATURE: ${{ needs.rls-neon.outputs.signature }}
         run: |
@@ -155,9 +184,15 @@ jobs:
           today="$(date -u +'%Y-%m-%d')"
           title="nightly-rls failed on ${today} (run ${RUN_ID})"
 
-          # The suite dies before the retry loop on an infra fault (e.g. the setup step), in which
-          # case there is no classification/signature to report. Say so rather than print nothing.
-          class="${CLASSIFICATION:-unknown (the suite did not reach its own failure classifier — likely a setup/infra fault)}"
+          # A cancelled job never reached its own classifier, and a cancellation is not a verdict
+          # about the code — say which one it was rather than inventing a bug report.
+          if [ "$RESULT" = "cancelled" ]; then
+            class="CANCELLED — the job was stopped before it finished (its ${RUN_ID} runtime cap, a
+          superseding run under the \`nightly-rls\` concurrency group, or a manual cancel). This is
+          NOT evidence of a bug; check the run to see which."
+          else
+            class="${CLASSIFICATION:-unknown (the suite did not reach its own failure classifier — likely a setup/infra fault)}"
+          fi
           sig="${SIGNATURE:-}"
           if [ -n "$sig" ]; then
             sig_block="$(printf '```\n%s\n```' "$sig")"
@@ -166,7 +201,14 @@ jobs:
           fi
 
           # Single-quoted so the markdown backticks stay literal.
-          note='This suite runs the RLS / tenant-leak tests against the real Neon branch. **Do not assume it is Neon latency** — the step above already retries once on a genuinely transient error (a cold-start `CONNECT_TIMEOUT`, a `Test timed out`) and fails fast on anything deterministic, so trust the classification and read the signature. A `NON-TRANSIENT` verdict means a real bug. To have it investigated, comment `@claude` on this issue describing what to look at.'
+          note='This suite runs the RLS / tenant-leak tests against the real Neon branch. **Read the classification before assuming anything** — there are four outcomes, and only one of them means a bug in the code under test:
+
+          - `NON-TRANSIENT` — a deterministic failure. **This one is a real bug.**
+          - `TRANSIENT` — a timeout/connection error; the step already retried once.
+          - `CONTENTION` — something else touched the branch mid-run (roles are cluster-global and every run rotates their passwords). **Not a bug in the code under test** — re-run when the branch is idle.
+          - `CANCELLED` — the job was stopped (runtime cap, superseding run, or manual cancel).
+
+          The signature is scoped to vitest'"'"'s failing-test output, so it should name the actual failure; if it says it was scraped from the whole log, the suite died before vitest reported and the lines are not known to come from a failing test. To have this investigated, comment `@claude` on this issue describing what to look at.'
 
           body="$(printf '%s\n\nRun: %s\n\n**Classification:** %s\n\n**Failure signature:**\n\n%s\n\n---\n\n%s\n\nPrior failures: [`%s` issues](%s/%s/issues?q=is%%3Aissue+label%%3A%s).\n' \
             'The `nightly-rls` workflow failed.' \

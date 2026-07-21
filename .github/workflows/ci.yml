@@ -20,6 +20,7 @@ jobs:
   install:
     name: install
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup
@@ -27,6 +28,7 @@ jobs:
   go-sdk-spec-sync:
     name: webhook-go vendored spec is current
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # The Go SDK lives in a separate repo, so its route-coverage ratchet validates against a VENDORED copy
@@ -53,6 +55,7 @@ jobs:
   sdk-packaged-smoke:
     name: sdk packaged-artifact smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -67,6 +70,7 @@ jobs:
   client-versions-current:
     name: CLIENT_LATEST matches the registries
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -83,6 +87,7 @@ jobs:
   cli-channels-agree:
     name: npm and Homebrew serve the same CLI
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -97,6 +102,7 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -106,6 +112,7 @@ jobs:
   format-check:
     name: format-check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -115,6 +122,7 @@ jobs:
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -124,6 +132,7 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -140,6 +149,7 @@ jobs:
   test-db:
     name: test-db
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: install
     services:
       postgres:
@@ -187,6 +197,7 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -202,6 +213,7 @@ jobs:
   completion-smoke:
     name: completion-smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -263,6 +275,7 @@ jobs:
   build-cf:
     name: build-cf
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -277,6 +290,7 @@ jobs:
   seo-html-check:
     name: seo-html-check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -313,6 +327,7 @@ jobs:
   web-e2e:
     name: web-e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: install
     services:
       postgres:
@@ -350,6 +365,7 @@ jobs:
   a11y-e2e:
     name: a11y-e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -365,6 +381,7 @@ jobs:
   lighthouse:
     name: lighthouse
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -375,6 +392,7 @@ jobs:
   no-skipped-tests:
     name: no-skipped-tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -387,6 +405,7 @@ jobs:
   tsconfig-boundary:
     name: tsconfig-boundary
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -400,6 +419,7 @@ jobs:
   dal-gate-guard:
     name: dal-gate-guard
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -412,6 +432,7 @@ jobs:
   audit:
     name: audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: install
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

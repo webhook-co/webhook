@@ -96,25 +96,39 @@ for isolation. Set `TEST_DATABASE_URL` to attach to any running Postgres the sam
 
 **Auth modes.** The harness auto-detects from `TEST_DATABASE_URL`: no password →
 **trust** mode (local cluster / trust-auth CI service); a password (e.g. a Neon URL)
-→ **password** mode, where it mints per-run SCRAM passwords for the
-`webhook_owner`/`webhook_app`/`webhook_ingest` roles (never written to source) and uses
-the URL's `sslmode`. Validate password mode locally against a SCRAM cluster:
+→ **password** mode, where it mints a per-run SCRAM password for **every role in
+`DB_ROLES`** (18 of them, derived — never hand-listed, and never written to source) and
+uses the URL's `sslmode`. Validate password mode locally against a SCRAM cluster:
 
 ```sh
-TEST_DATABASE_URL='postgres://postgres:PW@127.0.0.1:5432/postgres?sslmode=disable' pnpm test:db
+TEST_DATABASE_URL='postgres://postgres:PW@127.0.0.1:5432/postgres?sslmode=disable' \
+TEST_DATABASE_EXPECTED_HOST='127.0.0.1' pnpm test:db
 ```
 
-**Nightly vs a real Neon branch.** `.github/workflows/nightly-rls.yml` runs the
-same suite against a real Neon branch (PG 15+ can differ from local PG 14 in role/RLS
-behavior). To enable: provision a disposable Neon **branch** and add its connection URL
-(with `sslmode=require`) as the `NEON_TEST_DATABASE_URL` secret. The harness creates a
-fresh database per test file on it. Until the secret exists the workflow skips cleanly.
+**Nightly vs a real Neon branch.** `.github/workflows/nightly-rls.yml` runs the same
+suite against a real Neon branch (PostgreSQL 17, as both Neon projects are). To enable:
+add a branch connection URL (with `sslmode=require`) as the `NEON_TEST_DATABASE_URL`
+secret, and that branch's hostname as the `NEON_TEST_DATABASE_HOST` repo **variable**.
+The harness creates a fresh database per test file on it. Until both exist the workflow
+skips cleanly.
 
-> Neon specifics to confirm on the first run (PG 15+ / managed, not validated locally):
-> the provider role can `alter schema public owner` (or fall back to `grant create on
-> schema public`), a `CREATEROLE` non-superuser can create the app/ingest roles, and
-> `createClient`/dbmate honor `sslmode=require`. The owner/superuser negative control
-> runs as Neon's (non-superuser) owner role — the immutability trigger still blocks it.
+> ⚠️ **The nightly branch is NOT disposable.** The CI Neon project has exactly one
+> branch — `primary`, `default`, no parent — so there is **no `reset_from_parent`
+> recovery path** if its cluster-global role state gets wedged. This matters because the
+> harness rotates cluster-global role passwords on every run and several migrations'
+> down-sections `DROP` those roles. Treat it as shared, precious state: serialize
+> everything that touches it, and never point a local run at it while a nightly is in
+> flight. (Earlier wording here called it "disposable"; that promised a recovery path
+> which does not exist.)
+
+**Target-cluster safety.** Because the harness rotates cluster-global roles and drops
+databases, it refuses to run against a managed/TLS Postgres unless
+`TEST_DATABASE_EXPECTED_HOST` names that exact host (`test/expected-host.ts`). Unset ⇒
+refuse, rather than defaulting to "allow". The local ephemeral cluster and the trust-auth
+CI service are unaffected. `scripts/remote-db-test-guard.mjs` (R6) pins the assertion's
+position ahead of the first destructive statement, and pins that turbo forwards the
+variable — Turbo runs in strict env mode, so an unforwarded variable would make every
+remote run fail closed.
 
 ## Follow-up needing your account
 
