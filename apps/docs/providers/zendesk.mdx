@@ -1,0 +1,61 @@
+---
+title: "Verify Zendesk webhooks"
+sidebarTitle: "Zendesk"
+description: "Register your Zendesk signing secret on an endpoint and webhook.co verifies every inbound event's signature for you."
+icon: "headset"
+---
+
+Zendesk signs each webhook with HMAC-SHA256, carried in the `x-zendesk-webhook-signature` header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails.
+
+## Get the signing secret key
+
+Open the webhook in Admin Center; its secret key is hidden until you choose Reveal secret. See Zendesk's own [webhook documentation](https://developer.zendesk.com/documentation/webhooks/verifying/) for the current steps.
+
+Zendesk issues one per webhook, and only once the webhook is fully created — while you are still creating it, the value in play is a documented static test secret.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$ZENDESK_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider zendesk
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"zendesk","secret":"<your-value>"}'
+```
+
+```ts TypeScript
+await webhook.endpoints.providerSecrets.add({
+  endpointId,
+  provider: "zendesk",
+  secret: process.env.ZENDESK_SIGNING_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## How the signature is checked
+
+- **Signed message** — `{timestamp}{body}`.
+- **Algorithm** — HMAC-SHA256, base64-encoded.
+- **Key** — the signing secret used verbatim (its UTF-8 bytes).
+- **Signature format** — the bare encoded MAC.
+- **Timestamp** — read from the `x-zendesk-webhook-signature-timestamp` header.
+
+## Replay window
+
+Because the timestamp is signed, webhook.co enforces a 300-second tolerance: a request whose signed timestamp is older than that fails verification rather than being accepted as a possible replay.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+A request whose signature matches shows `verified`; one that does not shows `failed`, with the reason named.

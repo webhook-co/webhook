@@ -13,7 +13,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --coverage",
-    "generate": "WEBHOOK_RECIPES_WRITE=1 vitest run src/recipes.generated.test.ts"
+    "generate": "WEBHOOK_RECIPES_WRITE=1 vitest run src/recipes.generated.test.ts",
+    "gen:docs": "WEBHOOK_DOCS_WRITE=1 vitest run src/docs-page/generate.test.ts"
   },
   "dependencies": {
     "@webhook-co/webhooks-spec": "workspace:*"

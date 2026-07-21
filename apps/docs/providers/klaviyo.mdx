@@ -1,0 +1,61 @@
+---
+title: "Verify Klaviyo webhooks"
+sidebarTitle: "Klaviyo"
+description: "Register your Klaviyo signing secret on an endpoint and webhook.co verifies every inbound event's signature for you."
+icon: "chart-line"
+---
+
+Klaviyo signs each webhook with HMAC-SHA256, carried in the `klaviyo-signature` header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails.
+
+## Get the secret key
+
+You choose this value yourself when creating the webhook rather than Klaviyo generating it, either in the create-webhook form or as the secret_key field on the API request. See Klaviyo's own [webhook documentation](https://developers.klaviyo.com/en/docs/working_with_system_webhooks) for the current steps.
+
+It must be at least 16 characters, and Klaviyo never returns it afterwards, so record it as you create the webhook.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$KLAVIYO_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider klaviyo
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"klaviyo","secret":"<your-value>"}'
+```
+
+```ts TypeScript
+await webhook.endpoints.providerSecrets.add({
+  endpointId,
+  provider: "klaviyo",
+  secret: process.env.KLAVIYO_SIGNING_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## How the signature is checked
+
+- **Signed message** — `{body}{timestamp}`.
+- **Algorithm** — HMAC-SHA256, hex-encoded.
+- **Key** — the signing secret used verbatim (its UTF-8 bytes).
+- **Signature format** — the bare encoded MAC.
+- **Timestamp** — read from the `klaviyo-timestamp` header.
+
+## What makes this one different
+
+- The timestamp is part of the signed message, but no replay-age window is enforced.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+A request whose signature matches shows `verified`; one that does not shows `failed`, with the reason named.

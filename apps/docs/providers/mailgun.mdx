@@ -1,0 +1,60 @@
+---
+title: "Verify Mailgun webhooks"
+sidebarTitle: "Mailgun"
+description: "Register your Mailgun signing secret on an endpoint and webhook.co verifies every inbound event's signature for you."
+icon: "envelope"
+---
+
+Mailgun signs each webhook with HMAC-SHA256, carried inside the request body. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails.
+
+## Get the HTTP webhook signing key
+
+In the Mailgun control panel, open your profile menu and choose API Security, where the HTTP webhook signing key sits alongside your API keys. See Mailgun's own [webhook documentation](https://documentation.mailgun.com/docs/mailgun/user-manual/webhooks/securing-webhooks) for the current steps.
+
+It is account-level rather than per-domain or per-webhook, so one key signs every webhook on the account, and resetting it takes effect immediately.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$MAILGUN_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider mailgun
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"mailgun","secret":"<your-value>"}'
+```
+
+```ts TypeScript
+await webhook.endpoints.providerSecrets.add({
+  endpointId,
+  provider: "mailgun",
+  secret: process.env.MAILGUN_SIGNING_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## How the signature is checked
+
+- **Signed message** — `{signature.timestamp}{signature.token}`.
+- **Algorithm** — HMAC-SHA256, hex-encoded.
+- **Key** — the signing secret used verbatim (its UTF-8 bytes).
+- **Signature format** — the bare encoded MAC.
+
+## What makes this one different
+
+- The signature travels inside the request body, not in a header.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+A request whose signature matches shows `verified`; one that does not shows `failed`, with the reason named.

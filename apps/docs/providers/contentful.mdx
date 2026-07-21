@@ -1,0 +1,68 @@
+---
+title: "Verify Contentful webhooks"
+sidebarTitle: "Contentful"
+description: "Register your Contentful signing secret on an endpoint and webhook.co verifies every inbound event's signature for you."
+icon: "layer-group"
+---
+
+Contentful signs each webhook with HMAC-SHA256, carried in the `x-contentful-signature` header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails.
+
+## Get the signing secret
+
+In the space, open Settings → Webhooks → the Settings tab and enable request verification, which generates the signing secret. See Contentful's own [webhook documentation](https://www.contentful.com/developers/docs/extensibility/webhooks/request-verification/) for the current steps.
+
+It is space-level — one secret covers every webhook in the space — and you cannot copy it again once you leave that view.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$CONTENTFUL_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider contentful
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"contentful","secret":"<your-value>"}'
+```
+
+```ts TypeScript
+await webhook.endpoints.providerSecrets.add({
+  endpointId,
+  provider: "contentful",
+  secret: process.env.CONTENTFUL_SIGNING_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## How the signature is checked
+
+- **Signed message** — a canonical request `METHOD\nNORMALIZED_PATH\nHEADERS_SECTION\nRAW_BODY`, where HEADERS_SECTION is exactly the headers named in `x-contentful-signed-headers` (`key:value`, key lowercased, sorted by key, joined by `;`).
+- **Algorithm** — HMAC-SHA256, hex-encoded.
+- **Key** — registered secret is a 64-char string used verbatim as the UTF-8 HMAC key.
+- **Signature format** — lowercase-hex 32-byte HMAC-SHA256 MAC.
+- **Timestamp** — read from the `x-contentful-timestamp` header.
+- **Also signed** — `x-contentful-signed-headers`. These header values are folded into the signed message, so they must reach us unmodified.
+
+## Replay window
+
+Because the timestamp is signed, webhook.co enforces a 30-second tolerance: a request whose signed timestamp is older than that fails verification rather than being accepted as a possible replay.
+
+## What makes this one different
+
+- The signed message's header section is DYNAMIC: `x-contentful-signed-headers` lists which headers are folded in, so the canonical string shape varies per request.
+- Canonical = `METHOD\nNORMALIZED_PATH\nHEADERS_SECTION\nRAW_BODY`; signed headers are `key:value`, key lowercased+trimmed, sorted by key, joined by `;` (the signed-headers HEADER itself uses `,`).
+- One-sided 30-second TTL against `x-contentful-timestamp` (milliseconds); the timestamp is itself a signed header, so replay is also bound in the signature.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+A request whose signature matches shows `verified`; one that does not shows `failed`, with the reason named.

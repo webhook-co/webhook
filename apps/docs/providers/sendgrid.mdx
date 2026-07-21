@@ -1,0 +1,63 @@
+---
+title: "Verify SendGrid webhooks"
+sidebarTitle: "SendGrid"
+description: "Register your SendGrid public key on an endpoint and webhook.co verifies every inbound event's signature for you."
+icon: "paper-plane"
+---
+
+SendGrid signs each webhook with ECDSA (P-256, SHA-256), carried in the `x-twilio-email-event-webhook-signature` header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails.
+
+## Get the public verification key
+
+In SendGrid, open Settings → Mail Settings → Webhook Settings → Event Webhooks, edit the webhook, and under Security features turn on Signed Event Webhook; reopening the dialog then shows the public verification key. See SendGrid's own [webhook documentation](https://www.twilio.com/docs/sendgrid/for-developers/tracking-events/getting-started-event-webhook-security-features) for the current steps.
+
+The key pair is generated only when you save, so signature verification can't be exercised before that.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$SENDGRID_PUBLIC_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider sendgrid
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"sendgrid","secret":"<your-value>"}'
+```
+
+```ts TypeScript
+await webhook.endpoints.providerSecrets.add({
+  endpointId,
+  provider: "sendgrid",
+  secret: process.env.SENDGRID_PUBLIC_KEY!,
+});
+```
+
+</CodeGroup>
+
+## How the signature is checked
+
+- **Signed message** — `{timestamp}{rawBody}` — the `…-Timestamp` header concatenated to the raw body.
+- **Algorithm** — ECDSA (P-256, SHA-256), base64-encoded.
+- **Key** — registered secret is the dashboard "Verification Key" — base64 of the SPKI DER ECDSA P-256 public key.
+- **Signature format** — base64-encoded DER ECDSA signature (converted to IEEE-P1363 r||s for WebCrypto).
+- **Timestamp** — read from the `x-twilio-email-event-webhook-timestamp` header.
+
+## What makes this one different
+
+- The registered "secret" is SendGrid's base64 SPKI ECDSA P-256 PUBLIC key ("Verification Key"), not a shared secret.
+- The DER-encoded ECDSA signature is converted to IEEE-P1363 raw r||s (64 bytes) before WebCrypto verify.
+- The signed timestamp is bound into the message but no replay window is enforced.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+A request whose signature matches shows `verified`; one that does not shows `failed`, with the reason named.

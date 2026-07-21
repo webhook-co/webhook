@@ -1,0 +1,63 @@
+---
+title: "Verify Discord webhooks"
+sidebarTitle: "Discord"
+description: "Register your Discord public key on an endpoint and webhook.co verifies every inbound event's signature for you."
+icon: "discord"
+---
+
+Discord signs each webhook with Ed25519, carried in the `x-signature-ed25519` header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails.
+
+## Get the public key
+
+Your public key is shown on your application in the Discord Developer Portal — Discord generates it, you never supply one. See Discord's own [webhook documentation](https://docs.discord.com/developers/interactions/overview) for the current steps.
+
+Discord validates an endpoint by deliberately sending invalid signatures, and expects a 401 back, so an endpoint that doesn't verify will fail registration.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$DISCORD_PUBLIC_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider discord
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"discord","secret":"<your-value>"}'
+```
+
+```ts TypeScript
+await webhook.endpoints.providerSecrets.add({
+  endpointId,
+  provider: "discord",
+  secret: process.env.DISCORD_PUBLIC_KEY!,
+});
+```
+
+</CodeGroup>
+
+## How the signature is checked
+
+- **Signed message** — `{timestamp}{rawBody}` — the timestamp header concatenated to the raw body, no separator.
+- **Algorithm** — Ed25519, hex-encoded.
+- **Key** — registered secret is the app's hex-encoded 32-byte Ed25519 public key, used verbatim.
+- **Signature format** — hex-encoded 64-byte Ed25519 signature.
+- **Timestamp** — read from the `x-signature-timestamp` header.
+
+## What makes this one different
+
+- The registered "secret" is Discord's hex-encoded 32-byte Ed25519 PUBLIC key, not a shared secret.
+- Timestamp and body are concatenated with NO separator (`{timestamp}{body}`).
+- The signed timestamp is bound into the message but no replay-age window is enforced — the signature is the authenticity guarantee; downstream dedupe handles replay.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+A request whose signature matches shows `verified`; one that does not shows `failed`, with the reason named.
