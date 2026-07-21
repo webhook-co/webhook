@@ -144,3 +144,53 @@ test("the guard PARSES yaml rather than text-scanning (a quoted `timeout-minutes
     "a timeout-minutes mentioned inside a step must not count as the job's cap",
   );
 });
+
+// ── regressions found by adversarial review ───────────────────────────────────────────────────
+
+test("a NEGATIVE mention of cancelled does not count as covering it", () => {
+  // `!= 'cancelled'` and `!cancelled()` both contain the token while EXCLUDING the case. A substring
+  // test reads them as compliance, which is the opposite of what they do.
+  for (const gate of [
+    "${{ always() && needs.a.result == 'failure' && needs.a.result != 'cancelled' }}",
+    "${{ !cancelled() && needs.a.result == 'failure' }}",
+  ]) {
+    const v = workflowTimeoutViolations([
+      wf("x.yml", {
+        a: { "timeout-minutes": 5 },
+        b: { "timeout-minutes": 5, needs: "a", if: gate },
+      }),
+    ]);
+    assert.equal(v.length, 1, `expected a violation for: ${gate}`);
+  }
+});
+
+test("an AFFIRMATIVE cancelled check on the depended-on job is accepted", () => {
+  const v = workflowTimeoutViolations([
+    wf("x.yml", {
+      a: { "timeout-minutes": 5 },
+      b: {
+        "timeout-minutes": 5,
+        needs: "a",
+        if: "${{ !cancelled() && (needs.a.result == 'failure' || needs.a.result == 'cancelled') }}",
+      },
+    }),
+  ]);
+  assert.deepEqual(v, []);
+});
+
+test("a reusable-workflow call cannot carry a cap, so it is not asked for one", () => {
+  // GitHub's job schema rejects timeout-minutes on a job that is `uses:` — demanding one would make
+  // the guard unsatisfiable. The callee's OWN jobs are capped by this same guard, so nothing is lost.
+  const v = workflowTimeoutViolations([
+    wf("x.yml", { call: { uses: "./.github/workflows/reusable.yml" } }),
+  ]);
+  assert.deepEqual(v, []);
+});
+
+test("...but an OUT-OF-REPO reusable workflow is still flagged (its jobs are not covered here)", () => {
+  const v = workflowTimeoutViolations([
+    wf("x.yml", { call: { uses: "some-org/other-repo/.github/workflows/x.yml@v1" } }),
+  ]);
+  assert.equal(v.length, 1);
+  assert.match(v[0], /out-of-repo|external/i);
+});

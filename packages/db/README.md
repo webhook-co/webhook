@@ -116,8 +116,9 @@ TEST_DATABASE_EXPECTED_HOST='127.0.0.1' pnpm test:db
 suite against a real Neon branch (PostgreSQL 17, as both Neon projects are). To enable:
 add a branch connection URL (with `sslmode=require`) as the `NEON_TEST_DATABASE_URL`
 secret, and that branch's hostname as the `NEON_TEST_DATABASE_HOST` repo **variable**.
-The harness creates a fresh database per test file on it. Until both exist the workflow
-skips cleanly.
+The harness creates a fresh database per test file on it. With neither set the workflow
+skips cleanly (green). With the secret set but the variable missing it **fails** rather than
+skipping — a leak suite that silently stops running is worse than one that goes red.
 
 > ⚠️ **The nightly branch is NOT disposable.** The CI Neon project has exactly one
 > branch — `primary`, `default`, no parent — so there is **no `reset_from_parent`

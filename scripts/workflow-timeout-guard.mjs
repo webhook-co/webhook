@@ -39,8 +39,25 @@ export const MAX_TIMEOUT_MINUTES = 360;
 
 /** `if:` shapes that gate on a dependency having FAILED. Each is blind to `cancelled`. */
 const FAILURE_GATE = /\bfailure\s*\(\s*\)|\.result\s*[=!]=\s*['"]failure['"]/;
-/** …and the token that proves the gate was widened to see a timeout-cancelled dependency. */
-const SEES_CANCELLED = /cancell?ed/i;
+/**
+ * Proof that a gate AFFIRMATIVELY admits a cancelled dependency: `needs.<dep>.result == 'cancelled'`.
+ *
+ * Deliberately NOT a substring test for "cancelled". Both `!= 'cancelled'` and `!cancelled()` contain
+ * the token while EXCLUDING the case, so a substring check reads the exact opposite of the truth as
+ * compliance. It is also per-DEPENDENCY: widening the gate for one `needs` entry cannot vouch for
+ * another. (`!cancelled()` is still worth having alongside — it suppresses the deliberate-stop case —
+ * it just cannot be the thing that satisfies this rule.)
+ */
+function seesCancelled(gate, dep) {
+  const escaped = dep.replace(/[^\w-]/g, (c) => "\\" + c);
+  return new RegExp("needs\\." + escaped + "\\.result\\s*==\\s*['\"]cancelled['\"]").test(gate);
+}
+
+/** A job that CALLS a reusable workflow (`uses:` at JOB level). GitHub's job schema does not permit
+ *  `timeout-minutes` on one, so demanding a cap would make this guard unsatisfiable. */
+function isReusableCall(job) {
+  return typeof job?.uses === "string";
+}
 
 /**
  * The pure decision.
@@ -70,6 +87,19 @@ export function workflowTimeoutViolations(workflows) {
     }
 
     for (const [id, job] of Object.entries(jobs)) {
+      if (isReusableCall(job)) {
+        // Only an IN-REPO callee is safe to exempt: its own jobs live in .github/workflows and are
+        // capped by this same guard. An external `org/repo/.github/workflows/x.yml@ref` is not read
+        // here, so nothing would prove its jobs are bounded.
+        if (!job.uses.startsWith("./")) {
+          violations.push(
+            `${file}: job \`${id}\` calls the out-of-repo reusable workflow \`${job.uses}\`, whose ` +
+              `jobs this guard cannot read — so nothing here proves they are capped. Vendor it ` +
+              `in-repo, or bound the caller another way.`,
+          );
+        }
+        continue;
+      }
       const cap = job?.["timeout-minutes"];
       if (!Number.isInteger(cap) || cap <= 0) {
         violations.push(
@@ -86,10 +116,14 @@ export function workflowTimeoutViolations(workflows) {
       // The pairing rule. Checked for EVERY failure-gated job, not only ones whose dependency
       // happens to be capped today: once the rule above lands, every dependency can be cancelled.
       const gate = typeof job?.if === "string" ? job.if : "";
-      if (FAILURE_GATE.test(gate) && !SEES_CANCELLED.test(gate)) {
+      const deps = Array.isArray(job?.needs) ? job.needs : job?.needs ? [job.needs] : [];
+      const blind = deps.filter((dep) => !seesCancelled(gate, String(dep)));
+      if (FAILURE_GATE.test(gate) && (deps.length === 0 || blind.length > 0)) {
+        const named = blind.length ? blind.map((d) => `\`${d}\``).join(", ") : "its dependencies";
         violations.push(
-          `${file}: job \`${id}\` is gated on a dependency FAILING (\`if: ${gate.trim()}\`) but never ` +
-            `mentions \`cancelled\`. A job-level timeout CANCELS the job it bounds, and \`failure()\` is ` +
+          `${file}: job \`${id}\` is gated on a dependency FAILING (\`if: ${gate.trim()}\`) but does ` +
+            `not affirmatively admit a CANCELLED result for ${named}. ` +
+            `A job-level timeout CANCELS the job it bounds, and \`failure()\` is ` +
             `FALSE for a cancelled job — so a runaway that hits its cap would silently report NOTHING. ` +
             `Widen the gate, e.g. ` +
             `\`if: \${{ always() && (needs.X.result == 'failure' || needs.X.result == 'cancelled') }}\`.`,

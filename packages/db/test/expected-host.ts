@@ -24,8 +24,6 @@
 // scripts/apply-prod-migrations.sh refuses to run unless the resolved host equals
 // MIGRATE_EXPECTED_DB_HOST. This is the same assertion, applied to the test harness.
 
-import { isRemoteTestDatabase } from "./pg-timing";
-
 /** The environment variable that must name the cluster a shared/managed run is allowed to touch. */
 export const EXPECTED_HOST_ENV = "TEST_DATABASE_EXPECTED_HOST";
 
@@ -63,7 +61,7 @@ export function assertExpectedTestDatabaseHost(
 
   let host: string;
   try {
-    host = new URL(url).hostname;
+    host = normaliseHost(new URL(url).hostname);
   } catch {
     // We cannot tell whether an unparseable URL is local or managed, so we cannot clear it. Fail
     // closed. (startEphemeralPostgres would throw on this URL a moment later anyway — but it would
@@ -74,28 +72,74 @@ export function assertExpectedTestDatabaseHost(
     );
   }
 
-  // Trust-auth (no password, no TLS) ⇒ the local ephemeral cluster or the PR-CI service container.
-  // Deliberately the SAME predicate the timing helpers use, so the two can never drift into
-  // disagreeing about what "remote" means.
-  if (!isRemoteTestDatabase(url)) return;
+  // The host parsed above must be the host the CLIENT will actually dial, or we would be asserting
+  // about one cluster and mutating another. Two known divergences, both rejected outright rather
+  // than guessed at:
+  //
+  //   - postgres.js splits userinfo at the FIRST '@', WHATWG at the LAST. A password containing an
+  //     unencoded '@' therefore yields two different hosts from the same string. Percent-encode it.
+  //   - libpq accepts a COMMA-SEPARATED host list; WHATWG parses the whole thing as one hostname.
+  //
+  // Neither is legitimate in any of our lanes, so refusing costs nothing and closes the bypass.
+  const authority = url.slice(url.indexOf("//") + 2).split(/[/?#]/)[0];
+  const hostPart = authority.slice(authority.lastIndexOf("@") + 1);
+  if ((authority.match(/@/g) ?? []).length > 1) {
+    throw new UnexpectedTestClusterError(
+      `TEST_DATABASE_URL contains more than one '@' before the path, so the host this assertion ` +
+        `parses ('${host}') is not necessarily the host the driver will dial. Percent-encode '@' ` +
+        `in the password. Refusing to run.`,
+    );
+  }
+  if (hostPart.includes(",")) {
+    throw new UnexpectedTestClusterError(
+      `TEST_DATABASE_URL names multiple hosts ('${hostPart}'), so which cluster is mutated is not ` +
+        `determined by this assertion. Refusing to run — use a single host.`,
+    );
+  }
+
+  // LOOPBACK is the only host that cannot be shared by construction: the local ephemeral cluster
+  // lives on 127.0.0.1, and the PR-CI service container on `localhost` (ci.yml). Everything else —
+  // including a trust-auth Postgres on a LAN address, a colleague's dev box, or a managed cluster
+  // reached with `sslmode=verify-full` — must be named.
+  //
+  // The auth mode CANNOT stand in for this, and the first cut of this file used it: it exempted
+  // anything that merely looked trust-auth, so `TEST_DATABASE_URL=postgres://postgres@<lan-host>/…`
+  // with TEST_DATABASE_EXPECTED_HOST naming a completely different cluster ran happily and created
+  // (then dropped) 19 cluster-global roles on the unnamed host. Found by adversarial review and
+  // reproduced end to end; the regression is pinned in expected-host.test.ts.
+  if (isLoopback(host)) return;
 
   const damage =
-    `The harness rotates CLUSTER-GLOBAL role passwords, DROPs every webhook_test_* database it ` +
-    `can see, and (in migrations.test.ts) rolls migrations down far enough to DROP those roles. ` +
+    `The harness provisions and mutates CLUSTER-GLOBAL roles, DROPs every webhook_test_* database ` +
+    `it can see, and (in migrations.test.ts) rolls migrations down far enough to DROP those roles. ` +
     `Every environment shares these role names, so nothing downstream would fail early.`;
 
   if (expected === undefined || expected.trim() === "") {
     throw new UnexpectedTestClusterError(
-      `refusing to run against the managed Postgres at '${host}': ${EXPECTED_HOST_ENV} is not set, ` +
-        `so the target cluster is unproven. ${damage} Set ${EXPECTED_HOST_ENV} to the host you ` +
-        `intend to mutate.`,
+      `refusing to run against the Postgres at '${host}': ${EXPECTED_HOST_ENV} is not set, so the ` +
+        `target cluster is unproven. ${damage} Set ${EXPECTED_HOST_ENV} to the host you intend to ` +
+        `mutate.`,
     );
   }
 
-  if (expected.trim() !== host) {
+  if (normaliseHost(expected) !== host) {
     throw new UnexpectedTestClusterError(
       `refusing to run: TEST_DATABASE_URL points at '${host}', but ${EXPECTED_HOST_ENV} names ` +
         `'${expected.trim()}'. ${damage}`,
     );
   }
+}
+
+/** Hostnames are case-insensitive and a single trailing dot is the same host — normalise both sides
+ *  so an equivalent spelling neither false-refuses nor slips past the equality check. */
+function normaliseHost(value: string): string {
+  return value.trim().toLowerCase().replace(/\.$/, "");
+}
+
+/** True for the loopback interface in every spelling `new URL()` can produce. NOT a general
+ *  "is this private" test — a LAN address is deliberately NOT exempt. */
+function isLoopback(host: string): boolean {
+  if (host === "localhost" || host === "[::1]" || host === "::1") return true;
+  // The whole 127.0.0.0/8 block, not just 127.0.0.1.
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }

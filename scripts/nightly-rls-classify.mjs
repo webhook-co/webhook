@@ -52,8 +52,19 @@ const CONTENTION_MARKERS = [
   /database ["']?webhook_test_[0-9a-f]+["']? does not exist/i,
 ];
 
-/** vitest's "Failed Tests" banner and the summary line that follows the last failure. */
-const FAILED_TESTS_BANNER = /^[⎯─-]*\s*Failed Tests\s+\d+\s*[⎯─-]*\s*$/m;
+/**
+ * vitest's failure-section banner, and the summary line that follows the last failure.
+ *
+ * BOTH headings, because vitest prints "Failed Suites" for a failure in a suite-level hook and
+ * "Failed Tests" for a failing test — and a beforeAll that throws (this repo's provisioning hooks all
+ * live in beforeAll) produces ONLY the former. Matching just "Failed Tests" sent every such run down
+ * the unscoped whole-log path, which is the exact defect this module exists to remove.
+ *
+ * `search()` returns the FIRST match and the region ends at the summary, so when both sections are
+ * present the region spans them and still excludes everything a passing test printed — vitest emits
+ * nothing between the two headings.
+ */
+const FAILED_TESTS_BANNER = /^[⎯─-]*\s*Failed (?:Suites|Tests)\s+\d+\s*[⎯─-]*\s*$/m;
 const SUMMARY_LINE = /^\s*Test Files\s+/m;
 
 /**
@@ -75,6 +86,26 @@ const SIGNATURE_SHAPES =
 const MAX_SIGNATURE_LINES = 8;
 
 /**
+ * turbo's stream UI prefixes every line of a task's output with `<pkg>:<task>: `.
+ *
+ * `pnpm test:db` is two turbo invocations: the packages/db one (whose output reaches test-db.out
+ * UNPREFIXED — verified against the real run 29819273539) and the apps' one, which fans out to
+ * @webhook-co/api and @webhook-co/web and IS prefixed. Every pattern below is `^`-anchored, so
+ * without this the apps' half of the suite would always fall through to the unscoped path.
+ */
+const TURBO_LINE_PREFIX = /^(?:@[\w.-]+\/)?[\w.-]+:[\w:.-]+: /gm;
+
+/**
+ * `gh run view --log` prefixes every line with `<job>\t<step>\t<ISO timestamp> `.
+ *
+ * CI never sees this — it classifies the `tee`d `test-db.out` directly — but a human (or an agent)
+ * reproducing a red nightly downloads the log and runs this script over it, and every `^`-anchored
+ * pattern below would fail to match through the prefix. Stripping it makes the documented triage
+ * path actually work rather than silently returning the unscoped fallback.
+ */
+const GH_LOG_LINE_PREFIX = /^[^\t\n]*\t[^\t\n]*\t\d{4}-\d\d-\d\dT[\d:.]+Z /gm;
+
+/**
  * Strip SGR colour codes so the banners and shapes below can match.
  *
  * TWO forms, both real and both present in this repo's logs:
@@ -89,8 +120,13 @@ const MAX_SIGNATURE_LINES = 8;
  * real downloaded run log, which is why scripts/fixtures/nightly-rls-717.log.txt is committed (the `.txt` suffix is load-bearing: .gitignore excludes *.log, so the fixture would silently not be committed and CI would fail on a test that passes locally).
  */
 export function stripAnsi(text) {
-  // eslint-disable-next-line no-control-regex -- matching terminal escapes is the entire point
-  return String(text ?? "").replace(/(?:\u001b|\^\[)\[[0-9;]*m/g, "");
+  return (
+    String(text ?? "")
+      // eslint-disable-next-line no-control-regex -- matching terminal escapes is the entire point
+      .replace(/(?:\u001b|\^\[)\[[0-9;]*m/g, "")
+      .replace(GH_LOG_LINE_PREFIX, "")
+      .replace(TURBO_LINE_PREFIX, "")
+  );
 }
 
 /**
@@ -127,7 +163,16 @@ export function signatureLines(log) {
   // A connection string can appear inside an otherwise-allowed `Error: …` prefix, so drop any match
   // that carries one rather than trusting the shape alone.
   const safe = matches.map((m) => m.trim()).filter((m) => !/[a-z]+:\/\//i.test(m));
-  return [...new Set(safe)].sort().slice(0, MAX_SIGNATURE_LINES);
+  const unique = [...new Set(safe)].sort();
+  // A `FAIL <file>` line names WHERE, never WHAT — and a plain sort puts every `FAIL …` ahead of
+  // `PostgresError:`/`permission denied …`. Once 8 distinct files fail, the cap was spent entirely on
+  // filenames and the issue body carried no error at all, which is the one thing a reader cannot get
+  // from the run's title. Give the error shapes their slots first; file names fill what is left.
+  const isFileLine = (line) => line.startsWith("FAIL ");
+  return [...unique.filter((l) => !isFileLine(l)), ...unique.filter(isFileLine)].slice(
+    0,
+    MAX_SIGNATURE_LINES,
+  );
 }
 
 /** True when the FAILING region shows the marker — a match in passing output must not count. */
