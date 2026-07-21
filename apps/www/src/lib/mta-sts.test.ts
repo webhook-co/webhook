@@ -16,6 +16,14 @@ describe("MTA-STS policy body", () => {
     expect(MTA_STS_POLICY).toMatch(/\r\nmode: (testing|enforce|none)\r\n/);
   });
 
+  // `enforce` IS the control. `testing` looks identical in every other respect — same records, same
+  // policy host, same TLS-RPT stream — while providing zero protection: a stripped STARTTLS session
+  // still delivers in plaintext and is merely reported afterwards. A silent downgrade to `testing`
+  // would therefore disable inbound TLS enforcement without breaking anything visible. Pin it.
+  it("is in enforce mode (a downgrade to testing silently removes all protection)", () => {
+    expect(MTA_STS_POLICY).toMatch(/\r\nmode: enforce\r\n/);
+  });
+
   it("lists the iCloud MX by WILDCARD so a future mx03 does not break delivery", () => {
     // RFC 8461: `*` may only match the entire left-most label. `*.mail.icloud.com` covers
     // mx01/mx02 AND any sibling Apple adds later. Pinning mx01/mx02 literally is a latent outage.
@@ -26,8 +34,9 @@ describe("MTA-STS policy body", () => {
     const maxAge = Number(MTA_STS_POLICY.match(/\r\nmax_age: (\d+)/)?.[1]);
     expect(maxAge).toBeGreaterThan(0);
     // max_age is a self-imposed lock-in window: under `enforce`, senders honour a CACHED policy for
-    // up to this long, so migrating MX away from iCloud without waiting it out stops mail. Keep it
-    // short (1 day) until the policy is proven by TLS-RPT.
+    // up to this long, so migrating MX away from iCloud without waiting it out stops mail. It is also
+    // the ROLLBACK budget — reverting `enforce` only reaches senders once their cached copy expires.
+    // Held at 1 day through the flip for that reason; widen only after enforcement is proven clean.
     expect(maxAge).toBeLessThanOrEqual(86400);
   });
 

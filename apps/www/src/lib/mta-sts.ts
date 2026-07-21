@@ -17,24 +17,34 @@
 export const MTA_STS_HOST = "mta-sts.webhook.co";
 
 /**
- * `mode: testing` reports failures via TLS-RPT without ever refusing delivery. Move to `enforce` only
- * after TLS reports are clean — under `enforce` a broken policy fetch or an MX mismatch means senders
- * REFUSE to deliver, and it fails closed (a cached policy keeps being honoured).
+ * `mode: enforce` since 2026-07-21 (was `testing` from 2026-07-14). Under `enforce` a failed policy
+ * fetch or an MX mismatch makes senders REFUSE to deliver, and it fails closed — a cached policy keeps
+ * being honoured for up to `max_age`. `testing` only ever OBSERVED: a stripped STARTTLS session still
+ * delivered in plaintext and was merely reported afterwards, so this flip is where the phase's actual
+ * protection begins.
+ *
+ * Promoted on evidence, not elapsed time: 3 observed TLS-RPT windows (07-17/18/20) reported
+ * `policy-type: "sts"` — discovered AND applied — across 17 sessions with 0 failures, and both published
+ * MX were verified directly to present valid, hostname-matching certs over TLS 1.3.
+ *
+ * `max_age` deliberately stays at 86400 through the flip. Raising it would SLOW ROLLBACK, since senders
+ * pin a cached `enforce` policy for that long; widen it only after enforcement has been clean for a week.
  *
  * The MX is a WILDCARD on purpose: RFC 8461 allows `*` as the entire left-most label, so
  * `*.mail.icloud.com` matches mx01/mx02 today and any sibling Apple adds tomorrow. Pinning the two
- * literal hosts would turn an Apple infra change into a silent mail outage.
+ * literal hosts would turn an Apple infra change into a silent mail outage. (Apple's own cert already
+ * carries `mx3.mail.icloud.com` in its SAN — that sibling exists, so the wildcard is load-bearing.)
  */
 export const MTA_STS_POLICY = [
   "version: STSv1",
-  "mode: testing",
+  "mode: enforce",
   "mx: *.mail.icloud.com",
   "max_age: 86400",
   "",
 ].join("\r\n");
 
 /** sha256(MTA_STS_POLICY)[0..16). Must equal the `id=` in the _mta-sts TXT record. */
-export const MTA_STS_POLICY_ID = "168b696a309ca3e1";
+export const MTA_STS_POLICY_ID = "bfd20a7feac1a43a";
 
 const WELL_KNOWN_PATH = "/.well-known/mta-sts.txt";
 
