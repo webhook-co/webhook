@@ -8,6 +8,12 @@ import { describe, expect, it, vi } from "vitest";
 // is slow or racy, so the fix is the time budget rather than the test.
 vi.setConfig({ testTimeout: 30_000 });
 
+// …and load the module once here, at file scope, so the transform happens outside any test's budget
+// at all. The four `await import("@webhook-co/contract")` calls below stay as they are — they now
+// resolve from the module registry instead of paying for it — and other apps/web tests already import
+// the contract statically, so this is the established shape rather than a new dependency.
+import "@webhook-co/contract";
+
 import {
   EVENT_TYPE_MAX_LENGTH,
   effectiveEventType,
