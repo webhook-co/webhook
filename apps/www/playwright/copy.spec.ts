@@ -54,7 +54,7 @@ test.describe("rendered copy", () => {
  * and quietly reintroduce the scrollbar. This fails when that happens.
  */
 test.describe("the surfaces terminal fits its content", () => {
-  for (const tab of ["MCP", "CLI", "API", "Web app"]) {
+  for (const tab of ["MCP", "CLI", "API", "Web"]) {
     test(`${tab} panel does not scroll horizontally at desktop width`, async ({ page }) => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.emulateMedia({ reducedMotion: "reduce" });

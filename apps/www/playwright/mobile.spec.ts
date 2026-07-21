@@ -55,6 +55,51 @@ test.describe("mobile navigation", () => {
   });
 });
 
+test.describe("the surfaces tablist stays one row on a phone", () => {
+  /**
+   * Four surfaces, one row. The tablist shipped as `flex-wrap` with a "Web app" label, which needs
+   * 378px of intrinsic width against the 342px a 390px phone actually offers — so the fourth tab
+   * dropped to a second line on every common phone (390, 375, and the very common Android 360), and
+   * the "four surfaces" claim read as three-plus-one.
+   *
+   * The widths are measured, not guessed, and jsdom cannot see any of this: the wrap is pure CSS
+   * layout, so it only fails in a real browser at a real width. 360px is the floor because it is a
+   * real, extremely common Android viewport — not a hypothetical.
+   */
+  for (const width of [360, 375, 393]) {
+    test(`all four tabs share one row at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto("/");
+      await page.getByRole("heading", { level: 1 }).waitFor();
+
+      const tabs = page.getByRole("tab");
+      await expect(tabs).toHaveCount(4); // non-vacuous: the assertion below is meaningless with 0 tabs
+
+      const boxes = await tabs.evaluateAll((els) =>
+        els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { label: el.textContent?.trim() ?? "", top: Math.round(r.top), right: r.right };
+        }),
+      );
+      const rows = new Set(boxes.map((b) => b.top));
+      expect(
+        rows.size,
+        `the tablist wrapped onto ${rows.size} rows at ${width}px: ${JSON.stringify(boxes)}`,
+      ).toBe(1);
+
+      // A single row that runs off the edge is not a fix — it just moves the defect.
+      const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
+      for (const box of boxes) {
+        expect(
+          box.right,
+          `the "${box.label}" tab overhangs the viewport at ${width}px`,
+        ).toBeLessThanOrEqual(clientWidth + 1);
+      }
+    });
+  }
+});
+
 test.describe("no page scrolls sideways on a phone", () => {
   // A horizontally-scrolling BODY is the classic mobile defect: one wide element (a terminal, a table,
   // a long unbroken string) pushes the whole layout out and every line of text goes off-screen. Wide
