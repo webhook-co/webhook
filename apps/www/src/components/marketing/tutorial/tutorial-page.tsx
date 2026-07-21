@@ -7,8 +7,8 @@ import { BreadcrumbJsonLd } from "@/components/marketing/structured-data";
 import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 import { Terminal, TerminalLine, Tok } from "@/components/ui/terminal";
 import { LINKS } from "@/lib/links";
-import { container, proseLink, sectionPad } from "@/lib/styles";
-import { type Tutorial, tutorialPath } from "@/lib/tutorials";
+import { container, focusRing, proseLink, sectionPad } from "@/lib/styles";
+import { relatedTutorials, type Tutorial, tutorialPath } from "@/lib/tutorials";
 
 // The shell every /test/<slug> page shares. It deliberately owns ONLY the parts that are identical
 // everywhere — the capture → listen → replay loop, which is a property of webhook.co rather than of the
@@ -143,6 +143,36 @@ export function TutorialPage({ tutorial: t }: { tutorial: Tutorial }) {
             </a>
             .
           </p>
+
+          {/* Siblings + the hub. Without these a tutorial is a leaf: someone arriving from a search
+              result can only leave via the nav. The window rotates (see `relatedTutorials`), so every
+              provider receives exactly as many inbound links as it gives — no page ends up favoured
+              and none ends up orphaned. */}
+          <nav aria-labelledby="more-providers">
+            <h2 id="more-providers" className={cn(h2, "mb-4")}>
+              More providers
+            </h2>
+            <ul className="flex flex-wrap gap-2">
+              {relatedTutorials(t.slug).map((related) => (
+                <li key={related.slug}>
+                  <a
+                    href={tutorialPath(related.slug)}
+                    className={cn(
+                      focusRing,
+                      "inline-flex rounded-control border border-hairline bg-surface px-3 py-1.5 text-sm text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+                    )}
+                  >
+                    {related.name}
+                  </a>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-md text-fg-muted">
+              <a href={LINKS.tutorials} className={proseLink}>
+                All providers
+              </a>
+            </p>
+          </nav>
         </div>
       </article>
 

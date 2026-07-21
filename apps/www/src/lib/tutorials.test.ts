@@ -13,7 +13,13 @@ import {
 import { FAQ_ITEMS } from "@/components/marketing/faq";
 import { HOME_FAQ_ITEMS } from "@/components/marketing/home-faq";
 import { MARKETING_ROUTES } from "@/lib/routes";
-import { TUTORIALS, tutorialPath, tutorialText } from "@/lib/tutorials";
+import {
+  RELATED_COUNT,
+  relatedTutorials,
+  TUTORIALS,
+  tutorialPath,
+  tutorialText,
+} from "@/lib/tutorials";
 
 // These pages are the reason the lane exists, and every one of them is a set of public claims. The
 // checks below are the difference between "sixteen useful pages" and "sixteen doorway pages": the
@@ -157,5 +163,45 @@ describe("provider tutorials", () => {
         ).toBeLessThanOrEqual(48);
       }
     }
+  });
+});
+
+// Sibling cross-linking. Before this, no tutorial linked to any other tutorial — the sixteen pages
+// sat in the sitemap with zero inbound internal links from anywhere, including each other. The hub
+// fixes reachability; these links are what stop the estate being a set of one-hop leaves.
+//
+// The property that matters is NOT "each page shows some links" — it's that the inbound count is
+// UNIFORM. A "related providers" scheme that picks favourites (alphabetical neighbours, a curated
+// list, anything keyed on content) quietly leaves some pages with zero inbound links, which is the
+// exact failure being fixed. A wrapping window over a fixed order is the cheapest thing that
+// guarantees uniformity, and this test is what proves it rather than assuming it.
+describe("tutorial sibling links", () => {
+  it("gives every tutorial the same number of siblings, and never itself", () => {
+    for (const t of TUTORIALS) {
+      const related = relatedTutorials(t.slug);
+      expect(related).toHaveLength(RELATED_COUNT);
+      expect(related.map((r) => r.slug)).not.toContain(t.slug);
+      expect(new Set(related.map((r) => r.slug)).size).toBe(RELATED_COUNT);
+    }
+  });
+
+  it("distributes INBOUND sibling links perfectly evenly — no tutorial is left an orphan", () => {
+    const inbound = new Map(TUTORIALS.map((t) => [t.slug, 0]));
+    for (const t of TUTORIALS) {
+      for (const r of relatedTutorials(t.slug)) {
+        inbound.set(r.slug, (inbound.get(r.slug) ?? 0) + 1);
+      }
+    }
+    const counts = [...inbound.values()];
+    expect(Math.min(...counts)).toBe(RELATED_COUNT);
+    expect(Math.max(...counts)).toBe(RELATED_COUNT);
+  });
+
+  it("falls back to real tutorials for an unknown slug rather than throwing", () => {
+    const related = relatedTutorials("not-a-provider");
+    expect(related).toHaveLength(RELATED_COUNT);
+    expect(TUTORIALS.map((t) => t.slug)).toEqual(
+      expect.arrayContaining(related.map((r) => r.slug)),
+    );
   });
 });

@@ -21,6 +21,25 @@ export const PRODUCT_LINKS: readonly NavLink[] = [
 ];
 
 /**
+ * The Resources menu: the three things a visitor can actually USE without an account — the signature
+ * verifier, the tutorial hub, and the sandbox. All www pages.
+ *
+ * This menu exists because of a measured failure, not a hunch. The sixteen `/test/<slug>` tutorials
+ * shipped with zero inbound internal links from anywhere on the site, and `/play` had exactly one
+ * (the homepage hero) — so both were effectively reachable only from a search result. Sitemap
+ * membership is not discoverability.
+ *
+ * It points at the tutorial HUB, never at individual slugs: a dropdown that enumerated providers
+ * would cap out immediately and would have to be edited for every new tutorial. Same reason any
+ * future comparison estate should get a hub here rather than one entry per page.
+ */
+export const RESOURCE_LINKS: readonly NavLink[] = [
+  { label: "Signature verifier", href: LINKS.verify },
+  { label: "Webhook tutorials", href: LINKS.tutorials },
+  { label: "Sandbox", href: LINKS.play },
+];
+
+/**
  * The top-level links. "Docs" is LAST because it is the only item that hands you off to another
  * domain — everything before it keeps you on this site.
  *
@@ -34,4 +53,8 @@ export const NAV_LINKS: readonly NavLink[] = [
 ];
 
 /** Every destination the navigation offers, in reading order. The drift guard checks against this. */
-export const ALL_NAV_DESTINATIONS: readonly NavLink[] = [...PRODUCT_LINKS, ...NAV_LINKS];
+export const ALL_NAV_DESTINATIONS: readonly NavLink[] = [
+  ...PRODUCT_LINKS,
+  ...RESOURCE_LINKS,
+  ...NAV_LINKS,
+];

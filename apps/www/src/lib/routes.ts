@@ -63,6 +63,16 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     a11y: true,
     sitemap: true,
   },
+  // The tutorial hub — the parent the sixteen /test/<slug> breadcrumbs already implied, and the only
+  // page that links them. Priority matches /verify because it carries the head term ("test webhooks
+  // locally") the per-provider long-tail was too thin to hold on its own.
+  {
+    path: "/test",
+    changeFrequency: "monthly",
+    priority: 0.8,
+    a11y: true,
+    sitemap: true,
+  },
   // Per-provider "test X webhooks locally" tutorials. Authored, not generated — see `lib/tutorials.ts`
   // for why a template cannot produce these. Each row makes its page sitemapped, SEO-checked, axe-scanned
   // in both themes, and overflow-checked on a phone; `tutorials.test.ts` asserts every tutorial has one.

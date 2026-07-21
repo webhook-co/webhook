@@ -27,7 +27,6 @@ const columns: { title: string; links: FooterLink[] }[] = [
     links: [
       { label: "Docs", href: LINKS.docs },
       { label: "Quickstart", href: LINKS.quickstart },
-      { label: "Signature verifier", href: LINKS.verify },
       { label: "API reference", href: LINKS.apiReference },
       { label: "CLI", href: LINKS.cli },
       { label: "MCP", href: LINKS.mcp },
@@ -53,6 +52,29 @@ const columns: { title: string; links: FooterLink[] }[] = [
       { label: "DPA", href: "/dpa" },
       { label: "Acceptable use", href: "/acceptable-use" },
       { label: "Sub-processors", href: "/sub-processors" },
+    ],
+  },
+];
+
+/**
+ * The Resources band — a full-width ROW below the columns, not a fifth column.
+ *
+ * Why a row: a column is the wrong container for a set that grows. It caps out around six links
+ * before it unbalances the grid, whereas a band wraps freely. This is where the tutorial hub, the
+ * verifier and the sandbox live, and it's shaped as a list of labelled GROUPS so a second group can
+ * be added as data rather than as a re-layout. It also keeps the `1.6fr repeat(4,1fr)` grid and its
+ * ≤940px collapse completely untouched.
+ *
+ * The rule for growing it: link HUBS, not members. Sixteen tutorial slugs here would read as
+ * link-stuffing — a real trust cost — and would leave the seventeenth orphaned anyway.
+ */
+const resourceGroups: { title: string; links: FooterLink[] }[] = [
+  {
+    title: "Resources",
+    links: [
+      { label: "Signature verifier", href: LINKS.verify },
+      { label: "Webhook tutorials", href: LINKS.tutorials },
+      { label: "Sandbox", href: LINKS.play },
     ],
   },
 ];
@@ -131,6 +153,34 @@ export function Footer() {
             </nav>
           ))}
         </div>
+
+        {/* Placed AFTER the column grid on purpose: the socials <ul> must stay the first list in the
+            footer (footer.test.tsx identifies it structurally), and a reader scanning columns should
+            hit the band as "more places to go", not as a stray fifth column. */}
+        {resourceGroups.map((group) => (
+          <nav
+            key={group.title}
+            aria-label={group.title}
+            className="mt-[clamp(32px,4vw,48px)] border-t border-hairline pt-6"
+          >
+            <p className="text-sm font-semibold tracking-tight text-fg">{group.title}</p>
+            <ul className="mt-3 flex flex-wrap gap-x-6 gap-y-2.5">
+              {group.links.map((link) => (
+                <li key={link.label}>
+                  <a
+                    href={link.href}
+                    className={cn(
+                      focusRing,
+                      "rounded-control text-sm text-fg-muted transition-colors hover:text-fg",
+                    )}
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ))}
 
         {/* No "All systems operational" indicator. It was a hardcoded string next to a green dot,
             with nothing monitoring anything — its own comment admitted "there is no status page to

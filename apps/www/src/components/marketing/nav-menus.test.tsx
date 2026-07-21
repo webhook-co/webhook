@@ -54,14 +54,49 @@ describe("NavMenus", () => {
     expect(within(panel).getByRole("link", { name: "Delivery" })).toBeInTheDocument();
   });
 
-  // The "Developers" dropdown (docs/quickstart/API/CLI/MCP) was removed in the IA lane — those docs
-  // deep-links live in the footer now, and the top nav carries a single "Docs" link (in nav.tsx).
-  // NavMenus renders exactly one disclosure, "Product".
-  it("renders exactly one menu — Product — no Developers dropdown", () => {
+  // Two disclosures, and only two: "Product" (what it does) and "Resources" (things you can use).
+  // The old "Developers" dropdown — docs/quickstart/API/CLI/MCP — stays gone: those are docs
+  // deep-links and they live in the footer, with the top nav carrying a single "Docs" link
+  // (nav.tsx). The count is pinned so a third dropdown is a deliberate decision, not a drift.
+  it("renders exactly two menus — Product and Resources — and no Developers dropdown", () => {
     render(<NavMenus />);
     expect(trigger(/^product$/i)).toBeInTheDocument();
+    expect(trigger(/^resources$/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^developers$/i })).toBeNull();
-    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+  });
+
+  // The Resources menu is the fix for a measured problem: the sixteen /test/<slug> tutorials shipped
+  // with ZERO inbound internal links, and /play had exactly one (the homepage hero). Pinning the exact
+  // hrefs means a rename that quietly drops one turns this red.
+  it("puts the three usable tools behind Resources, on www", () => {
+    render(<NavMenus />);
+    const panel = document.getElementById("navmenu-resources") as HTMLElement;
+    const hrefs = within(panel)
+      .getAllByRole("link", { hidden: true })
+      .map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(["/verify", "/test", "/play"]);
+  });
+
+  it("opens Resources on click and reveals the tutorial hub", async () => {
+    render(<NavMenus />);
+    await userEvent.click(trigger(/^resources$/i));
+    expect(trigger(/^resources$/i)).toHaveAttribute("aria-expanded", "true");
+    const panel = document.getElementById("navmenu-resources") as HTMLElement;
+    expect(panel).not.toHaveAttribute("hidden");
+    expect(within(panel).getByRole("link", { name: /webhook tutorials/i })).toHaveAttribute(
+      "href",
+      "/test",
+    );
+  });
+
+  it("opens only one menu at a time", async () => {
+    render(<NavMenus />);
+    await userEvent.click(trigger(/^product$/i));
+    expect(trigger(/^product$/i)).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(trigger(/^resources$/i));
+    expect(trigger(/^resources$/i)).toHaveAttribute("aria-expanded", "true");
+    expect(trigger(/^product$/i)).toHaveAttribute("aria-expanded", "false");
   });
 
   it("closes on Escape and restores focus to the trigger", async () => {

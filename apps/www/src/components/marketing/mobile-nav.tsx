@@ -4,7 +4,7 @@ import { Button, cn } from "@webhook-co/ui";
 import { Menu, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
-import { NAV_LINKS, PRODUCT_LINKS } from "@/components/marketing/nav-links";
+import { NAV_LINKS, PRODUCT_LINKS, RESOURCE_LINKS } from "@/components/marketing/nav-links";
 import { LINKS } from "@/lib/links";
 import { focusRing } from "@/lib/styles";
 
@@ -90,6 +90,17 @@ export function MobileNav() {
           <p className="px-3 pt-2 pb-1 font-mono text-xs tracking-tight text-fg-muted">Product</p>
           <ul>
             {PRODUCT_LINKS.map((link) => (
+              <li key={link.href}>
+                <a href={link.href} className={linkClass} onClick={() => close()}>
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+
+          <p className="px-3 pt-4 pb-1 font-mono text-xs tracking-tight text-fg-muted">Resources</p>
+          <ul>
+            {RESOURCE_LINKS.map((link) => (
               <li key={link.href}>
                 <a href={link.href} className={linkClass} onClick={() => close()}>
                   {link.label}
