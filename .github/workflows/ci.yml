@@ -153,7 +153,7 @@ jobs:
     needs: install
     services:
       postgres:
-        image: postgres:14
+        image: postgres:17
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -331,7 +331,7 @@ jobs:
     needs: install
     services:
       postgres:
-        image: postgres:14
+        image: postgres:17
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:

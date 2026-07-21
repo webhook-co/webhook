@@ -1,24 +1,36 @@
 #!/usr/bin/env node
-// Remote-DB test-safety guard. The packages/db suite runs twice with DIFFERENT privileges:
+// Remote-DB test-safety guard. The packages/db suite runs in two lanes, and since #728 BOTH give the
+// provider handle a NON-SUPERUSER role:
 //
-//   - locally / on the fast CI lane: a throwaway cluster whose provider role is the `postgres`
-//     SUPERUSER, which bypasses every ACL check;
-//   - nightly (`nightly-rls`): a real Neon branch whose provider role (`neondb_owner`) is NOT a
-//     superuser. It has BYPASSRLS and DML on the app tables, but it does NOT own them — it holds
-//     `webhook_owner` membership with inherit_option = f, so it does not carry the owner's rights.
+//   - locally / on the fast CI lane: `test_provider`, provisioned by packages/db/test/pg.ts on a
+//     PostgreSQL 17 cluster to match the shape below;
+//   - nightly (`nightly-rls`): a real Neon branch whose provider role is `neondb_owner`.
 //
-// Measured on the real Neon branch (2026-07-21), that provider role can do exactly this much:
+// Both hold BYPASSRLS + pg_read_all_data/pg_write_all_data and OWN NOTHING: they carry
+// `webhook_owner` membership with inherit_option = f, so they do not carry the owner's rights.
+//
+// MEASURED on the real Neon branch AND on the local PG17 cluster (2026-07-21) — identical, down to
+// the error wording:
 //
 //   SELECT/INSERT/UPDATE/DELETE on owner-owned tables .... true   (even where relacl is null)
-//   TRUNCATE ............................................. false  → R1
-//   owner-only DDL (CREATE TRIGGER/INDEX, ALTER TABLE …) . false  → R1
-//   EXECUTE on a function revoked from PUBLIC ............ false  → R5
+//   TRUNCATE ............................................. false  → R1   permission denied for table
+//   owner-only DDL (CREATE TRIGGER/INDEX, ALTER TABLE …) . false  → R1   must be owner of table
+//   EXECUTE on a function revoked from PUBLIC ............ false  → R5   permission denied for function
 //   pg_has_role(…, 'webhook_owner', 'USAGE') ............. false  (MEMBER = true, set_option = f)
+//   DROP TABLE (owner-owned) ............................. TRUE   — in BOTH; the provider owns the
+//                                                                  database, hence `public`, and a
+//                                                                  schema owner may drop within it
 //
-// Anything the local superuser papers over is therefore invisible until the NIGHTLY goes red — a run
-// cron'd for 07:17 UTC, but which GitHub queue-delays by hours and which has itself taken ~4h, so the
-// feedback is not merely slow, it lands at an unpredictable time the next day. This guard makes those
-// failure modes red at lint time instead. Each has already cost a
+// packages/db/test/provider-fidelity.test.ts asserts that table executably, on every PR. These rules
+// are therefore no longer the ONLY thing standing between a mistake and a red nightly — but they stay,
+// because a lint error at the offending line beats a test failure elsewhere, and because they cover
+// sources (the apps' *.pg.test.ts) that the fidelity test does not execute.
+//
+// Before #728 the local provider was the `postgres` SUPERUSER, which bypasses every ACL check — so
+// anything it papered over was invisible until the NIGHTLY went red: a run cron'd for 07:17 UTC, but
+// which GitHub queue-delays by hours and which has itself taken ~4h, so the feedback was not merely
+// slow, it landed at an unpredictable time the next day. This guard makes those failure modes red at
+// lint time instead. Each has already cost a
 // nightly: R1 is owner-only DDL on the provider handle — the 2026-07-12 `42501 permission denied
 // for table …` on TRUNCATE (#383), then the 2026-07-19/20 poison CREATE TRIGGER on `usage` (#637)
 // that the TRUNCATE-only first cut let straight through; R2 is the false-passing rate-limiter class
@@ -81,7 +93,7 @@ export function ownerHandles(src) {
  *
  * Both postgres.js spellings: a tagged template (``x`create trigger …` ``) and
  * `x.unsafe("create trigger …")`. `ddl` is the matched verb, normalised for the message.
- * @param {string} src @returns {{handle: string, line: number, ddl: string}[]}
+ * @param {string} src @returns {{handle: string, line: number, ddl: string, index: number}[]}
  */
 export function ownerOnlyDdlSites(src) {
   const ddl = String.raw`truncate|create\s+(?:or\s+replace\s+|constraint\s+)?trigger|drop\s+trigger|create\s+(?:unique\s+)?index|drop\s+index|alter\s+table|create\s+policy|drop\s+policy|comment\s+on`;
@@ -95,6 +107,7 @@ export function ownerOnlyDdlSites(src) {
       handle: m[1],
       line: src.slice(0, m.index).split("\n").length,
       ddl: m[2].replace(/\s+/g, " ").toLowerCase(),
+      index: m.index,
     });
   }
   return sites;
@@ -554,8 +567,16 @@ export function remoteSafetyViolations(file, rawSrc, fields) {
   // reach the nightly (#383), a poison CREATE TRIGGER on `usage` the second (#637) — same class,
   // same 42501, both invisible to a local superuser and to the TRUNCATE-only first cut of this rule.
   const owners = ownerHandles(src);
-  for (const { handle, line, ddl } of ownerOnlyDdlSites(src)) {
+  // A statement the test ASSERTS is rejected is not a mistake — it IS the denial being pinned, and
+  // the strongest form of that assertion issues it as the role that must be refused. Once the local
+  // provider is a non-superuser too (#728), those denials became directly testable on every PR, so
+  // R1 must not flag its own proof. Same span logic R5 already uses.
+  const allowed = expectedRejectionSpans(src);
+  const isAsserted = (/** @type {number} */ index) =>
+    allowed.some(([open, end]) => index > open && index < end);
+  for (const { handle, line, ddl, index } of ownerOnlyDdlSites(src)) {
     if (owners.has(handle)) continue;
+    if (isAsserted(index)) continue;
     violations.push(
       `${file}:${line}: issues \`${ddl}\` on \`${handle}\`, which is not bound to the schema owner in ` +
         `this file. ${ddl.toUpperCase()} requires OWNERSHIP of the table, and on the nightly's Neon ` +
