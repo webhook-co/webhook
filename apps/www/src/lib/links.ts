@@ -80,6 +80,12 @@ export const LINKS = {
   about: "/about",
   /** The no-signup sandbox. NOINDEX (robots) — a link to it is fine; the page's noindex keeps it out. */
   play: "/play",
+  /**
+   * The interactive signature verifier. Unlike `play`, this one IS indexable, so it needs real
+   * internal links: a page reachable only from `sitemap.xml` is crawled as an orphan no matter how
+   * good it is. Linked from the footer (site-wide) and contextually from `/product/verification`.
+   */
+  verify: "/verify",
 
   // ── external ─────────────────────────────────────────────────────────────
   openSource: REPO,

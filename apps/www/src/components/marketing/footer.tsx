@@ -27,6 +27,7 @@ const columns: { title: string; links: FooterLink[] }[] = [
     links: [
       { label: "Docs", href: LINKS.docs },
       { label: "Quickstart", href: LINKS.quickstart },
+      { label: "Signature verifier", href: LINKS.verify },
       { label: "API reference", href: LINKS.apiReference },
       { label: "CLI", href: LINKS.cli },
       { label: "MCP", href: LINKS.mcp },

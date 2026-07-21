@@ -48,7 +48,12 @@ export default function VerificationPage() {
             window. No matching key. When verification fails, the edge names the likely cause in
             plain language &mdash; not &ldquo;no signatures found matching the expected
             signature.&rdquo; The one you hit most, <code>RAW_BODY_MODIFIED</code>, usually means a
-            framework re-serialized the body before you verified it; the message says so.
+            framework re-serialized the body before you verified it; the message says so. You can
+            see it for yourself in the{" "}
+            <a href={LINKS.verify} className={proseLink}>
+              signature verifier
+            </a>{" "}
+            &mdash; it runs this same engine in your browser and names the reason.
           </p>
         </ProductFeature>
 
