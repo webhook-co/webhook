@@ -1049,3 +1049,70 @@ describe("client version advisory", () => {
     expect(await res.json()).toEqual({ items: [], nextCursor: null });
   });
 });
+
+// The internal weekly-review route is matched by hand in routeRequest, BEFORE the spec-driven `matchRoute`,
+// precisely so it stays out of the OpenAPI spec and the generated SDKs. That hand-wiring is exactly the kind
+// that can be deleted without a single test going red: activation-review.test.ts calls the handler directly,
+// so nothing else proves the router actually reaches it. These tests drive the real `handleRequest` entry so
+// removing the two lines in routeRequest turns them red.
+//
+// The tell is that a routing MISS returns a text/plain 404, while the handler returns 401 (bad token) or a
+// JSON 200 — statuses `matchRoute` can never produce for this path, since the path isn't in the spec.
+describe("handleRequest — internal activation weekly-review route registration", () => {
+  const PATH = "/v1/internal/activation/weekly";
+  const TOKEN = "internal-review-token";
+  const WEEK = { isoWeek: "2026-W29", activatedOrgs: 3 };
+
+  function depsWithReview(over: Partial<ApiDeps> = {}): ApiDeps {
+    return {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({}),
+      activationReview: {
+        token: async () => TOKEN,
+        read: async () => [WEEK] as never,
+      },
+      ...over,
+    };
+  }
+  const internalGet = (token: string | null): Request =>
+    new Request(`${RESOURCE}${PATH}`, {
+      headers: token === null ? {} : { authorization: `Bearer ${token}` },
+    });
+
+  it("routes GET /v1/internal/activation/weekly to the activation handler", async () => {
+    // The load-bearing assertion: a 200 with the weekly series can ONLY come from the hand-wired branch.
+    const res = await handleRequest(internalGet(TOKEN), depsWithReview());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ weeks: [WEEK] });
+  });
+
+  it("returns 401 (not a routing 404) when the bearer is missing or wrong", async () => {
+    // 401 proves the request reached the token gate rather than falling through to `matchRoute`.
+    for (const token of [null, "wrong-token"]) {
+      const res = await handleRequest(internalGet(token), depsWithReview());
+      expect(res.status).toBe(401);
+      expect(res.headers.get("www-authenticate")).toBe("Bearer");
+    }
+  });
+
+  it("ships dark — 404 when the review dep is unbound", async () => {
+    const res = await handleRequest(internalGet(TOKEN), {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({}),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("routes ONLY GET — the same path on another verb stays a plain routing 404", async () => {
+    // Guards the `request.method === "GET"` half of the match: a POST must not reach the review handler.
+    const res = await handleRequest(
+      new Request(`${RESOURCE}${PATH}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+      }),
+      depsWithReview(),
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+  });
+});
