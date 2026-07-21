@@ -360,8 +360,11 @@ test("ownerOnlyFunctions derives the set from the REAL migrations (exactly the r
   assert.ok(migrations.length > 90, `expected the migration set, got ${migrations.length}`);
   const acl = ownerOnlyFunctions(migrations.map((m) => m.src));
   assert.deepEqual([...acl.keys()], ["activation_weekly_review"]);
-  // Revoked from PUBLIC and granted to NO role ⇒ the schema owner is the only caller.
-  assert.deepEqual([...acl.get("activation_weekly_review")], []);
+  // Revoked from PUBLIC by 0092, granted back to exactly ONE least-privilege role by 0093 — so the
+  // entitled callers are {webhook_owner, webhook_activation_reviewer}. This list is DERIVED from the
+  // migrations, never hand-written here: when 0093 landed, this assertion flipped on its own, which is
+  // precisely the property that keeps R5 honest as the schema moves.
+  assert.deepEqual([...acl.get("activation_weekly_review")], ["webhook_activation_reviewer"]);
 });
 
 test("FLOOR: ownerOnlyFunctions over zero migrations derives nothing (main() must fail closed)", () => {

@@ -32,9 +32,14 @@ export interface ActivationWeeklyReviewRow {
 /**
  * Read the activation weekly review, one row per ISO week, oldest→newest. Calls activation_weekly_review()
  * (SECURITY DEFINER, migration 0092), which reads the three activation tables cross-org via `to webhook_owner`
- * policies and excludes activation_org_exclusions — so `sql` MUST be an OWNER (or superuser) connection:
- * webhook_app is denied EXECUTE by design (private-by-default — platform-wide aggregates never reach the
- * request-path role). The result carries no org_id and no PII.
+ * policies and excludes activation_org_exclusions.
+ *
+ * `sql` must be a connection holding EXECUTE on that function. 0092 revokes it from PUBLIC and 0093 grants it
+ * back to exactly one role, so that means the SCHEMA OWNER or `webhook_activation_reviewer` — the
+ * least-privilege reader the internal endpoint opens over its Hyperdrive, and the caller this is written for.
+ * webhook_app is denied by design (private-by-default — platform-wide aggregates never reach the request-path
+ * role), and so is a managed provider role that merely holds owner MEMBERSHIP without inheriting it (#717).
+ * The result carries no org_id and no PII.
  */
 export async function readActivationWeeklyReview(sql: Sql): Promise<ActivationWeeklyReviewRow[]> {
   const rows = await sql<

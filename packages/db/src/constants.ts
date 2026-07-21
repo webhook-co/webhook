@@ -174,4 +174,17 @@ export const DB_ROLES = {
    * `ingest_paused` pause.
    */
   capReconciler: "webhook_capreconciler",
+  /**
+   * The founder's activation weekly-review reader (ADR-0127 / migration 0093). The least-privilege role
+   * behind the internal `GET /v1/internal/activation/weekly` endpoint, which opens its own connection over
+   * the reviewer Hyperdrive and calls `activation_weekly_review()` — a SECURITY DEFINER, AGGREGATE-ONLY
+   * function (per-week counts + TTFV percentiles; never an org_id, never PII).
+   *
+   * Its entire privilege set is USAGE on schema public + EXECUTE on that ONE function. It holds NO table
+   * grants at all — not even SELECT on the three activation tables — because the definer does the reading;
+   * so a leaked reviewer credential yields exactly the aggregate series the endpoint already returns, and
+   * nothing per-tenant. This is the first EXECUTE grant in the schema aimed at a least-privilege role rather
+   * than webhook_app. NON-OWNER, NOSUPERUSER, NOBYPASSRLS. Password injected out of band.
+   */
+  activationReviewer: "webhook_activation_reviewer",
 } as const;
