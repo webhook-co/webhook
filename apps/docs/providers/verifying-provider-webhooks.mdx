@@ -16,6 +16,8 @@ A naive verifier trusts the request to say who signed it. webhook.co doesn't. De
 3. It runs the adapters for the providers you registered, trying the header-detected hint first, then the rest. Each adapter recomputes the signature over the **exact captured bytes** and constant-time-compares.
 4. The first adapter to match wins; the event is marked `verified` (or `authenticated`). If none matches, the event is still captured — it's just unverified.
 
+The same adapters run in the browser on the [signature verifier](https://www.webhook.co/verify), so you can check a captured signature against its payload and secret yourself — nothing you paste there leaves the page.
+
 Signing over the exact captured bytes matters: a re-encoded or re-serialized body changes the signature. webhook.co verifies what actually arrived, byte for byte, which is why an event stored here can still be replayed and re-checked later.
 
 ## The registry: 142 providers
