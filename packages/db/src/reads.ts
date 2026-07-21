@@ -5,6 +5,7 @@
 // shared camelCase entity schemas, which also validate the row shape.
 
 import {
+  canonicalProvider,
   DedupConfigSchema,
   deriveVerificationState,
   type DedupStrategy,
@@ -372,7 +373,11 @@ function toEventSummary(r: EventRow): EventSummary {
     orgId: r.org_id,
     endpointId: r.endpoint_id,
     receivedAt: r.received_at,
-    provider: r.provider,
+    // `events.provider` is plain `text` and holds whatever the registry called the provider when the
+    // event was captured, so a row can still name a RETIRED slug. `EventSummarySchema` is strict, and
+    // an un-canonicalised legacy value would throw here — breaking the whole events list for the org,
+    // not just that row. Resolving it to the live slug is also what makes the provider FILTER agree.
+    provider: canonicalProvider(r.provider),
     dedupKey: r.dedup_key,
     dedupStrategy: r.dedup_strategy,
     verified: r.verified,
@@ -826,7 +831,7 @@ export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> 
     orgId: r.org_id,
     endpointId: r.endpoint_id,
     receivedAt: r.received_at,
-    provider: r.provider,
+    provider: canonicalProvider(r.provider), // retired slug -> live slug; see toEventSummary
     dedupKey: r.dedup_key,
     dedupStrategy: r.dedup_strategy,
     verified: r.verified,

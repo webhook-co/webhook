@@ -50,7 +50,10 @@ const CASES: readonly Case[] = [
     msg: (ts, body) => `v0:${ts}:${body}`,
   },
   {
-    slug: "customerio",
+    // Retargeted from the retired duplicate slug `customerio`. This row is the ONLY replay-window and
+    // signature-header-metadata coverage Customer.io has (s8-crypto-finds covers verify + the `v0:`
+    // framing only), so it moves to the surviving slug rather than being deleted with the duplicate.
+    slug: "customer_io",
     sigHeader: "x-cio-signature",
     enc: "hex",
     headers: (ts, sig) => [

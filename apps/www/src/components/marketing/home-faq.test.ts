@@ -44,7 +44,7 @@ describe("the homepage FAQ", () => {
       /real-time/i,
       /blocks? until/i, // the false agent-trigger push framing
       /free,? (and )?permanent/i,
-      /cryptographically verified/i, // ~14 of the 142 are token/basic auth, not HMAC
+      /cryptographically verified/i, // ~14 of the 141 are token/basic auth, not HMAC
     ]) {
       expect(text, `must not claim ${forbidden}`).not.toMatch(forbidden);
     }

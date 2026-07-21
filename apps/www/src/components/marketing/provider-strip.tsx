@@ -7,15 +7,15 @@ import { LINKS } from "@/lib/links";
 import { container, focusRing, sectionPad } from "@/lib/styles";
 
 /**
- * The homepage's provider proof: a recognisable HANDFUL, then a way through to all 142.
+ * The homepage's provider proof: a recognisable HANDFUL, then a way through to all 141.
  *
- * The full 142-chip wall used to live here. It didn't earn the space: at that length it stops being
+ * The full 141-chip wall used to live here. It didn't earn the space: at that length it stops being
  * a fact you absorb and becomes a wall you scroll past — and it cost the homepage ~57KB gzipped of
  * inline path data. The complete inventory now lives on /product/verification, which is the page
  * actually about verification; the homepage makes the claim and points at the evidence.
  *
  * FEATURED is a curated subset, not a ranking — the names a developer is most likely to recognise, so
- * the claim lands without 142 chips. Every slug is checked against the real registry by
+ * the claim lands without 141 chips. Every slug is checked against the real registry by
  * `provider-strip.test.tsx`: we never show a provider we cannot actually verify.
  */
 const FEATURED = [

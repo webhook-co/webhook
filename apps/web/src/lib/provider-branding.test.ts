@@ -20,6 +20,26 @@ describe("provider branding completeness", () => {
     }
   });
 
+  // THE DUPLICATE GUARD. `customer_io` and `customerio` both shipped for the same real provider, with
+  // byte-identical schemes, and nothing caught it: the recipes drift test checks slugs are UNIQUE, which
+  // two different strings trivially are. What actually marks a duplicate is two slugs claiming the same
+  // BRAND — providers legitimately share a scheme (github and meta are both raw-body HMAC on
+  // x-hub-signature-256), so the scheme alone proves nothing. The display name is the discriminator, and
+  // this file is the only place that sees both the registry and the branding.
+  it("no two registered providers claim the same display name", () => {
+    const byName = new Map<string, string[]>();
+    for (const slug of PROVIDERS) {
+      const name = providerDisplayName(slug);
+      byName.set(name, [...(byName.get(name) ?? []), slug]);
+    }
+    const clashes = [...byName.entries()].filter(([, slugs]) => slugs.length > 1);
+    expect(
+      clashes,
+      `two slugs render as the same provider, so a picker shows it twice: ${JSON.stringify(clashes)}`,
+    ).toEqual([]);
+    expect(byName.size, "non-vacuous: the registry must be non-empty").toBeGreaterThan(0);
+  });
+
   it("resolves names: known slug → display name, null → placeholder, unknown → humanised", () => {
     expect(providerDisplayName("stripe")).toBe("Stripe");
     expect(providerDisplayName("mercado_pago")).toBe("Mercado Pago");

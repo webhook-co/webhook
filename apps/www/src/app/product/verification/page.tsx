@@ -12,11 +12,11 @@ import { proseLink } from "@/lib/styles";
 export const metadata = pageMetadata({
   path: "/product/verification",
   title: "Verification",
-  // "checked", not "verified" — ~14 of the 142 only offer a shared token and land on the weaker
-  // "authenticated" state, so a standalone SERP snippet must not imply all 142 are cryptographically
+  // "checked", not "verified" — ~14 of the 141 only offer a shared token and land on the weaker
+  // "authenticated" state, so a standalone SERP snippet must not imply all 141 are cryptographically
   // verified (the page body makes the four-state distinction; the description can't rely on it).
   description:
-    "142 providers checked at the edge. Every event lands in one of four states, and when a signature fails we name the likely reason — one of eleven codes — with the fix.",
+    "141 providers checked at the edge. Every event lands in one of four states, and when a signature fails we name the likely reason — one of eleven codes — with the fix.",
 });
 
 export default function VerificationPage() {
@@ -24,7 +24,7 @@ export default function VerificationPage() {
     <ProductShell
       eyebrow="verification"
       title="When a signature fails, you'll know why"
-      lede="142 providers, checked at the edge. Every event lands in one of four states — and when a signature doesn't match, we name the likely reason, one of eleven codes, with the fix, instead of a bare match/no-match."
+      lede="141 providers, checked at the edge. Every event lands in one of four states — and when a signature doesn't match, we name the likely reason, one of eleven codes, with the fix, instead of a bare match/no-match."
       path="/product/verification"
       name="Verification"
       visual={<VerifyCard />}
@@ -36,7 +36,7 @@ export default function VerificationPage() {
           <p>
             An event is <strong>verified</strong>, <strong>authenticated</strong>,{" "}
             <strong>failed</strong>, or <strong>unattempted</strong> &mdash; four states, not two.
-            Roughly 14 of the 142 providers only offer a shared token rather than a real signature,
+            Roughly 14 of the 141 providers only offer a shared token rather than a real signature,
             so those land on the weaker <strong>authenticated</strong>, and we tell you that plainly
             rather than calling it verified.
           </p>
@@ -73,7 +73,7 @@ export default function VerificationPage() {
         </ProductFeature>
       </ProductFeatures>
 
-      {/* The claim used to be a CARD that said "142 providers in one open registry". Showing the 142
+      {/* The claim used to be a CARD that said "141 providers in one open registry". Showing the 141
           is a better argument than asserting them — so the full registry lives here, on the page it
           is actually about. The homepage shows a recognisable few and links through. */}
       <ProviderWall />

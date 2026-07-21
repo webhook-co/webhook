@@ -120,6 +120,9 @@ export const EventSummarySchema = z.object({
   orgId: uuid,
   endpointId: uuid,
   receivedAt: z.coerce.date(),
+  // Strict on purpose: a retired slug is resolved to its live replacement by `canonicalProvider`
+  // in the DB read mapper, so one can never reach this schema — and therefore never reaches the
+  // API, the generated SDKs, or the dashboard's provider branding.
   provider: ProviderSchema.nullable(),
   dedupKey: z.string(),
   dedupStrategy: DedupStrategySchema,

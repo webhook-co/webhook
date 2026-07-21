@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 
 import { CapabilityFault } from "@webhook-co/contract";
 import {
+  canonicalProvider,
   PROVIDERS,
   serializeProviderSecretPlaintext,
   validateProviderSecretShape,
@@ -450,7 +451,10 @@ export async function listEndpointProviderSecrets(
   });
   return rows.map((r) => ({
     id: r.id,
-    provider: r.provider,
+    // A secret registered before a slug was retired still verifies (the engine canonicalises too), so
+    // report it under the live slug rather than the dead one — `ProviderSecretSummarySchema.provider`
+    // is strict, and the raw value would fail validation at the API edge for the whole list.
+    provider: canonicalProvider(r.provider) ?? r.provider,
     status: r.status,
     label: r.label,
     createdAt: r.created_at,

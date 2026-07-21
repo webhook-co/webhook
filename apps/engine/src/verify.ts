@@ -20,11 +20,11 @@
 
 import { type CachedSealedSecret, fromCachedSealedSecret } from "@webhook-co/db";
 import {
+  canonicalProvider,
   getAdapterForScheme,
   type KeyFetcher,
   parseBraintreePublicKey,
   parseVerifyTokenSecret,
-  PROVIDERS,
   type Provider,
   type SecretStore,
   type VerificationResult,
@@ -36,12 +36,6 @@ const UNVERIFIED: VerificationOutcome = { verified: false, verification: null };
 
 /** Optional structured-log sink for skipped-unseal observability (never receives plaintext). */
 export type VerifyLog = (event: string, fields: Record<string, unknown>) => void;
-
-/** Canonicalize the free-text `provider` column to a known Provider, or null if unrecognized. */
-function canonicalProvider(raw: string): Provider | null {
-  const canon = raw.trim().toLowerCase();
-  return (PROVIDERS as readonly string[]).includes(canon) ? (canon as Provider) : null;
-}
 
 /**
  * The distinct providers registered on this endpoint, in the order to try them: the header-detected

@@ -119,7 +119,7 @@ describe("product pages", () => {
 
       // The meta description + title are the SERP/social snippet — a surface that renders standalone,
       // WITHOUT the page body's qualifiers, and that render(<Page/>) never mounts. An overclaim here
-      // (e.g. "142 verified", "SOC 2 compliant") is exactly where a regression hides, so scan it too.
+      // (e.g. "141 verified", "SOC 2 compliant") is exactly where a regression hides, so scan it too.
       it("makes no forbidden claim in its meta title/description either", () => {
         const snippet = `${String(meta.title ?? "")} ${String(meta.description ?? "")}`;
         for (const pattern of FORBIDDEN) {
@@ -130,7 +130,7 @@ describe("product pages", () => {
         }
       });
 
-      // axe walks the full page DOM — and /product/verification now renders the 142-provider registry.
+      // axe walks the full page DOM — and /product/verification now renders the 141-provider registry.
       // ~0.7s locally, ~13s on CI's slower runner, which blew vitest's 5s default. This raises the TIME
       // LIMIT only: the scan still runs and must still find zero violations.
       it("has no accessibility violations", async () => {

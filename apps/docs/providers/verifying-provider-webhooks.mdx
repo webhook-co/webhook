@@ -1,7 +1,7 @@
 ---
 title: "Verifying provider webhooks"
 sidebarTitle: "How verification works"
-description: "How webhook.co picks a signature scheme, the 142-provider registry, automatic handshakes, and the four verification states."
+description: "How webhook.co picks a signature scheme, the 141-provider registry, automatic handshakes, and the four verification states."
 icon: "shield-check"
 ---
 
@@ -20,11 +20,11 @@ The same adapters run in the browser on the [signature verifier](https://www.web
 
 Signing over the exact captured bytes matters: a re-encoded or re-serialized body changes the signature. webhook.co verifies what actually arrived, byte for byte, which is why an event stored here can still be replayed and re-checked later.
 
-## The registry: 142 providers
+## The registry: 141 providers
 
-Every provider webhook.co recognizes lives in a single registry of **142 providers**. Two kinds of entry sit behind that number:
+Every provider webhook.co recognizes lives in a single registry of **141 providers**. Two kinds of entry sit behind that number:
 
-- **109 are one declarative config row** — a header name, a digest (SHA-256, SHA-1, or SHA-512), an encoding, and how the signed message is assembled. Every one runs through the same audited HMAC core, so the per-provider surface is data, not code.
+- **108 are one declarative config row** — a header name, a digest (SHA-256, SHA-1, or SHA-512), an encoding, and how the signed message is assembled. Every one runs through the same audited HMAC core, so the per-provider surface is data, not code.
 - **33 are hand-written adapters** — the schemes that don't reduce to a single HMAC recipe: JWT (HS256), asymmetric signatures (Ed25519, ECDSA, RSA), remote-key-fetch (the verification key is fetched from the provider and host-pinned), request-context HMAC (signing the URL, form fields, or specific body fields), and non-cryptographic token/basic authenticity.
 
 A new provider is usually one config row, which is why the list grows quickly. See the full list in the [provider directory](/providers/directory).
@@ -63,7 +63,7 @@ The [provider directory](/providers/directory) is generated from the same regist
   </Card>
 
 <Card title="Provider directory" icon="table-list" href="/providers/directory">
-  All 142 providers, their slugs, schemes, and headers.
+  All 141 providers, their slugs, schemes, and headers.
 </Card>
 
 <Card title="Custom or unlisted provider" icon="puzzle-piece" href="/providers/custom">

@@ -7,9 +7,9 @@ import { axeComponent } from "@/test/axe";
 import { PROVIDER_ENTRIES } from "./provider-entries";
 import { ProviderStrip } from "./provider-strip";
 
-// The homepage shows a curated handful of providers rather than all 142. A curated list is exactly
+// The homepage shows a curated handful of providers rather than all 141. A curated list is exactly
 // where a marketing site starts lying — showing a recognisable brand it cannot actually verify. So
-// every featured slug is checked against the real registry, and the "142" is derived, never typed.
+// every featured slug is checked against the real registry, and the "141" is derived, never typed.
 
 const REGISTRY = new Set<string>(PROVIDERS);
 

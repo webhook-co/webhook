@@ -81,6 +81,19 @@ async function braintreeSigHex(secret: string, payload: string): Promise<string>
   return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** HMAC-SHA256 over an arbitrary signed string, hex-encoded — the shape most config-driven adapters use. */
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 const T = 1_750_000_000; // fixed signing timestamp
 const at = (): Date => new Date(T * 1000); // verify clock == signing time (skew 0)
 
@@ -391,5 +404,36 @@ describe("makeVerifyIngest", () => {
     });
     expect(outcome.verified).toBe(true);
     expect(outcome.provider).toBe("github");
+  });
+
+  it("still verifies a secret registered under a RETIRED slug, and names the live provider", async () => {
+    // The silent-failure case that motivates `canonicalProvider`. `customerio` was a duplicate registry
+    // entry for `customer_io` and has been removed, but `provider_secrets.provider` is free text, so an
+    // endpoint registered before the removal still holds the dead slug. Selection is driven by the
+    // REGISTERED provider, and an unresolvable one is DROPPED rather than rejected — so without the
+    // alias this endpoint would not error and would not warn: it would simply stop verifying, and its
+    // events would start landing unverified. Migration 0095 rewrites the row, but the code must not
+    // depend on the migration having run first.
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const SECRET = "cio-signing-secret";
+    const legacy = await sealAs(store, SECRET, "sec-cio", "customerio"); // the RETIRED slug
+    const body = `{"event_id":"01","object_type":"customer"}`;
+    const sig = await hmacHex(SECRET, `v0:${T}:${body}`); // Customer.io signs `v0:{ts}:{body}`
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [
+        ["x-cio-timestamp", String(T)],
+        ["x-cio-signature", sig],
+      ],
+      provider: null,
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [legacy],
+    });
+    expect(outcome.verified, "a legacy `customerio` secret stopped verifying").toBe(true);
+    // And the event is recorded under the LIVE slug, so nothing downstream sees the dead one.
+    expect(outcome.provider).toBe("customer_io");
   });
 });
