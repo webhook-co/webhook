@@ -29,7 +29,7 @@ export interface MarketingRoute {
 
 // Bump on substantive content changes. A fixed constant (not `new Date()`) so the emitted sitemap
 // bytes are deterministic — the built-HTML SEO check asserts stable output.
-export const SITEMAP_LAST_MODIFIED = "2026-07-11";
+export const SITEMAP_LAST_MODIFIED = "2026-07-21";
 
 export const MARKETING_ROUTES: readonly MarketingRoute[] = [
   {
@@ -63,6 +63,52 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     a11y: true,
     sitemap: true,
   },
+  // Per-provider "test X webhooks locally" tutorials. Authored, not generated — see `lib/tutorials.ts`
+  // for why a template cannot produce these. Each row makes its page sitemapped, SEO-checked, axe-scanned
+  // in both themes, and overflow-checked on a phone; `tutorials.test.ts` asserts every tutorial has one.
+  {
+    path: "/test/discord",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/slack",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/stripe",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/github",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/shopify",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/atlassian_jira",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+
   // The /play sandbox: NOINDEX (sitemap:false + a robots noindex on the page) because it renders
   // ephemeral user-generated capture content that must never be indexed under the brand. Still a11y-
   // scanned. Not in the sitemap → the built-HTML SEO gate (which walks the sitemap) skips it, so its

@@ -12,6 +12,9 @@
 // sc-domain:webhook.co (added under Search Console → Users and permissions). It is READ-ONLY
 // (webmasters.readonly scope) — it cannot change anything in Search Console.
 //
+// The token endpoint is PINNED (GOOGLE_TOKEN_URI), not read from the key file: the token request carries
+// a signed assertion for the service account, so a tampered key must not be able to redirect it.
+//
 // Pure helpers (claims/JWT/row formatting/path filtering) are exported + unit-tested WITHOUT network;
 // the fetch calls take an injectable `fetchImpl` so the test never touches Google.
 
@@ -27,6 +30,40 @@ export const SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 export const PROVIDER_PATH_PREFIXES = ["/test/", "/verify", "/providers/"];
 
 const API_BASE = "https://searchconsole.googleapis.com/webmasters/v3";
+
+/**
+ * Google's service-account token endpoint. This is a constant of the platform, not a per-key value —
+ * every key Google issues carries exactly this `token_uri`. We PIN it rather than follow the key file
+ * because the token request carries a signed RS256 assertion for a real service account: a tampered or
+ * typo'd key file must not be able to steer that credential to an attacker-chosen host.
+ */
+export const GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token";
+
+/**
+ * The token endpoint to use for `sa` — always the pinned constant, never the key file's string. A key
+ * declaring a different `token_uri` is refused loudly; the only ways that happens are a tampered file or
+ * a non-Google key, and neither should reach the network.
+ *
+ * Both the fetch URL and the JWT `aud` claim come from here, and they must never diverge: Google
+ * validates `aud` against its own token endpoint, so pinning the URL while leaving `aud` tainted breaks
+ * every real run, and pinning `aud` while leaving the URL tainted would hand an attacker an assertion
+ * that REPLAYS at Google. Returning the literal (rather than the checked input) is also what keeps
+ * file-derived data out of the outbound request entirely — see CodeQL js/file-access-to-http.
+ */
+export function tokenEndpoint(sa) {
+  const declared = sa?.token_uri;
+  if (declared !== undefined && declared !== GOOGLE_TOKEN_URI) {
+    // Deliberately does NOT echo the offending value: this message reaches console.error, and the value
+    // came out of the credential blob, so quoting it would put key-file-derived data into a log
+    // (CodeQL js/clear-text-logging). Naming the field is enough to find it.
+    throw new Error(
+      `Refusing a non-Google token endpoint: the service-account key's "token_uri" is not ` +
+        `${GOOGLE_TOKEN_URI}. Inspect that field in the key named by GSC_SERVICE_ACCOUNT_KEY / ` +
+        `GSC_SERVICE_ACCOUNT_KEY_FILE — if the key is genuine, the file has been tampered with.`,
+    );
+  }
+  return GOOGLE_TOKEN_URI;
+}
 
 /** base64url of a string/Buffer (no padding). */
 export function b64url(input) {
@@ -51,7 +88,7 @@ export function buildJwtClaims(clientEmail, tokenUri, nowSec) {
 /** Sign a service-account JWT (RS256) for the token exchange. */
 export function signServiceAccountJwt(sa, nowSec) {
   const signingInput = `${b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${b64url(
-    JSON.stringify(buildJwtClaims(sa.client_email, sa.token_uri, nowSec)),
+    JSON.stringify(buildJwtClaims(sa.client_email, tokenEndpoint(sa), nowSec)),
   )}`;
   const signature = b64url(createSign("RSA-SHA256").update(signingInput).sign(sa.private_key));
   return `${signingInput}.${signature}`;
@@ -62,8 +99,9 @@ export async function getAccessToken(
   sa,
   { fetchImpl = fetch, nowSec = Math.floor(Date.now() / 1000) } = {},
 ) {
+  const endpoint = tokenEndpoint(sa); // throws before anything is signed or sent
   const jwt = signServiceAccountJwt(sa, nowSec);
-  const res = await fetchImpl(sa.token_uri, {
+  const res = await fetchImpl(endpoint, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({

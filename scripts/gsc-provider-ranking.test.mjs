@@ -6,12 +6,14 @@ import {
   buildJwtClaims,
   formatRow,
   getAccessToken,
+  GOOGLE_TOKEN_URI,
   isProviderPage,
   isoDaysAgo,
   loadServiceAccount,
   querySearchAnalytics,
   SCOPE,
   signServiceAccountJwt,
+  tokenEndpoint,
 } from "./gsc-provider-ranking.mjs";
 
 // A throwaway RSA key so the real RS256 signing path is exercised (never a real credential).
@@ -21,6 +23,11 @@ const SA = {
   token_uri: "https://oauth2.googleapis.com/token",
   private_key: privateKey.export({ type: "pkcs8", format: "pem" }),
 };
+
+// A key file whose `token_uri` has been tampered with (or typo'd from a bad setup guide). The token
+// request carries a signed RS256 assertion for a real service account, so this value must never be
+// allowed to steer an outbound request — see the pin in gsc-provider-ranking.mjs.
+const TAMPERED = { ...SA, token_uri: "https://evil.example.com/token" };
 
 test("buildJwtClaims: correct iss/scope/aud + 1-hour expiry", () => {
   const c = buildJwtClaims(SA.client_email, SA.token_uri, 1000);
@@ -117,6 +124,57 @@ test("querySearchAnalytics: returns rows and throws on API error", async () => {
     () => querySearchAnalytics("tok", {}, { fetchImpl: err }),
     /GSC query failed/,
   );
+});
+
+test("tokenEndpoint: returns the pinned constant for a genuine key, throws otherwise", () => {
+  assert.equal(GOOGLE_TOKEN_URI, "https://oauth2.googleapis.com/token");
+  assert.equal(tokenEndpoint(SA), GOOGLE_TOKEN_URI);
+  // A key with no token_uri at all still uses the pin rather than reaching `undefined`.
+  assert.equal(tokenEndpoint({}), GOOGLE_TOKEN_URI);
+  // The refusal names the offending FIELD and the expected constant...
+  assert.throws(
+    () => tokenEndpoint(TAMPERED),
+    /"token_uri" is not https:\/\/oauth2\.googleapis\.com/,
+  );
+  // ...but must never echo the value itself: this message is console.error'd, and the value came out of
+  // the credential blob, so quoting it would log key-file-derived data.
+  // NB the needle is the fixture's field, never an inline host literal — `includes("<a.host>")` reads to
+  // CodeQL as an incomplete-URL-substring sanitizer (js/incomplete-url-substring-sanitization) even in a
+  // test, and a high-severity alert for a fake host is still an alert.
+  let refusal = "";
+  try {
+    tokenEndpoint(TAMPERED);
+  } catch (e) {
+    refusal = e.message;
+  }
+  assert.ok(
+    refusal.length > 0 && !refusal.includes(TAMPERED.token_uri),
+    "the refusal must not echo the key file's token_uri into the error message",
+  );
+});
+
+test("getAccessToken: refuses a tampered token_uri and never contacts the attacker host", async () => {
+  let calledUrl = null;
+  const fetchImpl = async (url) => {
+    calledUrl = url;
+    return { json: async () => ({ access_token: "tok_123" }) };
+  };
+  await assert.rejects(
+    () => getAccessToken(TAMPERED, { fetchImpl, nowSec: 1000 }),
+    /non-Google token endpoint/,
+  );
+  assert.equal(calledUrl, null, "no request may be made with a non-Google token endpoint");
+});
+
+// The fetch URL and the JWT `aud` claim must derive from the SAME pin. Pinning only `aud` would hand an
+// attacker a Google-replayable assertion; pinning only the URL would break every real run, because
+// Google validates `aud` against its own token endpoint.
+test("signServiceAccountJwt: aud is the pinned endpoint, never the key file's value", () => {
+  assert.throws(() => signServiceAccountJwt(TAMPERED, 1000), /non-Google token endpoint/);
+  const claims = JSON.parse(
+    Buffer.from(signServiceAccountJwt(SA, 1000).split(".")[1], "base64url").toString(),
+  );
+  assert.equal(claims.aud, GOOGLE_TOKEN_URI);
 });
 
 test("loadServiceAccount: reads env JSON, else throws with guidance", () => {
