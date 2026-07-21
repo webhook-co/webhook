@@ -3,7 +3,7 @@
     "collect": {
       "startServerCommand": "node playwright/serve.mjs",
       "startServerReadyPattern": "serving",
-      "url": ["http://127.0.0.1:4321/"],
+      "url": ["http://127.0.0.1:4321/", "http://127.0.0.1:4321/verify"],
       "numberOfRuns": 5
     },
     "assert": {

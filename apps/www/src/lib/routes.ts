@@ -53,6 +53,16 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     a11y: true,
     sitemap: true,
   },
+  // The interactive signature verifier — an indexable tool page (unlike /play, which is a noindex
+  // sandbox). High priority: it's the programmatic-SEO lane's differentiator (the recipe/verify asset
+  // competitors lack) and runs the real engine entirely client-side.
+  {
+    path: "/verify",
+    changeFrequency: "monthly",
+    priority: 0.8,
+    a11y: true,
+    sitemap: true,
+  },
   // The /play sandbox: NOINDEX (sitemap:false + a robots noindex on the page) because it renders
   // ephemeral user-generated capture content that must never be indexed under the brand. Still a11y-
   // scanned. Not in the sitemap → the built-HTML SEO gate (which walks the sitemap) skips it, so its

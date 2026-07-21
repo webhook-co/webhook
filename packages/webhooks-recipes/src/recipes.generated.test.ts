@@ -55,4 +55,27 @@ describe("recipes.generated.ts — golden drift + coverage", () => {
       expect(r.verifierInputs).toContain("payload");
     }
   });
+
+  // The interactive verifier renders an input ONLY for headers a recipe declares in `signedHeaders`. A
+  // `header:X` message part that isn't declared is a provider the tool OFFERS but can never verify — the
+  // adapter fails MISSING_HEADER/MALFORMED forever because the value can't be entered. keygen shipped
+  // exactly that way (`header:host`/`header:date` undeclared), so this is the standing floor.
+  it("every header folded into a client-verifiable signed message is declared collectable", () => {
+    let checked = 0;
+    for (const r of buildAllRecipes()) {
+      if (!r.clientVerifiable) continue;
+      const declared = new Set((r.signedHeaders ?? []).map((h) => h.toLowerCase()));
+      for (const part of r.signedMessageParts) {
+        if (!part.startsWith("header:")) continue;
+        checked++;
+        const name = part.slice("header:".length).toLowerCase();
+        expect(
+          declared.has(name),
+          `${r.slug}: signs "${part}" but does not declare it in signedHeaders — the verifier cannot collect it`,
+        ).toBe(true);
+      }
+    }
+    // Floor: a vacuous loop would make this guard a lie.
+    expect(checked).toBeGreaterThan(0);
+  });
 });

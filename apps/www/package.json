@@ -23,6 +23,8 @@
   "dependencies": {
     "@webhook-co/shared": "workspace:*",
     "@webhook-co/ui": "workspace:*",
+    "@webhook-co/webhooks-recipes": "workspace:*",
+    "@webhook-co/webhooks-spec": "workspace:*",
     "geist": "^1.7.2",
     "lucide-react": "^1.24.0",
     "motion": "^12.42.2",
@@ -46,7 +48,6 @@
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/openapi": "workspace:*",
     "@webhook-co/shared": "workspace:*",
-    "@webhook-co/webhooks-spec": "workspace:*",
     "axe-core": "^4.12.1",
     "jsdom": "^29.1.1",
     "linkedom": "^0.18.13",

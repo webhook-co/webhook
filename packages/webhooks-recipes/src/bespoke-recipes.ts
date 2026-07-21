@@ -136,6 +136,9 @@ export const BESPOKE_RECIPES: Record<string, RecipeDescriptor> = {
     rotation: false,
     clientVerifiable: true,
     verifierInputs: ["secret", "payload", "signatureHeader", "requestUrl", "method"],
+    // The cavage `headers` list names these; the adapter reads each off the request and fails
+    // MALFORMED ("signed header X is absent") without them, so the verifier MUST collect them.
+    signedHeaders: ["host", "date"], // bespoke/keygen.ts:62-92 (findHeader per token)
     quirks: [
       'The registered "secret" is the account\'s Ed25519 PUBLIC key (hex), not a shared secret.', // bespoke/keygen.ts:12-13
       "Ed25519 over an HTTP Message Signatures / draft-cavage signing string, NOT a raw-body HMAC — request-context (needs HTTP method + URL for `(request-target)`).", // bespoke/keygen.ts:1-4,69-82
@@ -321,6 +324,9 @@ export const BESPOKE_RECIPES: Record<string, RecipeDescriptor> = {
     rotation: false,
     clientVerifiable: true,
     verifierInputs: ["secret", "payload", "signatureHeader", "requestUrl", "method", "timestamp"],
+    // Names the DYNAMIC set of headers folded into the canonical request; the adapter fails MALFORMED
+    // without it, and each header it names must be supplied too.
+    signedHeaders: ["x-contentful-signed-headers"], // bespoke/contentful.ts:57-59,88-97
     quirks: [
       "The signed message's header section is DYNAMIC: `x-contentful-signed-headers` lists which headers are folded in, so the canonical string shape varies per request.", // bespoke/contentful.ts:1-8
       "Canonical = `METHOD\\nNORMALIZED_PATH\\nHEADERS_SECTION\\nRAW_BODY`; signed headers are `key:value`, key lowercased+trimmed, sorted by key, joined by `;` (the signed-headers HEADER itself uses `,`).", // bespoke/contentful.ts:6-12,88-106
@@ -342,12 +348,20 @@ export const BESPOKE_RECIPES: Record<string, RecipeDescriptor> = {
     keyDerivation: "registered secret is the Plivo Auth Token, verbatim UTF-8 HMAC key", // bespoke/plivo.ts:14,109
     signedMessage:
       "`{base_url}.{nonce}` — base_url = `scheme://host[:port]/path` plus URL-decoded sorted query (GET) and, for POST, sorted form fields glued conditionally with `?`/`.`; nonce = `X-Plivo-Signature-V3-Nonce`", // bespoke/plivo.ts:1-16,31-56,92
-    signedMessageParts: ["url:base", "sorted-query", "sorted-form-fields", "nonce"],
+    signedMessageParts: [
+      "url:base",
+      "sorted-query",
+      "sorted-form-fields",
+      "header:x-plivo-signature-v3-nonce",
+    ],
     timestamp: null, // bespoke/plivo.ts:15 (no replay window; the nonce is not a timestamp)
     replayWindow: { enforced: false, toleranceSeconds: 300 }, // bespoke/plivo.ts:15,116
     rotation: true, // bespoke/plivo.ts:14-15,65-75 (two headers, each a comma-list; match-any)
     clientVerifiable: true,
     verifierInputs: ["secret", "payload", "signatureHeader", "requestUrl", "method"],
+    // The nonce is a request HEADER folded into the signed message; absent it the adapter returns
+    // MISSING_HEADER, so the verifier MUST collect it.
+    signedHeaders: ["x-plivo-signature-v3-nonce"], // bespoke/plivo.ts:24,60-63
     quirks: [
       "Signed string is a stateful, conditionally-glued mix of URL, sorted query, and (for POST) sorted form body — 4 POST glue cases (`…?Q.B`, `…?Q`, `…?B`, `…`).", // bespoke/plivo.ts:1-16
       "message = `base_url` + `.` + nonce (`X-Plivo-Signature-V3-Nonce`).", // bespoke/plivo.ts:13,92
