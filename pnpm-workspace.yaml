@@ -30,12 +30,36 @@ onlyBuiltDependencies:
 # reading that field, silently making them inert). Moved here so they apply again. Range-scoped
 # (`name@<fixed`) so only the vulnerable versions are bumped:
 #   form-data >=4.0.6 (critical + high), undici >=7.28.0 (high/med/low), tmp >=0.2.6,
-#   uuid >=11.1.1, js-yaml >=4.2.0.
+#   uuid >=11.1.1, js-yaml >=4.3.0.
+#
+# CAUTION on the `name@<fixed` form: the key stops matching the moment an advisory moves its fix floor
+# ABOVE `fixed`, and pnpm reports nothing — the pin just goes silently inert. That is exactly how the
+# js-yaml alert below came to be open (the key said `<4.2.0` while the tree sat at 4.2.0). When a new
+# advisory lands on an already-pinned package, RETARGET the key; do not assume the old pin still covers.
+#
+#   js-yaml >=4.3.0 -> fixes GHSA-52cp-r559-cp3m / CVE-2026-59869 (#24, high; quadratic CPU via YAML
+#     merge-key chains). RETARGETED from the now-inert `<4.2.0` key. Dev-only in this tree
+#     (apps/www -> @lhci/cli -> @lhci/utils, and packages/sdk-ts -> openapi-typescript ->
+#     @redocly/openapi-core); nothing first-party imports js-yaml. 4.3.0 is API-identical to 4.2.0
+#     (index.js byte-identical; only the loader/int/float internals changed).
+#     NB @lhci/utils declares js-yaml ^3.13.1 and calls the v4-removed `yaml.safeLoad()`; this pin has
+#     been carrying it across the 3->4 major since #124. Harmless today ONLY because that call sits
+#     behind a .yaml/.yml extension check and the repo's lhci config is apps/www/lighthouserc.json —
+#     so do not add a lighthouserc.yaml without revisiting this pin.
+#   brace-expansion >=1.1.16 -> fixes GHSA-3jxr-9vmj-r5cp / CVE-2026-13149 (#23, high; exponential-time
+#     expansion of consecutive `{}` groups). Only the 1.x band is vulnerable here — the tree's 2.1.2 and
+#     5.0.7 are already at/above their own fix floors, and the `<1.1.16` key deliberately leaves them
+#     alone (a wider key would drag minimatch@3 across a major). 1.1.16 satisfies its parent's ^1.1.7.
+#   body-parser >=1.20.6 -> fixes GHSA-v422-hmwv-36x6 / CVE-2026-12590 (#25, low; an invalid `limit`
+#     silently disables size enforcement). Only the 1.x band: express@5's body-parser@2.3.0 is already
+#     patched and the key does not match it. 1.20.6 satisfies express@4's declared ~1.20.5.
 overrides:
   esbuild: 0.28.1
   postcss: 8.5.15
   "tmp@<0.2.6": "^0.2.6"
   "uuid@<11.1.1": "^11.1.1"
-  "js-yaml@<4.2.0": "^4.2.0"
+  "js-yaml@<4.3.0": "^4.3.0"
   "form-data@<4.0.6": "^4.0.6"
   "undici@<7.28.0": "^7.28.0"
+  "brace-expansion@<1.1.16": "^1.1.16"
+  "body-parser@<1.20.6": "^1.20.6"
