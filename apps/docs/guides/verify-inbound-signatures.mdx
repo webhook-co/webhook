@@ -27,7 +27,7 @@ curl -X POST https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets 
 ```
 
 ```ts SDK
-await webhook.endpoints.addProviderSecret({
+await webhook.endpoints.providerSecrets.add({
   endpointId,
   provider: "stripe",
   secret: process.env.STRIPE_SIGNING_SECRET!,

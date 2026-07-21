@@ -28,7 +28,7 @@ curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
 ```
 
 ```ts TypeScript
-await webhook.providerSecrets.add({
+await webhook.endpoints.providerSecrets.add({
   endpointId,
   provider: "braintree",
   secret: process.env.BRAINTREE_PRIVATE_KEY!,
