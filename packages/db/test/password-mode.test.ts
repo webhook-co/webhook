@@ -25,7 +25,38 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, type Sql } from "../src/client";
-import { pgBinDirForTests, startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import {
+  hasLocalPostgresBinaries,
+  pgBinDirForTests,
+  provisionProviderSql,
+  startEphemeralPostgres,
+  type EphemeralPostgres,
+} from "./pg";
+
+// Runs in EVERY lane, including CI's service-container job, which has a postgres service but no
+// local binaries to spawn a cluster with. These pin the regression itself — a provisioned provider
+// with no credential — independently of whether this machine can perform the handshake.
+describe("the provisioned provider is given a credential in password mode", () => {
+  it("emits an ALTER ROLE … PASSWORD when a password is supplied", () => {
+    const sql = provisionProviderSql("hunter2");
+    expect(sql).toMatch(/alter role "test_provider" login password 'hunter2'/i);
+  });
+
+  it("emits NO password clause under trust auth, where roles have none", () => {
+    expect(provisionProviderSql()).not.toMatch(/password/i);
+  });
+
+  it("escapes a quote rather than breaking out of the literal", () => {
+    expect(provisionProviderSql("a'b")).toContain("'a''b'");
+  });
+
+  it("sets the password OUTSIDE the if-not-exists guard, so a stale role is re-credentialed", () => {
+    // The role is cluster-global and outlives a test file: one left behind by a previous run still
+    // carries THAT run's password. Same reason bootstrapOwner resets the owner's every time.
+    const sql = provisionProviderSql("pw");
+    expect(sql.indexOf("alter role")).toBeGreaterThan(sql.indexOf("end\n    $$;"));
+  });
+});
 
 const SUPER_PASSWORD = "harness-scram-probe-pw";
 
@@ -54,6 +85,7 @@ function run(cmd: string, args: string[]): void {
 }
 
 beforeAll(async () => {
+  if (!hasLocalPostgresBinaries()) return;
   const bin = pgBinDirForTests();
   dataDir = mkdtempSync(join(tmpdir(), "wh-scram-"));
   port = await freePortSync();
@@ -97,6 +129,7 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  if (!hasLocalPostgresBinaries()) return;
   await provider?.end();
   await pg?.stop();
   if (priorUrl === undefined) delete process.env.TEST_DATABASE_URL;
@@ -120,7 +153,11 @@ afterAll(async () => {
   }
 });
 
-describe("password-auth cluster handed a superuser", () => {
+// The handshake itself needs binaries to spin a SCRAM cluster with — CI's `test-db` lane has a
+// postgres SERVICE CONTAINER (trust auth, no local install), so it genuinely cannot run this half.
+// It runs on every developer machine and is where the 28P01 regression was caught. The assertions
+// above cover the same defect everywhere; this is not a failing test being hidden.
+describe.skipIf(!hasLocalPostgresBinaries())("password-auth cluster handed a superuser", () => {
   it("detects password mode and downgrades to the provisioned provider", () => {
     expect(pg?.auth).toBe("password");
     expect(pg?.providerRole).toBe("test_provider");

@@ -190,6 +190,18 @@ function serverTooOldMessage(major: number): string {
   );
 }
 
+/** Whether a PG17+ install is reachable. The CI `test-db` lane has a postgres SERVICE CONTAINER but
+ *  no local binaries, so a test that spawns its own cluster cannot run there — this lets it say so
+ *  rather than throw. NOT a licence to skip a test that merely fails. */
+export function hasLocalPostgresBinaries(): boolean {
+  try {
+    pgBinDir();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The resolved bin dir, for tests that must spawn a cluster of their own (password-mode.test.ts
  *  needs a SCRAM cluster, which the harness's own trust-auth path cannot provide). */
 export function pgBinDirForTests(): string {
@@ -216,7 +228,7 @@ function pgRun(cmd: string, args: string[]): void {
  *   INHERIT nor SET — the exact `inherit_option = f, set_option = f` shape Neon has. Granting it
  *   explicitly with INHERIT would hand back ownership rights and defeat the entire exercise.
  */
-function provisionProviderSql(password?: string): string {
+export function provisionProviderSql(password?: string): string {
   // On a SCRAM cluster the provisioned provider needs a login password like every other role — and
   // it is DELIBERATELY not in DB_ROLES (managed-roles.test.ts pins MANAGED_ROLES === DB_ROLES, and
   // applyRolePasswords connects AS this role, so it cannot be in that loop). Without this, the
