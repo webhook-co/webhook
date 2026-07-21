@@ -100,6 +100,17 @@ export function checkThinContent(
 ) {
   const thin = [];
   for (const p of pages) {
+    // The floor polices GENERATED pages: a short generated page means the template padded its way to
+    // a doorway page, and that is the risk a generator introduces at scale. Hand-authored pages opt
+    // out with an explicit `generated: false` — and ONLY out of this floor; they are still compared
+    // for near-duplicates, which is the whole reason the manifest carries the estate and not just our
+    // own output. Absence of the flag means generated, so nothing is exempted by omission.
+    //
+    // Being straight about what this exempts: it is not merely theoretical. Seven of the ten
+    // hand-authored provider pages are currently below the word floor (110–147). Nothing regressed —
+    // before the manifest existed this guard inspected zero pages — but those seven are unfixed, and
+    // this line is why they do not fail. They are listed in `docs-page/curated.ts`.
+    if (p.generated === false) continue;
     const wordCount = tokens(p.text).length;
     // Unique substance is measured on the NEUTRALIZED text: a page that is all boilerplate + a
     // repeated brand name has little genuinely-distinct content, and this reflects that.

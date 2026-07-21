@@ -1,0 +1,61 @@
+---
+title: "Verify DocuSign webhooks"
+sidebarTitle: "DocuSign"
+description: "Register your DocuSign signing secret on an endpoint and webhook.co verifies every inbound event's signature for you."
+icon: "file-signature"
+---
+
+DocuSign signs each webhook with HMAC-SHA256, carried across numbered `x-docusign-signature-N` headers, one per active key. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails.
+
+## Get the secret key
+
+Go to Admin → Connect → the Connect Keys tab and choose Add Secret Key, then enable Include HMAC Signature on the Connect configuration itself. See DocuSign's own [webhook documentation](https://developers.docusign.com/platform/webhooks/connect/setting-up-hmac/) for the current steps.
+
+The full key is visible only right after you create it — later views show just its first four characters — and deleting a key shifts the index of the keys below it.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$DOCUSIGN_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider docusign
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"docusign","secret":"<your-value>"}'
+```
+
+```ts TypeScript
+await webhook.endpoints.providerSecrets.add({
+  endpointId,
+  provider: "docusign",
+  secret: process.env.DOCUSIGN_SIGNING_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## How the signature is checked
+
+- **Signed message** — the raw request body.
+- **Algorithm** — HMAC-SHA256, base64-encoded.
+- **Key** — the signing secret used verbatim (its UTF-8 bytes).
+- **Signature format** — the bare encoded MAC.
+- **Rotation** — more than one candidate signature may be present, and any one of them matching verifies the request. You can roll the credential without dropping events.
+
+## What makes this one different
+
+- Multiple signature headers may be present during key rotation; any one matching verifies.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+A request whose signature matches shows `verified`; one that does not shows `failed`, with the reason named.
