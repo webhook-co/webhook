@@ -78,14 +78,14 @@
               "providers/twilio",
               "providers/hubspot",
               "providers/meta",
-              "providers/custom",
               "providers/contentful",
               "providers/discord",
               "providers/docusign",
               "providers/klaviyo",
               "providers/mailgun",
               "providers/sendgrid",
-              "providers/zendesk"
+              "providers/zendesk",
+              "providers/custom"
             ]
           },
           {
