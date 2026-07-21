@@ -1,11 +1,11 @@
 ---
 title: "Custom or unlisted provider"
 sidebarTitle: "Custom or unlisted"
-description: "Capture works for any sender. Here's how verification maps to the 142 listed providers and what to do when yours isn't one of them."
+description: "Capture works for any sender. Here's how verification maps to the 141 listed providers and what to do when yours isn't one of them."
 icon: "puzzle-piece"
 ---
 
-Your sender doesn't have to be in the [directory](/providers/directory) for webhook.co to be useful. **Capture works for any sender, no configuration required** — every request to your **ingest URL** is stored, inspectable, and replayable. What the directory governs is _verification_: cryptographic checking is available for the 142 listed providers. This page is the honest map of what that means and what to do at the edges.
+Your sender doesn't have to be in the [directory](/providers/directory) for webhook.co to be useful. **Capture works for any sender, no configuration required** — every request to your **ingest URL** is stored, inspectable, and replayable. What the directory governs is _verification_: cryptographic checking is available for the 141 listed providers. This page is the honest map of what that means and what to do at the edges.
 
 ## Nothing is ever lost
 
@@ -15,7 +15,7 @@ So the question is never "will my webhook be received?" It's "can webhook.co _pr
 
 ## There is no free-form HMAC configurator — and here's why that's fine
 
-webhook.co does **not** offer a generic "define your own signature recipe" box where you pick a header, digest, and encoding. Verification runs the audited adapters for the 142 registered providers, full stop. That's a deliberate trust boundary: a hand-typed crypto recipe is exactly the kind of thing that silently verifies nothing (or the wrong thing) and hands you a false green check. We'd rather add a real, tested adapter than let you assemble an untested one.
+webhook.co does **not** offer a generic "define your own signature recipe" box where you pick a header, digest, and encoding. Verification runs the audited adapters for the 141 registered providers, full stop. That's a deliberate trust boundary: a hand-typed crypto recipe is exactly the kind of thing that silently verifies nothing (or the wrong thing) and hands you a false green check. We'd rather add a real, tested adapter than let you assemble an untested one.
 
 In practice, most unlisted senders still have a path to `verified`. Work down this list.
 

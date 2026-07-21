@@ -26,7 +26,7 @@ const ICON_DIR = join(__dirname, "../../../public/providers");
 
 // The wall's whole value is that it is TRUE: it is the inventory of what the code can actually
 // verify. So it is derived from the adapter registry rather than typed out, and pinned here — a
-// hand-maintained list of 142 would start lying the day someone adds the 143rd adapter.
+// hand-maintained list of 141 would start lying the day someone adds the 142nd adapter.
 
 describe("ProviderWall", () => {
   it("is the registry, not a hand-typed list — regenerate provider-entries.ts if this fails", () => {
@@ -86,7 +86,7 @@ describe("ProviderWall", () => {
       expect(src).toMatch(/^\/providers\/[a-z0-9_]+\.webp$/);
       // …and NOT the dashboard's favicon-proxy route, which doesn't exist on a static export.
       expect(src).not.toContain("/api/provider-icon");
-      // Dimensions are set, or 142 icons landing one by one would shift the page (CLS gate).
+      // Dimensions are set, or 141 icons landing one by one would shift the page (CLS gate).
       expect(img).toHaveAttribute("width");
       expect(img).toHaveAttribute("height");
     }
@@ -101,7 +101,7 @@ describe("ProviderWall", () => {
     }
   });
 
-  it("does NOT claim all 142 are cryptographically verified — some are token/basic auth", () => {
+  it("does NOT claim all 141 are cryptographically verified — some are token/basic auth", () => {
     const { container } = render(<ProviderWall />);
     const text = container.textContent ?? "";
     expect(text.length).toBeGreaterThan(100); // non-vacuous
@@ -112,5 +112,5 @@ describe("ProviderWall", () => {
   it("has no accessibility violations", async () => {
     const { container } = render(<ProviderWall />);
     expect(await axeComponent(container)).toHaveNoViolations();
-  }, 30000); // 142 pills is a big DOM for axe; slow on CI. A time limit, not a weaker assertion.
+  }, 30000); // 141 pills is a big DOM for axe; slow on CI. A time limit, not a weaker assertion.
 });

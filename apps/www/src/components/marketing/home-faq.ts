@@ -31,7 +31,7 @@ export const HOME_FAQ_ITEMS: readonly FaqItem[] = [
   {
     question: "How is a signature verified, and what happens when it fails?",
     answer:
-      "Signing and verification follow the Standard Webhooks specification, and 142 providers are built in, so you don't write the verification code or keep the signing secret in your app. When a check fails you get the named reason — the timestamp was outside the tolerance, the raw body was modified in transit, the secret didn't match — instead of a boolean false.",
+      "Signing and verification follow the Standard Webhooks specification, and 141 providers are built in, so you don't write the verification code or keep the signing secret in your app. When a check fails you get the named reason — the timestamp was outside the tolerance, the raw body was modified in transit, the secret didn't match — instead of a boolean false.",
   },
   {
     question: "Who builds it?",

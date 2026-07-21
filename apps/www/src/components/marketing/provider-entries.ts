@@ -5,7 +5,7 @@
  * GENERATED — do not hand-edit. It is derived from `PROVIDERS` in `@webhook-co/webhooks-spec` (run
  * through the same `providerDisplayName` / `providerIconDomain` the dashboard uses), and
  * `provider-wall.test.tsx` re-derives all four fields from those packages and fails if they diverge.
- * Add the 143rd adapter and the test tells you to regenerate.
+ * Add the 142nd adapter and the test tells you to regenerate.
  *
  * It is a flat literal rather than a live import because pulling `webhooks-spec` into this app's TS
  * program drags the whole crypto package in under DOM libs (the Workers-vs-DOM lib clash). Same
@@ -21,7 +21,7 @@ export interface ProviderEntry {
   readonly name: string;
   /** The brand's domain — the source for a fetched favicon when there is no vector mark. */
   readonly domain: string;
-  /** True when @webhook-co/ui ships an official single-path vector mark (78 of the 142 do). */
+  /** True when @webhook-co/ui ships an official single-path vector mark (78 of the 141 do). */
   readonly mark: boolean;
 }
 
@@ -64,7 +64,6 @@ export const PROVIDER_ENTRIES: readonly ProviderEntry[] = [
   { slug: "contentful", name: "Contentful", domain: "", mark: true },
   { slug: "cronofy", name: "Cronofy", domain: "cronofy.com", mark: false },
   { slug: "customer_io", name: "Customer.io", domain: "customer.io", mark: false },
-  { slug: "customerio", name: "Customer.io", domain: "customer.io", mark: false },
   { slug: "datadog", name: "Datadog", domain: "", mark: true },
   { slug: "deel", name: "Deel", domain: "deel.com", mark: false },
   { slug: "discord", name: "Discord", domain: "", mark: true },

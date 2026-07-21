@@ -85,11 +85,11 @@ Beyond capturing and replaying, webhook.co can now deliver verified events onwar
 </Update>
 
 <Update label="June 30, 2026" description="Signature verification">
-## inbound signature verification, from a handful to 142 providers
+## inbound signature verification, from a handful to 141 providers
 
 webhook.co verifies the signature on every incoming webhook so you know an event is authentic before you act on it.
 
-- **Verification adapters** started with a handful of providers (Stripe, GitHub, Shopify, Slack, and the Standard Webhooks scheme) and grew in waves — through a config-driven signature registry — to dozens, and then to **142 providers** across HMAC, JWT, and asymmetric (Ed25519, ECDSA, RSA) signing, including certificate- and JWKS-based schemes.
+- **Verification adapters** started with a handful of providers (Stripe, GitHub, Shopify, Slack, and the Standard Webhooks scheme) and grew in waves — through a config-driven signature registry — to dozens, and then to **141 providers** across HMAC, JWT, and asymmetric (Ed25519, ECDSA, RSA) signing, including certificate- and JWKS-based schemes.
 - **Provider-secret management.** Store a provider's signing secret (encrypted at rest) per endpoint from the dashboard, API, CLI, or MCP, so inbound events are verified automatically.
 - **Verification handshakes.** Endpoints answer the one-time verification challenges that providers send on setup (for example CRC echo, `hub.challenge`, and provider-specific activation handshakes), so registering your ingest URL with a provider just works.
 - **A public providers wall** lists every supported provider with its logo.

@@ -5,10 +5,10 @@ import { PROVIDERS } from "@webhook-co/webhooks-spec";
 import { describe, expect, it } from "vitest";
 
 /**
- * The verification showcase says "across 142 providers". That number is TRUE — and it is the only
+ * The verification showcase says "across 141 providers". That number is TRUE — and it is the only
  * kind of number this site is allowed to publish: one derived from something real.
  *
- * But a true number written as a literal is just a number that hasn't rotted yet. Add the 143rd
+ * But a true number written as a literal is just a number that hasn't rotted yet. Add the 142nd
  * adapter and the homepage quietly starts lying, with nothing to notice. So the copy is pinned to the
  * registry it describes: add a provider, this test tells you which sentence to update.
  *

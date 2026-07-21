@@ -8,7 +8,7 @@
 
 ## Context
 
-The provider registry describes 142 signature schemes in code. That is a genuine content asset: it is
+The provider registry describes 141 signature schemes in code. That is a genuine content asset: it is
 true, it is current, and no one else has it in a machine-readable form. The obvious move is to generate
 a page per provider.
 
@@ -19,7 +19,7 @@ everything below.
 "verify X webhook signature". Real volume sits on head terms and on broad `{provider} webhook` queries
 (Stripe 8,100; Shopify 4,400 worldwide), which are *tutorial* intent, not *reference* intent.
 
-**Distinct recipes are far fewer than providers.** The 142 recipes collapse to 80 clusters. The largest
+**Distinct recipes are far fewer than providers.** The 141 recipes collapse to 80 clusters. The largest
 holds 18 providers whose schemes are byte-identical raw-body HMAC. A page per provider would therefore
 restate the same recipe dozens of times with the brand name swapped — the definition of a doorway page,
 and something `content-dup-guard` correctly rejects.
@@ -28,7 +28,7 @@ and something `content-dup-guard` correctly rejects.
 page, but the top ten carry 89% of the broad volume and Discord alone carries 71%. Generating the rest
 would ship ~52 pages nobody searches for.
 
-So the constraint is not "can we generate 142 pages" (we can) but "which pages are worth a reader's
+So the constraint is not "can we generate 141 pages" (we can) but "which pages are worth a reader's
 time", and the answer is: far fewer than the registry size suggests, split by *intent* rather than by
 provider.
 

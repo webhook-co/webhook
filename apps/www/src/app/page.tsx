@@ -17,7 +17,7 @@ export default function HomePage() {
       <Reveal>
         <Showcases />
       </Reveal>
-      {/* A recognisable handful of the 142 we verify, then a way through to the full registry on
+      {/* A recognisable handful of the 141 we verify, then a way through to the full registry on
           /product/verification. The whole wall here was a thing to scroll past, not a fact to absorb. */}
       <Reveal>
         <ProviderStrip />

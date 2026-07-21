@@ -9,7 +9,7 @@ import { container, sectionPad } from "@/lib/styles";
 /**
  * The full inventory: every provider we can verify, named and marked. It lives on
  * /product/verification — the page whose whole subject this is — rather than on the homepage, where
- * 142 chips is a wall to scroll past rather than a fact to absorb. The homepage shows a recognisable
+ * 141 chips is a wall to scroll past rather than a fact to absorb. The homepage shows a recognisable
  * few ({@link ProviderStrip}) and sends you here.
  *
  * Marks resolve via {@link ProviderMark}: an official inline vector where one exists, else the brand's

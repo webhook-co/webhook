@@ -2952,41 +2952,6 @@ export const RECIPES: readonly RecipeDescriptor[] = [
     "quirks": []
   },
   {
-    "slug": "customerio",
-    "archetype": "timestamped-hmac",
-    "source": "config",
-    "signatureLocation": "header",
-    "signatureHeader": "x-cio-signature",
-    "signatureFormat": "the bare encoded MAC",
-    "algorithm": "HMAC-SHA256",
-    "encoding": "hex",
-    "keyDerivation": "the signing secret used verbatim (its UTF-8 bytes)",
-    "signedMessage": "`v0:{timestamp}:{body}`",
-    "signedMessageParts": [
-      "literal:v0:",
-      "timestamp",
-      "literal::",
-      "body"
-    ],
-    "timestamp": {
-      "source": "the `x-cio-timestamp` header",
-      "format": "seconds"
-    },
-    "replayWindow": {
-      "enforced": true,
-      "toleranceSeconds": 300
-    },
-    "rotation": false,
-    "clientVerifiable": true,
-    "verifierInputs": [
-      "secret",
-      "payload",
-      "signatureHeader",
-      "timestamp"
-    ],
-    "quirks": []
-  },
-  {
     "slug": "sinch",
     "archetype": "timestamped-hmac",
     "source": "config",

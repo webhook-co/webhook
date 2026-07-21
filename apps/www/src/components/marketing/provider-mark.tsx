@@ -45,7 +45,7 @@ export function ProviderMark({ entry, size = 14 }: { entry: ProviderEntry; size?
       height={size}
       loading="lazy"
       decoding="async"
-      // Explicit width/height above reserve the box; the wall is 142 items, so without them the
+      // Explicit width/height above reserve the box; the wall is 141 items, so without them the
       // page would shift as each icon lands (the Lighthouse gate holds CLS ≤ 0.1).
       // A permanently LIGHT chip. These are raster favicons and can't be recoloured: some are
       // opaque-light (a white box on a dark page) and some are transparent-dark (invisible on one).

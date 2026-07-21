@@ -134,7 +134,6 @@ export const PROVIDERS = [
   // W1 batch 3 — timestamped Tier-1 (unix-SECONDS timestamp in the signed message).
   "calendly",
   "zoom",
-  "customerio",
   "sinch",
   // W1 timestamp-format extension — millisecond (workos/front) and datetime/RFC3339 (zendesk/twitch)
   // timestamps, enabled by the factory's TimestampSource `format`.
@@ -235,6 +234,47 @@ export const PROVIDERS = [
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
+
+/**
+ * Slugs that were once registrable, are no longer in the registry, and may still be sitting in a
+ * stored row — each mapped to the live provider that replaced it.
+ *
+ * Retiring a slug is not a vocabulary edit. `provider_secrets.provider` is plain `text` with no enum
+ * and no CHECK, and the engine picks an adapter from the REGISTERED provider (apps/engine/src/verify.ts):
+ * a slug that no longer resolves is DROPPED, not rejected. So an endpoint whose secret was registered
+ * under a retired slug would not error and would not warn — its events would simply stop being verified
+ * and start landing unverified. Aliasing here is what keeps it verifying, whether or not the row has
+ * been migrated yet; the migration is then hygiene rather than a rescue.
+ *
+ * `ProviderSchema` (the write path) still rejects these, so nothing NEW can be registered under one.
+ *
+ * `customerio` — an accidental duplicate second entry for the same provider as `customer_io`, with a
+ * byte-identical scheme (same `x-cio-signature`/`x-cio-timestamp` headers, same `v0:{ts}:{body}` signed
+ * message, same tolerance). `customer_io` matches the convention every other dotted-domain brand
+ * follows (cal_com, checkout_com, incident_io, merge_dev), so it is the one that survives.
+ * Retired 2026-07-21; migration 0095 normalises the stored rows.
+ */
+export const RETIRED_PROVIDER_ALIASES: Readonly<Record<string, Provider>> = {
+  customerio: "customer_io",
+};
+
+/** The retired slugs themselves. Derived, so it can never disagree with the alias map. */
+export const RETIRED_PROVIDERS: readonly string[] = Object.keys(RETIRED_PROVIDER_ALIASES);
+
+/**
+ * Turn the free-text `provider` column into a live `Provider`, or null if it names nothing we can
+ * verify with. Trims and lowercases (the column has no constraint), then resolves a retired alias.
+ *
+ * This is the ONE place stored text becomes a Provider. Keeping it single-sited is the point: the
+ * alias has to apply everywhere the column is read, and a second hand-rolled `PROVIDERS.includes(x)`
+ * somewhere else is how a retired slug quietly starts failing again.
+ */
+export function canonicalProvider(raw: string | null | undefined): Provider | null {
+  if (raw === null || raw === undefined) return null;
+  const canon = raw.trim().toLowerCase();
+  if ((PROVIDERS as readonly string[]).includes(canon)) return canon as Provider;
+  return RETIRED_PROVIDER_ALIASES[canon] ?? null;
+}
 
 /**
  * Per-provider replay-window tolerance, in seconds. Providers without a signed timestamp
@@ -961,20 +1001,6 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
       { kind: "body" },
     ],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.zoom,
-  },
-  // customerio: `X-CIO-Signature` (bare hex) + `X-CIO-Timestamp`; signed `v0:{ts}:{body}` (no sig prefix).
-  customerio: {
-    slug: "customerio",
-    signatureHeader: "x-cio-signature",
-    encoding: "hex",
-    timestamp: { kind: "header", header: "x-cio-timestamp" },
-    message: [
-      { kind: "literal", value: "v0:" },
-      { kind: "timestamp" },
-      { kind: "literal", value: ":" },
-      { kind: "body" },
-    ],
-    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.customerio,
   },
   // sinch: `x-sinch-webhook-signature` (base64) + nonce + timestamp headers; signed `{body}.{nonce}.{ts}`.
   sinch: {

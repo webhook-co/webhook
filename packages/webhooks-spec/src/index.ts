@@ -36,6 +36,9 @@ export { verifyEd25519 } from "./adapters/asymmetric";
 export {
   PROVIDERS,
   ProviderSchema,
+  RETIRED_PROVIDERS,
+  RETIRED_PROVIDER_ALIASES,
+  canonicalProvider,
   SW_SECRET_PROVIDERS,
   // The full config-driven recipe map — consumed by @webhook-co/webhooks-recipes to derive the
   // human-facing signature recipes (build-time only; pure data, no crypto pulled into a DOM bundle).
