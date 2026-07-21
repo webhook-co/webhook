@@ -1604,6 +1604,10 @@ export const RECIPES: readonly RecipeDescriptor[] = [
       "requestUrl",
       "method"
     ],
+    "signedHeaders": [
+      "host",
+      "date"
+    ],
     "quirks": [
       "The registered \"secret\" is the account's Ed25519 PUBLIC key (hex), not a shared secret.",
       "Ed25519 over an HTTP Message Signatures / draft-cavage signing string, NOT a raw-body HMAC — request-context (needs HTTP method + URL for `(request-target)`).",
@@ -3766,6 +3770,9 @@ export const RECIPES: readonly RecipeDescriptor[] = [
       "method",
       "timestamp"
     ],
+    "signedHeaders": [
+      "x-contentful-signed-headers"
+    ],
     "quirks": [
       "The signed message's header section is DYNAMIC: `x-contentful-signed-headers` lists which headers are folded in, so the canonical string shape varies per request.",
       "Canonical = `METHOD\\nNORMALIZED_PATH\\nHEADERS_SECTION\\nRAW_BODY`; signed headers are `key:value`, key lowercased+trimmed, sorted by key, joined by `;` (the signed-headers HEADER itself uses `,`).",
@@ -3790,7 +3797,7 @@ export const RECIPES: readonly RecipeDescriptor[] = [
       "url:base",
       "sorted-query",
       "sorted-form-fields",
-      "nonce"
+      "header:x-plivo-signature-v3-nonce"
     ],
     "timestamp": null,
     "replayWindow": {
@@ -3805,6 +3812,9 @@ export const RECIPES: readonly RecipeDescriptor[] = [
       "signatureHeader",
       "requestUrl",
       "method"
+    ],
+    "signedHeaders": [
+      "x-plivo-signature-v3-nonce"
     ],
     "quirks": [
       "Signed string is a stateful, conditionally-glued mix of URL, sorted query, and (for POST) sorted form body — 4 POST glue cases (`…?Q.B`, `…?Q`, `…?B`, `…`).",

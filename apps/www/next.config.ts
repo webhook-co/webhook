@@ -9,7 +9,11 @@ const nextConfig: NextConfig = {
   // is a non-loss (we ship no raster images through next/image).
   images: { unoptimized: true },
   // The design system ships as TypeScript source; let Next transpile it.
-  transpilePackages: ["@webhook-co/ui"],
+  transpilePackages: [
+    "@webhook-co/ui",
+    "@webhook-co/webhooks-spec",
+    "@webhook-co/webhooks-recipes",
+  ],
   // Linting is owned by the repo-wide ESLint gate (`pnpm lint`); Next 16 no longer
   // runs lint at build time, so there is exactly one lint authority.
   reactStrictMode: true,

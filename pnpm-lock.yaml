@@ -374,6 +374,12 @@ importers:
       '@webhook-co/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@webhook-co/webhooks-recipes':
+        specifier: workspace:*
+        version: link:../../packages/webhooks-recipes
+      '@webhook-co/webhooks-spec':
+        specifier: workspace:*
+        version: link:../../packages/webhooks-spec
       geist:
         specifier: ^1.7.2
         version: 1.7.2(next@16.2.10(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
@@ -435,9 +441,6 @@ importers:
       '@webhook-co/openapi':
         specifier: workspace:*
         version: link:../../packages/openapi
-      '@webhook-co/webhooks-spec':
-        specifier: workspace:*
-        version: link:../../packages/webhooks-spec
       axe-core:
         specifier: ^4.12.1
         version: 4.12.1
