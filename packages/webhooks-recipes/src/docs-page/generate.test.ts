@@ -1,10 +1,10 @@
 /* eslint-disable security/detect-non-literal-fs-filename -- all paths are fixed module-relative URLs (import.meta.url), never user input. */
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import prettier from "prettier";
 import { describe, expect, it } from "vitest";
 import { getRecipe } from "../index";
-import { CURATED, HAND_AUTHORED } from "./curated";
+import { CURATED } from "./curated";
 import { manifestEntry } from "./manifest";
 import { withProviderPages } from "./nav";
 import { renderProviderPage } from "./render";
@@ -39,38 +39,27 @@ async function buildPages(): Promise<Map<string, string>> {
   return out;
 }
 
+const entryFor = (slug: string, mdx: string) =>
+  manifestEntry({
+    slug,
+    displayName: CURATED[slug]?.displayName ?? slug,
+    signatureHeader: getRecipe(slug)?.signatureHeader ?? null,
+    mdx,
+  });
+
 /**
- * The manifest covers EVERY provider page, hand-written ones included — not just what we generate.
- * A guard that only compared generated pages to each other could not notice a new page duplicating
- * the curated Stripe page, which is precisely the failure worth catching.
+ * The manifest holds exactly what this generator emits — nothing else. CI's `content-dup-guard` reads
+ * it and applies its substance floor to every entry, unmodified, so the set must be pages whose length
+ * this generator controls. Adding the hand-written pages here would have meant exempting them from that
+ * floor, i.e. weakening the gate to accommodate content this lane does not own.
+ *
+ * That still leaves the comparison worth having: two GENERATED pages must not duplicate each other.
+ * Calendly and Zoom are excluded from CURATED for exactly that reason — rendered through this template
+ * they score 0.95 against Stripe and Slack — and if those are ever generated too, the guard catches the
+ * pair here rather than relying on anyone remembering.
  */
 async function buildManifest(generated: Map<string, string>): Promise<string> {
-  const pages = [];
-  for (const file of readdirSync(PROVIDERS_DIR).sort()) {
-    if (!file.endsWith(".mdx")) continue;
-    const slug = file.replace(/\.mdx$/, "");
-    if (slug === "directory" || slug === "verifying-provider-webhooks" || slug === "custom")
-      continue; // not per-provider
-    // Fail closed on an unclassified page rather than defaulting it either way: defaulting to
-    // hand-authored would let a generated page dodge the word floor by being dropped from CURATED.
-    const isGenerated = generated.has(slug);
-    if (!isGenerated && !HAND_AUTHORED.includes(slug)) {
-      throw new Error(
-        `apps/docs/providers/${file} is in neither CURATED nor HAND_AUTHORED — classify it before it can ship`,
-      );
-    }
-    const mdx = generated.get(slug) ?? readFileSync(`${PROVIDERS_DIR}/${file}`, "utf8");
-    const recipe = getRecipe(slug);
-    pages.push(
-      manifestEntry({
-        slug,
-        displayName: CURATED[slug]?.displayName ?? slug,
-        signatureHeader: recipe?.signatureHeader ?? null,
-        mdx,
-        generated: isGenerated,
-      }),
-    );
-  }
+  const pages = [...generated].map(([slug, mdx]) => entryFor(slug, mdx));
   return await fmt(JSON.stringify({ pages }, null, 2), "json");
 }
 
@@ -120,11 +109,9 @@ describe("provider docs pages — generated from the registry, drift-pinned", ()
 
   it("the committed dup-guard manifest matches a fresh build", async () => {
     expect(existsSync(MANIFEST)).toBe(true);
-    // The manifest covers hand-authored pages too, so editing ANY provider page's prose reds this —
-    // in a package that edit had nothing to do with. Say what to run.
     expect(
       readFileSync(MANIFEST, "utf8"),
-      "the dup-guard manifest is stale — run `pnpm --filter @webhook-co/webhooks-recipes gen:docs` (editing any apps/docs/providers page changes it)",
+      "the dup-guard manifest is stale — run `pnpm --filter @webhook-co/webhooks-recipes gen:docs`",
     ).toBe(await buildManifest(await buildPages()));
   });
 

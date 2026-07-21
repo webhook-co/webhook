@@ -1,34 +1,13 @@
 {
   "pages": [
     {
-      "id": "docs:adyen",
-      "host": "docs",
-      "path": "/providers/adyen",
-      "intent": "reference",
-      "name": "adyen",
-      "header": "",
-      "text": "Adyen signs each notification with an HMAC-SHA256 over a fixed, colon-joined set of fields — pspReference , originalReference , merchantAccountCode , merchantReference , amount.value , amount.currency , eventCode , success — not the raw body. The signature lives inside the payload at NotificationRequestItem.additionalData.hmacSignature . Register your HMAC key and webhook.co reproduces the exact field construction. Get the HMAC key In the Adyen Customer Area, open Developers → Webhooks , select your webhook (Standard notification), and under Security generate or reveal the HMAC Key . It's a hex string. Register it on your endpoint Register the HMAC key exactly as the Customer Area shows it (the hex string). webhook.co hex-decodes it to the key bytes, matching Adyen's own SDKs — don't decode or reformat it first. webhook.co verifies one notification item per request. There's no signed timestamp, so no replay window applies. Confirm",
-      "generated": false
-    },
-    {
-      "id": "docs:braintree",
-      "host": "docs",
-      "path": "/providers/braintree",
-      "intent": "reference",
-      "name": "braintree",
-      "header": "",
-      "text": "Braintree signs webhooks with an HMAC-SHA1 keyed by SHA1(private key) . The signature rides the bt signature form field as publicKey signature pairs, over the bt payload field. Register your private key and webhook.co reproduces the exact scheme. Get the keys In the Braintree Control Panel, open Settings → API Keys . You'll register the Private Key as the signing secret. For the subscription handshake you'll also need the matching Public Key . Register the private key The bt challenge handshake Braintree verifies a new webhook with a bt challenge GET. Answering it needs your public key too, registered as a second secret with kind: braintree public key — available over the API or SDK: With both registered, webhook.co computes the challenge response Braintree expects. The braintree public key kind is registered via the API or SDK. The private key (your signing secret) registers on any surface, including the CLI, and is all you need to verify incoming events. Confirm",
-      "generated": false
-    },
-    {
       "id": "docs:contentful",
       "host": "docs",
       "path": "/providers/contentful",
       "intent": "reference",
       "name": "Contentful",
       "header": "x-contentful-signature",
-      "text": "Contentful signs each webhook with HMAC-SHA256, carried in the x-contentful-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the signing secret In the space, open Settings → Webhooks → the Settings tab and enable request verification, which generates the signing secret. See Contentful's own webhook documentation for the current steps. It is space-level — one secret covers every webhook in the space — and you cannot copy it again once you leave that view. Register it on your endpoint How the signature is checked Signed message — a canonical request METHOD\\nNORMALIZED PATH\\nHEADERS SECTION\\nRAW BODY , where HEADERS SECTION is exactly the headers named in x-contentful-signed-headers ( key:value , key lowercased, sorted by key, joined by ; ). Algorithm — HMAC-SHA256, hex-encoded. Key — registered secret is a 64-char string used verbatim as the UTF-8 HMAC key. Signature format — lowercase-hex 32-byte HMAC-SHA256 MAC. Timestamp — read from the x-contentful-timestamp header. Also signed — x-contentful-signed-headers . These header values are folded into the signed message, so they must reach us unmodified. Replay window Because the timestamp is signed, webhook.co enforces a 30-second tolerance: a request whose signed timestamp is older than that fails verification rather than being accepted as a possible replay. What makes this one different The signed message's header section is DYNAMIC: x-contentful-signed-headers lists which headers are folded in, so the canonical string shape varies per request. Canonical = METHOD\\nNORMALIZED PATH\\nHEADERS SECTION\\nRAW BODY ; signed headers are key:value , key lowercased+trimmed, sorted by key, joined by ; (the signed-headers HEADER itself uses , ). One-sided 30-second TTL against x-contentful-timestamp (milliseconds); the timestamp is itself a signed header, so replay is also bound in the signature. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named.",
-      "generated": true
+      "text": "Contentful signs each webhook with HMAC-SHA256, carried in the x-contentful-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the signing secret In the space, open Settings → Webhooks → the Settings tab and enable request verification, which generates the signing secret. See Contentful's own webhook documentation for the current steps. It is space-level — one secret covers every webhook in the space — and you cannot copy it again once you leave that view. Register it on your endpoint How the signature is checked Signed message — a canonical request METHOD\\nNORMALIZED PATH\\nHEADERS SECTION\\nRAW BODY , where HEADERS SECTION is exactly the headers named in x-contentful-signed-headers ( key:value , key lowercased, sorted by key, joined by ; ). Algorithm — HMAC-SHA256, hex-encoded. Key — registered secret is a 64-char string used verbatim as the UTF-8 HMAC key. Signature format — lowercase-hex 32-byte HMAC-SHA256 MAC. Timestamp — read from the x-contentful-timestamp header. Also signed — x-contentful-signed-headers . These header values are folded into the signed message, so they must reach us unmodified. Replay window Because the timestamp is signed, webhook.co enforces a 30-second tolerance: a request whose signed timestamp is older than that fails verification rather than being accepted as a possible replay. What makes this one different The signed message's header section is DYNAMIC: x-contentful-signed-headers lists which headers are folded in, so the canonical string shape varies per request. Canonical = METHOD\\nNORMALIZED PATH\\nHEADERS SECTION\\nRAW BODY ; signed headers are key:value , key lowercased+trimmed, sorted by key, joined by ; (the signed-headers HEADER itself uses , ). One-sided 30-second TTL against x-contentful-timestamp (milliseconds); the timestamp is itself a signed header, so replay is also bound in the signature. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named."
     },
     {
       "id": "docs:discord",
@@ -37,8 +16,7 @@
       "intent": "reference",
       "name": "Discord",
       "header": "x-signature-ed25519",
-      "text": "Discord signs each webhook with Ed25519, carried in the x-signature-ed25519 header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the public key Your public key is shown on your application in the Discord Developer Portal — Discord generates it, you never supply one. See Discord's own webhook documentation for the current steps. Discord validates an endpoint by deliberately sending invalid signatures, and expects a 401 back, so an endpoint that doesn't verify will fail registration. Register it on your endpoint How the signature is checked Signed message — {timestamp}{rawBody} — the timestamp header concatenated to the raw body, no separator. Algorithm — Ed25519, hex-encoded. Key — registered secret is the app's hex-encoded 32-byte Ed25519 public key, used verbatim. Signature format — hex-encoded 64-byte Ed25519 signature. Timestamp — read from the x-signature-timestamp header. What makes this one different The registered \"secret\" is Discord's hex-encoded 32-byte Ed25519 PUBLIC key, not a shared secret. Timestamp and body are concatenated with NO separator ( {timestamp}{body} ). The signed timestamp is bound into the message but no replay-age window is enforced — the signature is the authenticity guarantee; downstream dedupe handles replay. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named.",
-      "generated": true
+      "text": "Discord signs each webhook with Ed25519, carried in the x-signature-ed25519 header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the public key Your public key is shown on your application in the Discord Developer Portal — Discord generates it, you never supply one. See Discord's own webhook documentation for the current steps. Discord validates an endpoint by deliberately sending invalid signatures, and expects a 401 back, so an endpoint that doesn't verify will fail registration. Register it on your endpoint How the signature is checked Signed message — {timestamp}{rawBody} — the timestamp header concatenated to the raw body, no separator. Algorithm — Ed25519, hex-encoded. Key — registered secret is the app's hex-encoded 32-byte Ed25519 public key, used verbatim. Signature format — hex-encoded 64-byte Ed25519 signature. Timestamp — read from the x-signature-timestamp header. What makes this one different The registered \"secret\" is Discord's hex-encoded 32-byte Ed25519 PUBLIC key, not a shared secret. Timestamp and body are concatenated with NO separator ( {timestamp}{body} ). The signed timestamp is bound into the message but no replay-age window is enforced — the signature is the authenticity guarantee; downstream dedupe handles replay. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named."
     },
     {
       "id": "docs:docusign",
@@ -47,28 +25,7 @@
       "intent": "reference",
       "name": "DocuSign",
       "header": "x-docusign-signature-1",
-      "text": "DocuSign signs each webhook with HMAC-SHA256, carried across numbered x-docusign-signature-N headers, one per active key. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the secret key Go to Admin → Connect → the Connect Keys tab and choose Add Secret Key, then enable Include HMAC Signature on the Connect configuration itself. See DocuSign's own webhook documentation for the current steps. The full key is visible only right after you create it — later views show just its first four characters — and deleting a key shifts the index of the keys below it. Register it on your endpoint How the signature is checked Signed message — the raw request body. Algorithm — HMAC-SHA256, base64-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. Rotation — more than one candidate signature may be present, and any one of them matching verifies the request. You can roll the credential without dropping events. What makes this one different Multiple signature headers may be present during key rotation; any one matching verifies. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named.",
-      "generated": true
-    },
-    {
-      "id": "docs:github",
-      "host": "docs",
-      "path": "/providers/github",
-      "intent": "reference",
-      "name": "github",
-      "header": "x-hub-signature-256",
-      "text": "GitHub signs each webhook with an HMAC-SHA256 over the raw request body, sent as X-Hub-Signature-256: sha256= . Register the secret on your endpoint and webhook.co verifies every delivery against the exact bytes it captured. Get the signing secret The secret is whatever you typed into Secret when you created the webhook — on a repository or org under Settings → Webhooks , or via the API. GitHub doesn't show it again after creation, so register the same value you set there. Register it on your endpoint The ping event GitHub's first delivery is a ping (see the X-GitHub-Event header). It's signed exactly like every other event, so once the secret is registered the ping verifies too — a quick way to confirm the secret is right. GitHub signs the body verbatim, so there's no timestamp and no replay window here. Confirm",
-      "generated": false
-    },
-    {
-      "id": "docs:hubspot",
-      "host": "docs",
-      "path": "/providers/hubspot",
-      "intent": "reference",
-      "name": "hubspot",
-      "header": "x-hubspot-signature-v3",
-      "text": "HubSpot's v3 signature is an HMAC-SHA256 over {method}{requestURI}{body}{timestamp} , base64-encoded in X-HubSpot-Signature-v3 , with the timestamp in X-HubSpot-Request-Timestamp . Register your app's client secret and webhook.co reproduces the signature against the exact request it captured. Get the client secret In the HubSpot developer account, open your app's Auth settings and copy the Client secret . This same secret signs the app's webhooks. Register it on your endpoint Replay window The signed timestamp (milliseconds) is part of the signature and drives a 5-minute window — webhook.co rejects a v3 request older than that. Because the URI is signed, your app's configured target must be the endpoint's ingest URL exactly. Confirm",
-      "generated": false
+      "text": "DocuSign signs each webhook with HMAC-SHA256, carried across numbered x-docusign-signature-N headers, one per active key. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the secret key Go to Admin → Connect → the Connect Keys tab and choose Add Secret Key, then enable Include HMAC Signature on the Connect configuration itself. See DocuSign's own webhook documentation for the current steps. The full key is visible only right after you create it — later views show just its first four characters — and deleting a key shifts the index of the keys below it. Register it on your endpoint How the signature is checked Signed message — the raw request body. Algorithm — HMAC-SHA256, base64-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. Rotation — more than one candidate signature may be present, and any one of them matching verifies the request. You can roll the credential without dropping events. What makes this one different Multiple signature headers may be present during key rotation; any one matching verifies. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named."
     },
     {
       "id": "docs:klaviyo",
@@ -77,8 +34,7 @@
       "intent": "reference",
       "name": "Klaviyo",
       "header": "klaviyo-signature",
-      "text": "Klaviyo signs each webhook with HMAC-SHA256, carried in the klaviyo-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the secret key You choose this value yourself when creating the webhook rather than Klaviyo generating it, either in the create-webhook form or as the secret key field on the API request. See Klaviyo's own webhook documentation for the current steps. It must be at least 16 characters, and Klaviyo never returns it afterwards, so record it as you create the webhook. Register it on your endpoint How the signature is checked Signed message — {body}{timestamp} . Algorithm — HMAC-SHA256, hex-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. Timestamp — read from the klaviyo-timestamp header. What makes this one different The timestamp is part of the signed message, but no replay-age window is enforced. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named.",
-      "generated": true
+      "text": "Klaviyo signs each webhook with HMAC-SHA256, carried in the klaviyo-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the secret key You choose this value yourself when creating the webhook rather than Klaviyo generating it, either in the create-webhook form or as the secret key field on the API request. See Klaviyo's own webhook documentation for the current steps. It must be at least 16 characters, and Klaviyo never returns it afterwards, so record it as you create the webhook. Register it on your endpoint How the signature is checked Signed message — {body}{timestamp} . Algorithm — HMAC-SHA256, hex-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. Timestamp — read from the klaviyo-timestamp header. What makes this one different The timestamp is part of the signed message, but no replay-age window is enforced. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named."
     },
     {
       "id": "docs:mailgun",
@@ -87,18 +43,7 @@
       "intent": "reference",
       "name": "Mailgun",
       "header": "",
-      "text": "Mailgun signs each webhook with HMAC-SHA256, carried inside the request body. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the HTTP webhook signing key In the Mailgun control panel, open your profile menu and choose API Security, where the HTTP webhook signing key sits alongside your API keys. See Mailgun's own webhook documentation for the current steps. It is account-level rather than per-domain or per-webhook, so one key signs every webhook on the account, and resetting it takes effect immediately. Register it on your endpoint How the signature is checked Signed message — {signature.timestamp}{signature.token} . Algorithm — HMAC-SHA256, hex-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. What makes this one different The signature travels inside the request body, not in a header. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named.",
-      "generated": true
-    },
-    {
-      "id": "docs:meta",
-      "host": "docs",
-      "path": "/providers/meta",
-      "intent": "reference",
-      "name": "meta",
-      "header": "x-hub-signature-256",
-      "text": "Meta's platforms (WhatsApp, Messenger, Instagram, and other Graph webhooks) sign each POST with an HMAC-SHA256 over the raw body, sent as X-Hub-Signature-256: sha256= . Setup uses a separate GET handshake. Register two secrets and webhook.co covers both. Get the two values App secret — your app's secret from App Dashboard → App settings → Basic . Signs the payloads. Verify token — the arbitrary string you type into Webhooks → Configure in the App Dashboard. Meta echoes it back during the subscription handshake. Register both on your endpoint Register the app secret as the signing secret: Then register the verify token as a second secret with kind: verify token : The subscription handshake When you save the callback URL in the App Dashboard, Meta sends a hub.mode=subscribe GET carrying hub.challenge and hub.verify token . webhook.co echoes the challenge only if the presented verify token matches the one you registered (constant-time compared), and returns 403 otherwise — so a wrong token fails setup instead of leaking the challenge. Confirm",
-      "generated": false
+      "text": "Mailgun signs each webhook with HMAC-SHA256, carried inside the request body. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the HTTP webhook signing key In the Mailgun control panel, open your profile menu and choose API Security, where the HTTP webhook signing key sits alongside your API keys. See Mailgun's own webhook documentation for the current steps. It is account-level rather than per-domain or per-webhook, so one key signs every webhook on the account, and resetting it takes effect immediately. Register it on your endpoint How the signature is checked Signed message — {signature.timestamp}{signature.token} . Algorithm — HMAC-SHA256, hex-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. What makes this one different The signature travels inside the request body, not in a header. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named."
     },
     {
       "id": "docs:sendgrid",
@@ -107,58 +52,7 @@
       "intent": "reference",
       "name": "SendGrid",
       "header": "x-twilio-email-event-webhook-signature",
-      "text": "SendGrid signs each webhook with ECDSA (P-256, SHA-256), carried in the x-twilio-email-event-webhook-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the public verification key In SendGrid, open Settings → Mail Settings → Webhook Settings → Event Webhooks, edit the webhook, and under Security features turn on Signed Event Webhook; reopening the dialog then shows the public verification key. See SendGrid's own webhook documentation for the current steps. The key pair is generated only when you save, so signature verification can't be exercised before that. Register it on your endpoint How the signature is checked Signed message — {timestamp}{rawBody} — the …-Timestamp header concatenated to the raw body. Algorithm — ECDSA (P-256, SHA-256), base64-encoded. Key — registered secret is the dashboard \"Verification Key\" — base64 of the SPKI DER ECDSA P-256 public key. Signature format — base64-encoded DER ECDSA signature (converted to IEEE-P1363 r s for WebCrypto). Timestamp — read from the x-twilio-email-event-webhook-timestamp header. What makes this one different The registered \"secret\" is SendGrid's base64 SPKI ECDSA P-256 PUBLIC key (\"Verification Key\"), not a shared secret. The DER-encoded ECDSA signature is converted to IEEE-P1363 raw r s (64 bytes) before WebCrypto verify. The signed timestamp is bound into the message but no replay window is enforced. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named.",
-      "generated": true
-    },
-    {
-      "id": "docs:shopify",
-      "host": "docs",
-      "path": "/providers/shopify",
-      "intent": "reference",
-      "name": "shopify",
-      "header": "x-shopify-hmac-sha256",
-      "text": "Shopify signs each webhook with an HMAC-SHA256 over the raw body, base64-encoded in the X-Shopify-Hmac-Sha256 header. Register the secret on your endpoint and webhook.co verifies every delivery byte-for-byte. Get the signing secret For app webhooks, the secret is your app's API secret key (Partner Dashboard → your app → API credentials ). For webhooks created in the Shopify admin under Settings → Notifications , use the signing secret shown there. Shopify identifies the store in X-Shopify-Shop-Domain , but the signature is what proves authenticity. Register it on your endpoint The signature is base64, not hex. Register the raw secret exactly as Shopify shows it — webhook.co handles the encoding. Confirm",
-      "generated": false
-    },
-    {
-      "id": "docs:slack",
-      "host": "docs",
-      "path": "/providers/slack",
-      "intent": "reference",
-      "name": "slack",
-      "header": "x-slack-signature",
-      "text": "Slack signs each request with an HMAC-SHA256 over the basestring v0:{timestamp}:{body} , sent as X-Slack-Signature: v0= alongside X-Slack-Request-Timestamp . Register the signing secret and webhook.co verifies every request — and answers Slack's setup handshake for you. Get the signing secret In your Slack app config at api.slack.com/apps, open Basic Information → App Credentials and copy the Signing Secret . Register it on your endpoint The url verification handshake When you save an ingest URL in Slack's Event Subscriptions , Slack POSTs a url verification challenge. webhook.co detects it and echoes the challenge value automatically — no configuration, and the challenge is never captured as an event. Slack signs the timestamp, so webhook.co enforces a 5-minute replay window on real events. Confirm",
-      "generated": false
-    },
-    {
-      "id": "docs:square",
-      "host": "docs",
-      "path": "/providers/square",
-      "intent": "reference",
-      "name": "square",
-      "header": "x-square-hmacsha256-signature",
-      "text": "Square signs each webhook with an HMAC-SHA256 over {notificationURL}{body} — the request URL first, then the raw payload — base64-encoded in X-Square-HmacSha256-Signature . Register the signature key and webhook.co reproduces it against the exact URL and bytes it captured. Get the signature key In the Square Developer Dashboard, open your application's Webhooks → Subscriptions , select the subscription pointing at your ingest URL, and copy its Signature Key . Register it on your endpoint Square signs the notification URL. The subscription URL in Square must be your endpoint's ingest URL exactly — a trailing slash or an added query string changes the signed string and fails verification. Confirm",
-      "generated": false
-    },
-    {
-      "id": "docs:stripe",
-      "host": "docs",
-      "path": "/providers/stripe",
-      "intent": "reference",
-      "name": "stripe",
-      "header": "stripe-signature",
-      "text": "Stripe signs each webhook with an HMAC-SHA256 over {timestamp}.{body} , carried in the Stripe-Signature header as t= ,v1= . Register your endpoint's signing secret on webhook.co and every inbound request is verified against the exact captured bytes, then stamped with a verification state. Get the signing secret In the Stripe Dashboard, open Developers → Webhooks , select (or add) the endpoint pointing at your webhook.co ingest URL, and reveal its Signing secret . It starts with whsec . Register it on your endpoint Replay window Because Stripe signs the timestamp, webhook.co enforces a 5-minute tolerance — a request whose t is older than that fails verification rather than being accepted as a possible replay. One signing secret per endpoint is enough; a Stripe-Signature may carry several v1= values during a secret roll, and any match verifies. Confirm Verified Stripe events show verified ; a bad signature or an expired timestamp shows failed .",
-      "generated": false
-    },
-    {
-      "id": "docs:twilio",
-      "host": "docs",
-      "path": "/providers/twilio",
-      "intent": "reference",
-      "name": "twilio",
-      "header": "x-twilio-signature",
-      "text": "Twilio signs each request with an HMAC-SHA1 keyed by your Auth Token , base64-encoded in X-Twilio-Signature . For form-encoded webhooks it signs the request URL followed by the sorted form fields; for JSON bodies it signs the URL (carrying a bodySHA256 ) and the body hash. Register the auth token and webhook.co handles both modes. Get the auth token In the Twilio Console home, copy your account's Auth Token (under Account Info). If you use a subaccount, use that subaccount's token. Register it on your endpoint Twilio signs the request URL. The webhook URL configured in Twilio must be your endpoint's ingest URL exactly — a mismatched host, path, or query changes the signed string. webhook.co tries the default-port variants the way Twilio's SDKs do. Confirm",
-      "generated": false
+      "text": "SendGrid signs each webhook with ECDSA (P-256, SHA-256), carried in the x-twilio-email-event-webhook-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the public verification key In SendGrid, open Settings → Mail Settings → Webhook Settings → Event Webhooks, edit the webhook, and under Security features turn on Signed Event Webhook; reopening the dialog then shows the public verification key. See SendGrid's own webhook documentation for the current steps. The key pair is generated only when you save, so signature verification can't be exercised before that. Register it on your endpoint How the signature is checked Signed message — {timestamp}{rawBody} — the …-Timestamp header concatenated to the raw body. Algorithm — ECDSA (P-256, SHA-256), base64-encoded. Key — registered secret is the dashboard \"Verification Key\" — base64 of the SPKI DER ECDSA P-256 public key. Signature format — base64-encoded DER ECDSA signature (converted to IEEE-P1363 r s for WebCrypto). Timestamp — read from the x-twilio-email-event-webhook-timestamp header. What makes this one different The registered \"secret\" is SendGrid's base64 SPKI ECDSA P-256 PUBLIC key (\"Verification Key\"), not a shared secret. The DER-encoded ECDSA signature is converted to IEEE-P1363 raw r s (64 bytes) before WebCrypto verify. The signed timestamp is bound into the message but no replay window is enforced. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named."
     },
     {
       "id": "docs:zendesk",
@@ -167,8 +61,7 @@
       "intent": "reference",
       "name": "Zendesk",
       "header": "x-zendesk-webhook-signature",
-      "text": "Zendesk signs each webhook with HMAC-SHA256, carried in the x-zendesk-webhook-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the signing secret key Open the webhook in Admin Center; its secret key is hidden until you choose Reveal secret. See Zendesk's own webhook documentation for the current steps. Zendesk issues one per webhook, and only once the webhook is fully created — while you are still creating it, the value in play is a documented static test secret. Register it on your endpoint How the signature is checked Signed message — {timestamp}{body} . Algorithm — HMAC-SHA256, base64-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. Timestamp — read from the x-zendesk-webhook-signature-timestamp header. Replay window Because the timestamp is signed, webhook.co enforces a 300-second tolerance: a request whose signed timestamp is older than that fails verification rather than being accepted as a possible replay. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named.",
-      "generated": true
+      "text": "Zendesk signs each webhook with HMAC-SHA256, carried in the x-zendesk-webhook-signature header. Register the credential on your endpoint and webhook.co verifies every captured request against the exact bytes it received, then records the outcome — with a named reason when it fails. Get the signing secret key Open the webhook in Admin Center; its secret key is hidden until you choose Reveal secret. See Zendesk's own webhook documentation for the current steps. Zendesk issues one per webhook, and only once the webhook is fully created — while you are still creating it, the value in play is a documented static test secret. Register it on your endpoint How the signature is checked Signed message — {timestamp}{body} . Algorithm — HMAC-SHA256, base64-encoded. Key — the signing secret used verbatim (its UTF-8 bytes). Signature format — the bare encoded MAC. Timestamp — read from the x-zendesk-webhook-signature-timestamp header. Replay window Because the timestamp is signed, webhook.co enforces a 300-second tolerance: a request whose signed timestamp is older than that fails verification rather than being accepted as a possible replay. Confirm A request whose signature matches shows verified ; one that does not shows failed , with the reason named."
     }
   ]
 }

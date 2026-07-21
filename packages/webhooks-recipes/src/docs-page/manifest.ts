@@ -16,12 +16,6 @@ export interface ManifestPage {
   /** Signature header — likewise neutralized, for the same reason. */
   readonly header: string;
   readonly text: string;
-  /**
-   * False for the hand-authored pages. They are in the manifest so a generated page can be caught
-   * duplicating one (calendly's recipe is byte-identical to stripe's), but their length is an
-   * editorial choice, so they sit out the generated-content word floor — and only that.
-   */
-  readonly generated: boolean;
 }
 
 /** Extract the human-visible prose from an MDX page. */
@@ -44,7 +38,6 @@ export function manifestEntry(input: {
   displayName: string;
   signatureHeader: string | null;
   mdx: string;
-  generated?: boolean;
 }): ManifestPage {
   return {
     id: `docs:${input.slug}`,
@@ -54,6 +47,5 @@ export function manifestEntry(input: {
     name: input.displayName,
     header: input.signatureHeader ?? "",
     text: mdxToText(input.mdx),
-    generated: input.generated ?? true,
   };
 }

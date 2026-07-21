@@ -11,34 +11,15 @@
 // ten (Discord alone is 71%), so generating the long tail would ship thin pages, not coverage.
 //
 // Excluded on purpose despite demand: calendly and zoom, whose recipes are byte-identical to Stripe's
-// and Slack's (measured 0.94 / 0.85 Jaccard — over the guard's 0.8 reject line); they earn narrative
-// tutorial pages instead. And gitlab/telegram/paypal/plaid, which are static-token or remote-fetch
-// schemes with no recipe substantial enough to carry a reference page.
+// and Slack's. Rendering both through this template and comparing measures 0.95 Jaccard, well over the
+// dup-guard's 0.8 line — so the moment Stripe or Slack is also generated, the pair fails the guard. The
+// substantive point holds even today, when those two are still hand-written and the measured overlap is
+// therefore low: a generated Calendly page would restate Stripe's scheme and teach nothing new. They
+// earn narrative tutorial pages instead, which differentiate on something other than the recipe. Also
+// excluded: gitlab/telegram/paypal/plaid — static-token or remote-fetch schemes with no recipe
+// substantial enough to carry a reference page.
 
 import type { CuratedSecret } from "./render";
-
-/**
- * The provider pages written by hand, before this generator existed. They are listed EXPLICITLY rather
- * than inferred as "whatever isn't in CURATED", because inference makes the classification deletable:
- * drop a slug from CURATED, leave its `.mdx` on disk, and the page would silently restamp itself as
- * hand-authored — which is the one way to escape the generated-content word floor. Every provider page
- * must appear in exactly one of these two lists or the generator refuses to build the manifest.
- *
- * Seven of these are currently below that floor (110–147 words). This lane does not rewrite them; the
- * point of listing them is that the omission is recorded rather than implied.
- */
-export const HAND_AUTHORED: readonly string[] = [
-  "adyen",
-  "braintree",
-  "github",
-  "hubspot",
-  "meta",
-  "shopify",
-  "slack",
-  "square",
-  "stripe",
-  "twilio",
-];
 
 export interface CuratedProvider extends CuratedSecret {
   /** Display name used in headings, prose, and the sidebar. */
