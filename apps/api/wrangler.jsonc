@@ -76,6 +76,17 @@
       "localConnectionString": "postgres://webhook_billing:postgres@127.0.0.1:5432/webhook_dev",
     },
     // @gen-end HYPERDRIVE_BILLING_ID
+    // @gen-optional HYPERDRIVE_ACTIVATION_REVIEWER_ID
+    // HYPERDRIVE_ACTIVATION_REVIEWER (ADR-0127) — the webhook_activation_reviewer least-privilege reader for
+    // the internal activation_weekly_review() aggregate (no PII; EXECUTE on that one SECURITY DEFINER fn, no
+    // table read). OPTIONAL: the overlay keeps this binding only when HYPERDRIVE_ACTIVATION_REVIEWER_ID is set
+    // (provisioned) and strips it otherwise; absent → GET /v1/internal/activation/weekly 404s (dark). Cache off.
+    {
+      "binding": "HYPERDRIVE_ACTIVATION_REVIEWER",
+      "id": "<HYPERDRIVE_ACTIVATION_REVIEWER_ID>",
+      "localConnectionString": "postgres://webhook_activation_reviewer:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    // @gen-end HYPERDRIVE_ACTIVATION_REVIEWER_ID
   ],
   // Caches resolved principals keyed by api-key hash; invalidated on revoke (KV can be invalidated,
   // Hyperdrive's query cache can't). Miniflare provides a local KV in tests; real id set at deploy.
