@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Four tests below reach for `@webhook-co/contract` with a dynamic import, and the FIRST one to run has
+// to transform the whole zod-schema barrel before it resolves — a cost vitest counts against that test's
+// own timeout. Under `turbo test` the 28 packages compile at once, and on CI that cold transform runs
+// past the 5s default, so this file failed intermittently: always on whichever contract import happened
+// to be first, never on the three that followed it from the module cache. Nothing about the assertions
+// is slow or racy, so the fix is the time budget rather than the test.
+vi.setConfig({ testTimeout: 30_000 });
 
 import {
   EVENT_TYPE_MAX_LENGTH,
