@@ -6,7 +6,7 @@
 // or the network). Every user-supplied value renders as an INERT React text node (never HTML), which is
 // the XSS control (asserted in verify-tool.test.tsx). Inputs are driven by the selected provider's recipe.
 
-import { Button, cn, providerDisplayName } from "@webhook-co/ui";
+import { Button, cn, Combobox, type ComboboxOption, providerDisplayName } from "@webhook-co/ui";
 import {
   CLIENT_VERIFIABLE_RECIPES,
   getRecipe,
@@ -14,11 +14,32 @@ import {
 } from "@webhook-co/webhooks-recipes";
 import { useEffect, useMemo, useState } from "react";
 
+import { PROVIDER_ENTRIES } from "@/components/marketing/provider-entries";
+import { ProviderMark } from "@/components/marketing/provider-mark";
+
 import { runVerify, type NormalizedResult } from "./verify-runner";
 
-const PROVIDERS = [...CLIENT_VERIFIABLE_RECIPES].sort((a, b) =>
-  providerDisplayName(a.slug).localeCompare(providerDisplayName(b.slug)),
-);
+const ENTRY_BY_SLUG = new Map(PROVIDER_ENTRIES.map((e) => [e.slug, e]));
+
+/**
+ * The provider picker's options — the same shape the dashboard's provider dropdown uses: the shared
+ * `Combobox` with a per-option brand mark. Built once at module scope rather than per render, because
+ * it is 122 options each carrying an icon element.
+ *
+ * Every client-verifiable provider resolves to a REAL logo (65 inline CC0 vectors, 57 committed
+ * favicons — verified, no gaps), so nothing here falls back to a monogram. `ProviderMark` is the
+ * static-site resolver; the dashboard's favicon-proxy route does not exist on this host.
+ */
+const PROVIDER_OPTIONS: readonly ComboboxOption[] = [...CLIENT_VERIFIABLE_RECIPES]
+  .sort((a, b) => providerDisplayName(a.slug).localeCompare(providerDisplayName(b.slug)))
+  .map((r) => {
+    const entry = ENTRY_BY_SLUG.get(r.slug);
+    return {
+      value: r.slug,
+      label: providerDisplayName(r.slug),
+      ...(entry ? { icon: <ProviderMark entry={entry} size={16} /> } : {}),
+    };
+  });
 
 function Field({
   label,
@@ -135,19 +156,22 @@ export function VerifyTool({ initialProvider }: { initialProvider?: string }) {
 
   return (
     <form onSubmit={onVerify} className="grid gap-5" aria-label="Webhook signature verifier">
-      <Field label="Provider">
-        <select
-          className={cn(inputCls, "font-sans")}
+      {/* Not wrapped in `Field`: the Combobox is a button + popover that names itself via its `label`
+          prop, so a surrounding <label> would announce the control twice. The heading is a plain span. */}
+      <div className="block">
+        <span className="mb-1 block text-sm font-medium text-fg">Provider</span>
+        <Combobox
+          label="Provider"
+          options={PROVIDER_OPTIONS}
           value={slug}
-          onChange={(e) => setSlug(e.target.value)}
-        >
-          {PROVIDERS.map((r) => (
-            <option key={r.slug} value={r.slug}>
-              {providerDisplayName(r.slug)}
-            </option>
-          ))}
-        </select>
-      </Field>
+          onChange={setSlug}
+          searchPlaceholder={`Search ${PROVIDER_OPTIONS.length} providers…`}
+          // The shared trigger is `inline-flex` (content-width), which is right in the dashboard's
+          // toolbars but reads as a stray narrow control in this full-width form. Widening it also
+          // widens the popover, which follows `--radix-popover-trigger-width`.
+          className="w-full"
+        />
+      </div>
 
       {isEd25519 && ed25519Supported === false ? (
         <p className="rounded-control border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">

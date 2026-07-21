@@ -297,3 +297,38 @@ test.describe("homepage accessibility (real browser)", () => {
     }
   });
 });
+
+// The provider picker on /verify is a popover listbox of 122 options, each with a brand mark — the
+// same shared Combobox the dashboard uses. The manifest-driven sweep above only ever sees it CLOSED,
+// so the state this control exists for would go unaudited. Open it and scan, the way the surface-tab
+// case above does for the homepage terminals.
+test.describe("/verify provider picker (open state)", () => {
+  test("no violations with the provider popover open", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/verify");
+    await page.getByRole("heading", { level: 1 }).waitFor();
+
+    await page.getByLabel("Provider").click();
+    const listbox = page.getByRole("listbox");
+    await expect(listbox).toBeVisible();
+    // Non-vacuous: a popover that rendered no options would otherwise pass this scan trivially.
+    expect(await listbox.getByRole("option").count()).toBeGreaterThan(50);
+
+    await expectClean(page);
+  });
+
+  test("the picker is keyboard-operable and filters", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/verify");
+    await page.getByRole("heading", { level: 1 }).waitFor();
+
+    await page.getByLabel("Provider").click();
+    await page.getByRole("combobox", { name: /search .* providers/i }).fill("shopify");
+    await page
+      .getByRole("option", { name: /shopify/i })
+      .first()
+      .click();
+    // The signature-header label is recipe-driven, so it proves the selection actually landed.
+    await expect(page.getByText(/x-shopify-hmac-sha256/i)).toBeVisible();
+  });
+});
