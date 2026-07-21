@@ -53,6 +53,39 @@ onlyBuiltDependencies:
 #   body-parser >=1.20.6 -> fixes GHSA-v422-hmwv-36x6 / CVE-2026-12590 (#25, low; an invalid `limit`
 #     silently disables size enforcement). Only the 1.x band: express@5's body-parser@2.3.0 is already
 #     patched and the key does not match it. 1.20.6 satisfies express@4's declared ~1.20.5.
+#
+# The three pins below clear five alerts, all on transitives of ONE direct dependency —
+# apps/mcp's `@modelcontextprotocol/sdk@1.29.0`, which is already the newest published release, so
+# there is no parent bump to take instead. Reachability was measured against the real deployed
+# artifact (`wrangler deploy -c apps/mcp/wrangler.jsonc --dry-run`, 2,673,185 bytes), not inferred
+# from node_modules — only fast-uri is actually in it.
+#   fast-uri >=3.1.3 -> fixes GHSA-4c8g-83qw-93j6 (#30, high; the IDN path calls the non-existent
+#     `URL.domainToASCII`, swallows the resulting TypeError into `parsed.error`, and hands back a
+#     host still in Unicode — a check/use desync for anything gating on that host). The ONLY one of
+#     the five that ships: ajv is statically imported by the SDK's server/index.js and `require`s
+#     fast-uri at isolate init, putting 3 fast-uri modules in the Worker bundle. ajv@8.20.0 declares
+#     `fast-uri ^3.0.1`, so ^3.1.3 is an in-range patch bump. Reached only as ajv's `uriResolver`
+#     for schema `$id`/`$ref` (ajv-formats 3.0.1 implements `format: "uri"` as a regex and never
+#     calls it), and the outbound-delivery URL path does not touch ajv at all — so the HIGH rating
+#     does not carry over to this tree. NB @redocly/cli esbuild-INLINES its own copy of fast-uri
+#     3.1.2, which the lockfile records as a zero-dep leaf; no override can reach those bytes. That
+#     copy is dev-only (`pnpm --filter @webhook-co/openapi validate`) and never deployed.
+#   hono >=4.12.27 -> fixes GHSA-hvrm-45r6-mjfj (#29, med; hono/jsx leaks context across requests),
+#     GHSA-w62v-xxxg-mg59 (#28, med; JSX escaping bypass in cx()) and GHSA-xgm2-5f3f-mvvc (#27, med;
+#     the API Gateway v1 adapter drops a repeated header). None are reachable: hono is 0 of 521
+#     inputs in the deployed bundle, nothing in the tree imports hono/jsx, hono/css or
+#     hono/aws-lambda, and no tsconfig sets jsxImportSource. 4.12.27 satisfies the SDK's declared
+#     ^4.11.4 — an in-range minor, so this is a free hygiene pin.
+#   @hono/node-server >=2.0.5 -> fixes GHSA-frvp-7c67-39w9 (#26, med; serve-static path traversal on
+#     WINDOWS via an encoded backslash). This pin deliberately CROSSES A MAJOR and violates the
+#     SDK's declared `^1.19.9`: 1.19.14 is the last 1.x ever published and the fix floor is 2.0.5,
+#     so no in-range option exists. Safe on three independent counts — the SDK consumes exactly one
+#     symbol from the root entry (`getRequestListener`, dist/esm/server/streamableHttp.js), whose
+#     declaration is byte-identical in 1.19.14 and 2.x; v2's only breaking changes are `engines
+#     node >=20` (we require >=24) and dropping the ./vercel subpath (zero references here); and the
+#     package is absent from the Worker bundle entirely, because `agents` routes MCP through
+#     server/webStandardStreamableHttp.js and never touches the Node transport. Retarget to a 1.x
+#     key if upstream ever widens its range (modelcontextprotocol/typescript-sdk#2531).
 overrides:
   esbuild: 0.28.1
   postcss: 8.5.15
@@ -63,3 +96,6 @@ overrides:
   "undici@<7.28.0": "^7.28.0"
   "brace-expansion@<1.1.16": "^1.1.16"
   "body-parser@<1.20.6": "^1.20.6"
+  "fast-uri@<3.1.3": "^3.1.3"
+  "hono@<4.12.27": "^4.12.27"
+  "@hono/node-server@<2.0.5": "^2.0.5"
