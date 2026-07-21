@@ -11,7 +11,7 @@
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -190,6 +190,12 @@ function serverTooOldMessage(major: number): string {
   );
 }
 
+/** The resolved bin dir, for tests that must spawn a cluster of their own (password-mode.test.ts
+ *  needs a SCRAM cluster, which the harness's own trust-auth path cannot provide). */
+export function pgBinDirForTests(): string {
+  return pgBinDir();
+}
+
 /** Spawn a Postgres binary from the resolved bin dir (never bare PATH — see pgBinDir). */
 function pgRun(cmd: string, args: string[]): void {
   run(join(pgBinDir(), cmd), args);
@@ -210,7 +216,18 @@ function pgRun(cmd: string, args: string[]): void {
  *   INHERIT nor SET — the exact `inherit_option = f, set_option = f` shape Neon has. Granting it
  *   explicitly with INHERIT would hand back ownership rights and defeat the entire exercise.
  */
-function provisionProviderSql(): string {
+function provisionProviderSql(password?: string): string {
+  // On a SCRAM cluster the provisioned provider needs a login password like every other role — and
+  // it is DELIBERATELY not in DB_ROLES (managed-roles.test.ts pins MANAGED_ROLES === DB_ROLES, and
+  // applyRolePasswords connects AS this role, so it cannot be in that loop). Without this, the
+  // README's own local password-mode recipe dies `28P01` before the first migration.
+  //
+  // Set UNCONDITIONALLY, outside the `if not exists` guard: the role is CLUSTER-GLOBAL, so one left
+  // behind by a previous run still carries that run's password. Same reason bootstrapOwner resets
+  // the owner's password every time.
+  const setPassword = password
+    ? `alter role "${PROVIDER_ROLE}" login password '${password.replace(/'/g, "''")}';`
+    : "";
   return `
     do $$
     begin
@@ -221,6 +238,7 @@ function provisionProviderSql(): string {
     $$;
     alter role "${PROVIDER_ROLE}" bypassrls;
     grant pg_read_all_data, pg_write_all_data to "${PROVIDER_ROLE}";
+    ${setPassword}
   `;
 }
 
@@ -326,6 +344,9 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     // eslint-disable-next-line security/detect-possible-timing-attacks -- not a credential compare; this branches on the connection auth MODE
     if (auth === "password") {
       for (const role of MANAGED_ROLES) passwords[role] = randomBytes(18).toString("hex");
+      // The provisioned provider is not in MANAGED_ROLES on purpose (see provisionProviderSql), but
+      // it still has to be able to log in — urlFor reads this map for every role.
+      passwords[PROVIDER_ROLE] = randomBytes(18).toString("hex");
     }
     const passwordFor = (role: string) => passwords[role];
     const urlFor = ({ role, database: db = database }: RoleUrl) =>
@@ -349,7 +370,7 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
         const [{ major }] = await admin<{ major: number }[]>`
           select (current_setting('server_version_num')::int / 10000) as major`;
         if (major < MIN_SERVER_MAJOR) throw new Error(serverTooOldMessage(major));
-        await admin.unsafe(provisionProviderSql());
+        await admin.unsafe(provisionProviderSql(passwords[PROVIDER_ROLE]));
         providerRole = PROVIDER_ROLE;
       }
     } finally {
@@ -480,8 +501,21 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     ]);
     pgRun("createdb", ["-h", host, "-p", String(port), "-U", PROVIDER_ROLE, DEFAULT_DB]);
   } catch (err) {
+    // Read the postmaster's log BEFORE stop() removes the data dir. Without this a failed start is an
+    // opaque `pg_ctl exited 1`, which is exactly the case a version-skewed or permission-blocked
+    // install produces — the one this file's version floor exists to make legible.
+    let tail = "";
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- dataDir is our own mkdtemp() path
+      tail = readFileSync(join(dataDir, "server.log"), "utf8").split("\n").slice(-20).join("\n");
+    } catch {
+      // the postmaster never got far enough to write one
+    }
     stop();
-    throw err;
+    if (!tail) throw err;
+    throw new Error(`${(err as Error).message}\n--- server.log (last 20 lines) ---\n${tail}`, {
+      cause: err,
+    });
   }
 
   return {

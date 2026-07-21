@@ -249,10 +249,11 @@ describe("free-cap notifications (slice 4) — nothing happens to an org un-anno
     // this slice exists to prevent. Force the enqueue to fail by removing the table's insert path for the
     // role, and assert the org is still active afterwards.
     // GRANT/REVOKE runs as `owner` (webhook_owner — the role that ran the migrations and therefore OWNS the
-    // table), NOT `admin`. `admin` is pg.providerUrl: the postgres superuser locally, but only non-inheriting
-    // `neondb_owner` on the nightly's Neon branch, where it owns nothing — so a REVOKE issued as `admin` there
-    // silently no-ops with a WARNING, this assertion flips, and the NIGHTLY goes red while every
-    // local and PR run stays green (the #383 pattern). See the `api-key-last-used` grant/revoke test.
+    // table), NOT `admin`. `admin` is pg.providerUrl, which owns nothing in EITHER lane since #728
+    // (`test_provider` locally, `neondb_owner` on the nightly's Neon branch) — so a REVOKE issued as
+    // `admin` silently no-ops with a WARNING and this assertion flips. That used to be visible only on
+    // the nightly, because the local provider was a superuser (the #383 pattern); it now fails locally
+    // too. See the `api-key-last-used` grant/revoke test.
     const org = await seedOrg();
     await owner`revoke insert on notification_intents from ${owner(DB_ROLES.capReconciler)}`;
     try {

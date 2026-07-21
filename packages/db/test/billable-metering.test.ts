@@ -62,9 +62,10 @@ beforeAll(async () => {
   // Cleanup TRUNCATEs, so it runs as the SCHEMA OWNER — not as `provider`. TRUNCATE requires
   // ownership, and on the nightly's Neon branch the provider role owns nothing (it holds
   // webhook_owner membership with inherit_option = f) → 42501 permission denied. RLS never filters
-  // TRUNCATE, so the owner's FORCE RLS is not in the way. Locally the provider IS the postgres
-  // superuser, which bypasses the ACL check — which is exactly why truncating on it passed every
-  // local run and only broke on the nightly, against Neon (issue #383).
+  // TRUNCATE, so the owner's FORCE RLS is not in the way. The provider USED to be the postgres
+  // superuser locally, which bypasses the ACL check — which is exactly why truncating on it passed
+  // every local run and only broke on the nightly, against Neon (issue #383). Since #728 it is a
+  // non-superuser in BOTH lanes, so that mistake now fails locally too (provider-fidelity.test.ts).
   owner = createClient(pg.ownerUrl);
 }, setupHookTimeoutMs());
 

@@ -13,12 +13,22 @@
     "test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"],
-      "passThroughEnv": ["TEST_DATABASE_URL", "TEST_DATABASE_EXPECTED_HOST", "DATABASE_URL"]
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "TEST_DATABASE_EXPECTED_HOST",
+        "TEST_PG_BINDIR",
+        "DATABASE_URL"
+      ]
     },
     "test:db": {
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"],
-      "passThroughEnv": ["TEST_DATABASE_URL", "TEST_DATABASE_EXPECTED_HOST", "DATABASE_URL"]
+      "passThroughEnv": [
+        "TEST_DATABASE_URL",
+        "TEST_DATABASE_EXPECTED_HOST",
+        "TEST_PG_BINDIR",
+        "DATABASE_URL"
+      ]
     }
   }
 }
