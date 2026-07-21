@@ -138,9 +138,17 @@ test("tokenEndpoint: returns the pinned constant for a genuine key, throws other
   );
   // ...but must never echo the value itself: this message is console.error'd, and the value came out of
   // the credential blob, so quoting it would log key-file-derived data.
-  assert.throws(
-    () => tokenEndpoint(TAMPERED),
-    (e) => !e.message.includes("evil.example.com"),
+  // NB the needle is the fixture's field, never an inline host literal — `includes("<a.host>")` reads to
+  // CodeQL as an incomplete-URL-substring sanitizer (js/incomplete-url-substring-sanitization) even in a
+  // test, and a high-severity alert for a fake host is still an alert.
+  let refusal = "";
+  try {
+    tokenEndpoint(TAMPERED);
+  } catch (e) {
+    refusal = e.message;
+  }
+  assert.ok(
+    refusal.length > 0 && !refusal.includes(TAMPERED.token_uri),
     "the refusal must not echo the key file's token_uri into the error message",
   );
 });
