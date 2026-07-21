@@ -44,117 +44,117 @@ The open [Standard Webhooks](https://www.standardwebhooks.com/) construction: HM
 
 The signature is computed over the exact request body verbatim — the most common scheme. Digest is SHA-256 unless the row says otherwise.
 
-| Provider                      | slug                | Scheme      | Signature header                            | Handshake |
-| ----------------------------- | ------------------- | ----------- | ------------------------------------------- | --------- |
-| [GitHub](/providers/github)   | `github`            | HMAC-SHA256 | `x-hub-signature-256`                       | —         |
-| [Shopify](/providers/shopify) | `shopify`           | HMAC-SHA256 | `x-shopify-hmac-sha256`                     | —         |
-| [Meta](/providers/meta)       | `meta`              | HMAC-SHA256 | `x-hub-signature-256`                       | Yes       |
-| Pusher                        | `pusher`            | HMAC-SHA256 | `x-pusher-signature`                        | —         |
-| QuickBooks                    | `quickbooks`        | HMAC-SHA256 | `intuit-signature`                          | —         |
-| Chargify                      | `chargify`          | HMAC-SHA256 | `x-chargify-webhook-signature-hmac-sha-256` | —         |
-| LaunchDarkly                  | `launchdarkly`      | HMAC-SHA256 | `x-ld-signature`                            | —         |
-| Modern Treasury               | `modern_treasury`   | HMAC-SHA256 | `x-signature`                               | —         |
-| Autodesk Platform Services    | `autodesk_aps`      | HMAC-SHA1   | `x-adsk-signature`                          | —         |
-| MongoDB Atlas                 | `mongodb_atlas`     | HMAC-SHA1   | `x-mms-signature`                           | —         |
-| Xero                          | `xero`              | HMAC-SHA256 | `x-xero-signature`                          | —         |
-| Segment                       | `segment`           | HMAC-SHA1   | `x-signature`                               | —         |
-| AfterShip                     | `aftership`         | HMAC-SHA256 | `aftership-hmac-sha256`                     | —         |
-| Onfleet                       | `onfleet`           | HMAC-SHA512 | `x-onfleet-signature`                       | —         |
-| Microsoft Teams               | `ms_teams`          | HMAC-SHA256 | `authorization` (`HMAC <b64>`)              | —         |
-| Ably                          | `ably`              | HMAC-SHA256 | `x-ably-signature`                          | —         |
-| Squarespace                   | `squarespace`       | HMAC-SHA256 | `squarespace-signature`                     | —         |
-| Nylas                         | `nylas`             | HMAC-SHA256 | `x-nylas-signature`                         | —         |
-| LinkedIn                      | `linkedin`          | HMAC-SHA256 | `x-li-signature`                            | —         |
-| Bolt                          | `bolt`              | HMAC-SHA256 | `x-bolt-hmac-sha256`                        | —         |
-| Primer                        | `primer`            | HMAC-SHA256 | `x-signature-primary`                       | —         |
-| Tally                         | `tally`             | HMAC-SHA256 | `tally-signature`                           | —         |
-| Framer                        | `framer`            | HMAC-SHA256 | `framer-signature`                          | —         |
-| Ashby                         | `ashby`             | HMAC-SHA256 | `ashby-signature`                           | —         |
-| Merge                         | `merge_dev`         | HMAC-SHA256 | `x-merge-webhook-signature`                 | —         |
-| Cronofy                       | `cronofy`           | HMAC-SHA256 | `cronofy-hmac-sha256`                       | —         |
-| Deel                          | `deel`              | HMAC-SHA256 | `x-deel-signature`                          | —         |
-| Razorpay                      | `razorpay`          | HMAC-SHA256 | `x-razorpay-signature`                      | —         |
-| Sentry                        | `sentry`            | HMAC-SHA256 | `sentry-hook-signature`                     | —         |
-| Linear                        | `linear`            | HMAC-SHA256 | `linear-signature`                          | —         |
-| Dropbox                       | `dropbox`           | HMAC-SHA256 | `x-dropbox-signature`                       | Yes       |
-| Checkout.com                  | `checkout_com`      | HMAC-SHA256 | `cko-signature`                             | —         |
-| Lemon Squeezy                 | `lemon_squeezy`     | HMAC-SHA256 | `x-signature`                               | —         |
-| Coinbase Commerce             | `coinbase_commerce` | HMAC-SHA256 | `x-cc-webhook-signature`                    | —         |
-| Dwolla                        | `dwolla`            | HMAC-SHA256 | `x-request-signature-sha-256`               | —         |
-| GoCardless                    | `gocardless`        | HMAC-SHA256 | `webhook-signature`                         | —         |
-| Notion                        | `notion`            | HMAC-SHA256 | `x-notion-signature`                        | —         |
-| WooCommerce                   | `woocommerce`       | HMAC-SHA256 | `x-wc-webhook-signature`                    | —         |
-| Bitbucket                     | `bitbucket`         | HMAC-SHA256 | `x-hub-signature`                           | —         |
-| Jira (system webhooks)        | `atlassian_jira`    | HMAC-SHA256 | `x-hub-signature`                           | —         |
-| X (Twitter)                   | `x`                 | HMAC-SHA256 | `x-twitter-webhooks-signature`              | Yes       |
-| ClickUp                       | `clickup`           | HMAC-SHA256 | `x-signature`                               | —         |
-| npm                           | `npm`               | HMAC-SHA256 | `x-npm-signature`                           | —         |
-| Heroku                        | `heroku`            | HMAC-SHA256 | `heroku-webhook-hmac-sha256`                | —         |
-| Dub                           | `dub`               | HMAC-SHA256 | `dub-signature`                             | —         |
-| Cal.com                       | `cal_com`           | HMAC-SHA256 | `x-cal-signature-256`                       | —         |
-| Asana                         | `asana`             | HMAC-SHA256 | `x-hook-signature`                          | Yes       |
-| CircleCI                      | `circleci`          | HMAC-SHA256 | `circleci-signature`                        | —         |
-| PagerDuty                     | `pagerduty`         | HMAC-SHA256 | `x-pagerduty-signature`                     | —         |
-| Airtable                      | `airtable`          | HMAC-SHA256 | `x-airtable-content-mac`                    | —         |
-| DocuSign                      | `docusign`          | HMAC-SHA256 | `x-docusign-signature-1`                    | —         |
-| Vercel                        | `vercel`            | HMAC-SHA1   | `x-vercel-signature`                        | —         |
-| Intercom                      | `intercom`          | HMAC-SHA1   | `x-hub-signature`                           | —         |
-| Paystack                      | `paystack`          | HMAC-SHA512 | `x-paystack-signature`                      | —         |
-| Authorize.Net                 | `authorize_net`     | HMAC-SHA512 | `x-anet-signature`                          | —         |
-| Typeform                      | `typeform`          | HMAC-SHA256 | `typeform-signature`                        | —         |
+| Provider                        | slug                | Scheme      | Signature header                            | Handshake |
+| ------------------------------- | ------------------- | ----------- | ------------------------------------------- | --------- |
+| [GitHub](/providers/github)     | `github`            | HMAC-SHA256 | `x-hub-signature-256`                       | —         |
+| [Shopify](/providers/shopify)   | `shopify`           | HMAC-SHA256 | `x-shopify-hmac-sha256`                     | —         |
+| [Meta](/providers/meta)         | `meta`              | HMAC-SHA256 | `x-hub-signature-256`                       | Yes       |
+| Pusher                          | `pusher`            | HMAC-SHA256 | `x-pusher-signature`                        | —         |
+| QuickBooks                      | `quickbooks`        | HMAC-SHA256 | `intuit-signature`                          | —         |
+| Chargify                        | `chargify`          | HMAC-SHA256 | `x-chargify-webhook-signature-hmac-sha-256` | —         |
+| LaunchDarkly                    | `launchdarkly`      | HMAC-SHA256 | `x-ld-signature`                            | —         |
+| Modern Treasury                 | `modern_treasury`   | HMAC-SHA256 | `x-signature`                               | —         |
+| Autodesk Platform Services      | `autodesk_aps`      | HMAC-SHA1   | `x-adsk-signature`                          | —         |
+| MongoDB Atlas                   | `mongodb_atlas`     | HMAC-SHA1   | `x-mms-signature`                           | —         |
+| Xero                            | `xero`              | HMAC-SHA256 | `x-xero-signature`                          | —         |
+| Segment                         | `segment`           | HMAC-SHA1   | `x-signature`                               | —         |
+| AfterShip                       | `aftership`         | HMAC-SHA256 | `aftership-hmac-sha256`                     | —         |
+| Onfleet                         | `onfleet`           | HMAC-SHA512 | `x-onfleet-signature`                       | —         |
+| Microsoft Teams                 | `ms_teams`          | HMAC-SHA256 | `authorization` (`HMAC <b64>`)              | —         |
+| Ably                            | `ably`              | HMAC-SHA256 | `x-ably-signature`                          | —         |
+| Squarespace                     | `squarespace`       | HMAC-SHA256 | `squarespace-signature`                     | —         |
+| Nylas                           | `nylas`             | HMAC-SHA256 | `x-nylas-signature`                         | —         |
+| LinkedIn                        | `linkedin`          | HMAC-SHA256 | `x-li-signature`                            | —         |
+| Bolt                            | `bolt`              | HMAC-SHA256 | `x-bolt-hmac-sha256`                        | —         |
+| Primer                          | `primer`            | HMAC-SHA256 | `x-signature-primary`                       | —         |
+| Tally                           | `tally`             | HMAC-SHA256 | `tally-signature`                           | —         |
+| Framer                          | `framer`            | HMAC-SHA256 | `framer-signature`                          | —         |
+| Ashby                           | `ashby`             | HMAC-SHA256 | `ashby-signature`                           | —         |
+| Merge                           | `merge_dev`         | HMAC-SHA256 | `x-merge-webhook-signature`                 | —         |
+| Cronofy                         | `cronofy`           | HMAC-SHA256 | `cronofy-hmac-sha256`                       | —         |
+| Deel                            | `deel`              | HMAC-SHA256 | `x-deel-signature`                          | —         |
+| Razorpay                        | `razorpay`          | HMAC-SHA256 | `x-razorpay-signature`                      | —         |
+| Sentry                          | `sentry`            | HMAC-SHA256 | `sentry-hook-signature`                     | —         |
+| Linear                          | `linear`            | HMAC-SHA256 | `linear-signature`                          | —         |
+| Dropbox                         | `dropbox`           | HMAC-SHA256 | `x-dropbox-signature`                       | Yes       |
+| Checkout.com                    | `checkout_com`      | HMAC-SHA256 | `cko-signature`                             | —         |
+| Lemon Squeezy                   | `lemon_squeezy`     | HMAC-SHA256 | `x-signature`                               | —         |
+| Coinbase Commerce               | `coinbase_commerce` | HMAC-SHA256 | `x-cc-webhook-signature`                    | —         |
+| Dwolla                          | `dwolla`            | HMAC-SHA256 | `x-request-signature-sha-256`               | —         |
+| GoCardless                      | `gocardless`        | HMAC-SHA256 | `webhook-signature`                         | —         |
+| Notion                          | `notion`            | HMAC-SHA256 | `x-notion-signature`                        | —         |
+| WooCommerce                     | `woocommerce`       | HMAC-SHA256 | `x-wc-webhook-signature`                    | —         |
+| Bitbucket                       | `bitbucket`         | HMAC-SHA256 | `x-hub-signature`                           | —         |
+| Jira (system webhooks)          | `atlassian_jira`    | HMAC-SHA256 | `x-hub-signature`                           | —         |
+| X (Twitter)                     | `x`                 | HMAC-SHA256 | `x-twitter-webhooks-signature`              | Yes       |
+| ClickUp                         | `clickup`           | HMAC-SHA256 | `x-signature`                               | —         |
+| npm                             | `npm`               | HMAC-SHA256 | `x-npm-signature`                           | —         |
+| Heroku                          | `heroku`            | HMAC-SHA256 | `heroku-webhook-hmac-sha256`                | —         |
+| Dub                             | `dub`               | HMAC-SHA256 | `dub-signature`                             | —         |
+| Cal.com                         | `cal_com`           | HMAC-SHA256 | `x-cal-signature-256`                       | —         |
+| Asana                           | `asana`             | HMAC-SHA256 | `x-hook-signature`                          | Yes       |
+| CircleCI                        | `circleci`          | HMAC-SHA256 | `circleci-signature`                        | —         |
+| PagerDuty                       | `pagerduty`         | HMAC-SHA256 | `x-pagerduty-signature`                     | —         |
+| Airtable                        | `airtable`          | HMAC-SHA256 | `x-airtable-content-mac`                    | —         |
+| [DocuSign](/providers/docusign) | `docusign`          | HMAC-SHA256 | `x-docusign-signature-1`                    | —         |
+| Vercel                          | `vercel`            | HMAC-SHA1   | `x-vercel-signature`                        | —         |
+| Intercom                        | `intercom`          | HMAC-SHA1   | `x-hub-signature`                           | —         |
+| Paystack                        | `paystack`          | HMAC-SHA512 | `x-paystack-signature`                      | —         |
+| Authorize.Net                   | `authorize_net`     | HMAC-SHA512 | `x-anet-signature`                          | —         |
+| Typeform                        | `typeform`          | HMAC-SHA256 | `typeform-signature`                        | —         |
 
 ## HMAC with a signed timestamp
 
 The signed message includes a timestamp (from a header or a field inside the signature header), so the signature also fences a replay window. Digest is SHA-256 unless noted.
 
-| Provider                     | slug          | Scheme      | Signature header                    | Handshake |
-| ---------------------------- | ------------- | ----------- | ----------------------------------- | --------- |
-| [Stripe](/providers/stripe)  | `stripe`      | HMAC-SHA256 | `stripe-signature`                  | —         |
-| [Slack](/providers/slack)    | `slack`       | HMAC-SHA256 | `x-slack-signature`                 | Yes       |
-| Webflow                      | `webflow`     | HMAC-SHA256 | `x-webflow-signature`               | —         |
-| Klaviyo                      | `klaviyo`     | HMAC-SHA256 | `klaviyo-signature`                 | —         |
-| Mux                          | `mux`         | HMAC-SHA256 | `mux-signature`                     | —         |
-| Shippo                       | `shippo`      | HMAC-SHA256 | `shippo-auth-signature`             | —         |
-| Buildkite                    | `buildkite`   | HMAC-SHA256 | `x-buildkite-signature`             | —         |
-| TikTok                       | `tiktok`      | HMAC-SHA256 | `tiktok-signature`                  | —         |
-| Airship                      | `airship`     | HMAC-SHA256 | `x-ua-signature`                    | —         |
-| Lob                          | `lob`         | HMAC-SHA256 | `lob-signature`                     | —         |
-| Persona                      | `persona`     | HMAC-SHA256 | `persona-signature`                 | —         |
-| Airwallex                    | `airwallex`   | HMAC-SHA256 | `x-signature`                       | —         |
-| Affirm                       | `affirm`      | HMAC-SHA512 | `x-affirm-signature`                | —         |
-| Customer.io (Journeys)       | `customer_io` | HMAC-SHA256 | `x-cio-signature`                   | —         |
-| Box                          | `box`         | HMAC-SHA256 | `box-signature-primary`             | —         |
-| ConfigCat                    | `configcat`   | HMAC-SHA256 | `x-configcat-webhook-signature-v1`  | —         |
-| Knock                        | `knock`       | HMAC-SHA256 | `x-knock-signature`                 | —         |
-| Calendly                     | `calendly`    | HMAC-SHA256 | `calendly-webhook-signature`        | —         |
-| Zoom                         | `zoom`        | HMAC-SHA256 | `x-zm-signature`                    | Yes       |
-| Customer.io (Data Pipelines) | `customerio`  | HMAC-SHA256 | `x-cio-signature`                   | —         |
-| Sinch                        | `sinch`       | HMAC-SHA256 | `x-sinch-webhook-signature`         | —         |
-| WorkOS                       | `workos`      | HMAC-SHA256 | `workos-signature`                  | —         |
-| Front                        | `front`       | HMAC-SHA256 | `x-front-signature`                 | —         |
-| Zendesk                      | `zendesk`     | HMAC-SHA256 | `x-zendesk-webhook-signature`       | —         |
-| Twitch                       | `twitch`      | HMAC-SHA256 | `twitch-eventsub-message-signature` | Yes       |
-| Paddle                       | `paddle`      | HMAC-SHA256 | `paddle-signature`                  | —         |
-| Recurly                      | `recurly`     | HMAC-SHA256 | `recurly-signature`                 | —         |
-| Sanity                       | `sanity`      | HMAC-SHA256 | `sanity-webhook-signature`          | —         |
+| Provider                      | slug          | Scheme      | Signature header                    | Handshake |
+| ----------------------------- | ------------- | ----------- | ----------------------------------- | --------- |
+| [Stripe](/providers/stripe)   | `stripe`      | HMAC-SHA256 | `stripe-signature`                  | —         |
+| [Slack](/providers/slack)     | `slack`       | HMAC-SHA256 | `x-slack-signature`                 | Yes       |
+| Webflow                       | `webflow`     | HMAC-SHA256 | `x-webflow-signature`               | —         |
+| [Klaviyo](/providers/klaviyo) | `klaviyo`     | HMAC-SHA256 | `klaviyo-signature`                 | —         |
+| Mux                           | `mux`         | HMAC-SHA256 | `mux-signature`                     | —         |
+| Shippo                        | `shippo`      | HMAC-SHA256 | `shippo-auth-signature`             | —         |
+| Buildkite                     | `buildkite`   | HMAC-SHA256 | `x-buildkite-signature`             | —         |
+| TikTok                        | `tiktok`      | HMAC-SHA256 | `tiktok-signature`                  | —         |
+| Airship                       | `airship`     | HMAC-SHA256 | `x-ua-signature`                    | —         |
+| Lob                           | `lob`         | HMAC-SHA256 | `lob-signature`                     | —         |
+| Persona                       | `persona`     | HMAC-SHA256 | `persona-signature`                 | —         |
+| Airwallex                     | `airwallex`   | HMAC-SHA256 | `x-signature`                       | —         |
+| Affirm                        | `affirm`      | HMAC-SHA512 | `x-affirm-signature`                | —         |
+| Customer.io (Journeys)        | `customer_io` | HMAC-SHA256 | `x-cio-signature`                   | —         |
+| Box                           | `box`         | HMAC-SHA256 | `box-signature-primary`             | —         |
+| ConfigCat                     | `configcat`   | HMAC-SHA256 | `x-configcat-webhook-signature-v1`  | —         |
+| Knock                         | `knock`       | HMAC-SHA256 | `x-knock-signature`                 | —         |
+| Calendly                      | `calendly`    | HMAC-SHA256 | `calendly-webhook-signature`        | —         |
+| Zoom                          | `zoom`        | HMAC-SHA256 | `x-zm-signature`                    | Yes       |
+| Customer.io (Data Pipelines)  | `customerio`  | HMAC-SHA256 | `x-cio-signature`                   | —         |
+| Sinch                         | `sinch`       | HMAC-SHA256 | `x-sinch-webhook-signature`         | —         |
+| WorkOS                        | `workos`      | HMAC-SHA256 | `workos-signature`                  | —         |
+| Front                         | `front`       | HMAC-SHA256 | `x-front-signature`                 | —         |
+| [Zendesk](/providers/zendesk) | `zendesk`     | HMAC-SHA256 | `x-zendesk-webhook-signature`       | —         |
+| Twitch                        | `twitch`      | HMAC-SHA256 | `twitch-eventsub-message-signature` | Yes       |
+| Paddle                        | `paddle`      | HMAC-SHA256 | `paddle-signature`                  | —         |
+| Recurly                       | `recurly`     | HMAC-SHA256 | `recurly-signature`                 | —         |
+| Sanity                        | `sanity`      | HMAC-SHA256 | `sanity-webhook-signature`          | —         |
 
 ## HMAC over request context
 
 These sign more than the body — the request URL, sorted form fields, specific JSON fields, or a manifest. Some carry the signature in the body or a form field rather than a header.
 
-| Provider                           | slug           | Scheme                                    | Signature location              | Handshake |
-| ---------------------------------- | -------------- | ----------------------------------------- | ------------------------------- | --------- |
-| [Square](/providers/square)        | `square`       | HMAC-SHA256 · URL \+ body                 | `x-square-hmacsha256-signature` | —         |
-| Trello                             | `trello`       | HMAC-SHA1 · body \+ URL                   | `x-trello-webhook`              | —         |
-| [Twilio](/providers/twilio)        | `twilio`       | HMAC-SHA1 · URL \+ form fields            | `x-twilio-signature`            | —         |
-| Mailchimp Transactional (Mandrill) | `mandrill`     | HMAC-SHA1 · URL \+ form fields            | `x-mandrill-signature`          | —         |
-| [HubSpot](/providers/hubspot)      | `hubspot`      | HMAC-SHA256 · method \+ URL \+ body \+ ts | `x-hubspot-signature-v3`        | —         |
-| [Adyen](/providers/adyen)          | `adyen`        | HMAC-SHA256 · signed body fields          | in body (`hmacSignature`)       | —         |
-| Mailgun                            | `mailgun`      | HMAC-SHA256 · timestamp \+ token          | in body (`signature`)           | —         |
-| Mercado Pago                       | `mercado_pago` | HMAC-SHA256 · id/request-id/ts manifest   | `x-signature`                   | —         |
-| [Braintree](/providers/braintree)  | `braintree`    | HMAC-SHA1 · signs `bt_payload`            | form field (`bt_signature`)     | Yes       |
-| Contentful                         | `contentful`   | HMAC-SHA256 · canonical request           | `x-contentful-signature`        | —         |
-| Plivo                              | `plivo`        | HMAC-SHA256 · URL \+ body                 | `x-plivo-signature-v3`          | —         |
+| Provider                            | slug           | Scheme                                    | Signature location              | Handshake |
+| ----------------------------------- | -------------- | ----------------------------------------- | ------------------------------- | --------- |
+| [Square](/providers/square)         | `square`       | HMAC-SHA256 · URL \+ body                 | `x-square-hmacsha256-signature` | —         |
+| Trello                              | `trello`       | HMAC-SHA1 · body \+ URL                   | `x-trello-webhook`              | —         |
+| [Twilio](/providers/twilio)         | `twilio`       | HMAC-SHA1 · URL \+ form fields            | `x-twilio-signature`            | —         |
+| Mailchimp Transactional (Mandrill)  | `mandrill`     | HMAC-SHA1 · URL \+ form fields            | `x-mandrill-signature`          | —         |
+| [HubSpot](/providers/hubspot)       | `hubspot`      | HMAC-SHA256 · method \+ URL \+ body \+ ts | `x-hubspot-signature-v3`        | —         |
+| [Adyen](/providers/adyen)           | `adyen`        | HMAC-SHA256 · signed body fields          | in body (`hmacSignature`)       | —         |
+| [Mailgun](/providers/mailgun)       | `mailgun`      | HMAC-SHA256 · timestamp \+ token          | in body (`signature`)           | —         |
+| Mercado Pago                        | `mercado_pago` | HMAC-SHA256 · id/request-id/ts manifest   | `x-signature`                   | —         |
+| [Braintree](/providers/braintree)   | `braintree`    | HMAC-SHA1 · signs `bt_payload`            | form field (`bt_signature`)     | Yes       |
+| [Contentful](/providers/contentful) | `contentful`   | HMAC-SHA256 · canonical request           | `x-contentful-signature`        | —         |
+| Plivo                               | `plivo`        | HMAC-SHA256 · URL \+ body                 | `x-plivo-signature-v3`          | —         |
 
 ## JWT (HS256)
 
@@ -172,19 +172,19 @@ The signature is a JWT signed with a shared secret. Some bind the body via a has
 
 Public-key verification — you register the provider's **public key** (or, for remote-key providers, an issuer URL or app credentials the engine uses to fetch the key). Nothing you hold can forge one of these.
 
-| Provider         | slug               | Scheme                  | Signature location                       | Handshake |
-| ---------------- | ------------------ | ----------------------- | ---------------------------------------- | --------- |
-| Keygen           | `keygen`           | Ed25519                 | `keygen-signature`                       | —         |
-| Constant Contact | `constant_contact` | RS256 (remote JWKS)     | `x-ctct-webhook-sig`                     | —         |
-| Discord          | `discord`          | Ed25519                 | `x-signature-ed25519`                    | Yes       |
-| Telnyx           | `telnyx`           | Ed25519                 | `telnyx-signature-ed25519`               | —         |
-| SendGrid         | `sendgrid`         | ECDSA P-256             | `x-twilio-email-event-webhook-signature` | —         |
-| Wise             | `wise`             | RSA-SHA256              | `x-signature-sha256`                     | —         |
-| Kinde            | `kinde`            | RS256 JWT (remote JWKS) | body is a JWT (no header)                | —         |
-| PayPal           | `paypal`           | RSA (remote cert)       | `paypal-transmission-sig`                | —         |
-| Amazon SNS       | `aws_sns`          | RSA (remote cert)       | in body (message JSON)                   | —         |
-| Plaid            | `plaid`            | ES256 JWT (remote key)  | `plaid-verification`                     | —         |
-| eBay             | `ebay`             | ECDSA-SHA1 (remote key) | `x-ebay-signature`                       | Yes       |
+| Provider                        | slug               | Scheme                  | Signature location                       | Handshake |
+| ------------------------------- | ------------------ | ----------------------- | ---------------------------------------- | --------- |
+| Keygen                          | `keygen`           | Ed25519                 | `keygen-signature`                       | —         |
+| Constant Contact                | `constant_contact` | RS256 (remote JWKS)     | `x-ctct-webhook-sig`                     | —         |
+| [Discord](/providers/discord)   | `discord`          | Ed25519                 | `x-signature-ed25519`                    | Yes       |
+| Telnyx                          | `telnyx`           | Ed25519                 | `telnyx-signature-ed25519`               | —         |
+| [SendGrid](/providers/sendgrid) | `sendgrid`         | ECDSA P-256             | `x-twilio-email-event-webhook-signature` | —         |
+| Wise                            | `wise`             | RSA-SHA256              | `x-signature-sha256`                     | —         |
+| Kinde                           | `kinde`            | RS256 JWT (remote JWKS) | body is a JWT (no header)                | —         |
+| PayPal                          | `paypal`           | RSA (remote cert)       | `paypal-transmission-sig`                | —         |
+| Amazon SNS                      | `aws_sns`          | RSA (remote cert)       | in body (message JSON)                   | —         |
+| Plaid                           | `plaid`            | ES256 JWT (remote key)  | `plaid-verification`                     | —         |
+| eBay                            | `ebay`             | ECDSA-SHA1 (remote key) | `x-ebay-signature`                       | Yes       |
 
 ## Token / HTTP Basic
 
