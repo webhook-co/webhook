@@ -104,12 +104,16 @@ export function TutorialPage({ tutorial: t }: { tutorial: Tutorial }) {
               What {t.name} sends
             </h2>
             <p className={cn(body, "mb-4")}>{t.eventsIntro}</p>
-            {/* Identifiers can be long; let the list scroll rather than the page (mobile.spec.ts). */}
+            {/* Long identifiers WRAP rather than scroll. Making each chip an overflow-x box turned it
+                into a scrollable region, which axe requires to be keyboard-focusable — and satisfying
+                that would have meant a tab stop per chip, so sixteen of them on the way to the next
+                real control. Wrapping removes the scroll container instead of accommodating it, and
+                still keeps the page itself from widening on a phone. */}
             <ul className="flex flex-wrap gap-2">
               {t.eventExamples.map((ev) => (
                 <li
                   key={ev}
-                  className="max-w-full overflow-x-auto rounded-control border border-hairline bg-surface-sunken px-2.5 py-1 font-mono text-sm whitespace-nowrap text-fg"
+                  className="max-w-full rounded-control border border-hairline bg-surface-sunken px-2.5 py-1 font-mono text-sm break-words text-fg"
                 >
                   {ev}
                 </li>

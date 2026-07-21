@@ -109,6 +109,76 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     sitemap: true,
   },
 
+  {
+    path: "/test/gitlab",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/hubspot",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/twilio",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/ms_teams",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/airtable",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/notion",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/zoom",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/calendly",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/zendesk",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/test/sendgrid",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
   // The /play sandbox: NOINDEX (sitemap:false + a robots noindex on the page) because it renders
   // ephemeral user-generated capture content that must never be indexed under the brand. Still a11y-
   // scanned. Not in the sitemap → the built-HTML SEO gate (which walks the sitemap) skips it, so its
