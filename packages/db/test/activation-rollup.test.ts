@@ -38,9 +38,12 @@ let meter: Sql;
 // The provider (RLS-bypassing) connection — the harness handle for cross-org ops writes/reads: seeding the
 // owner-managed metric-exclusions list and simulating retention prunes.
 let provider: Sql;
-// The SCHEMA OWNER connection. activation_weekly_review() has EXECUTE revoked from PUBLIC and granted to
-// nobody, so webhook_owner is the ONLY role that may call it — and `provider` is NOT it on Neon (#717).
-let owner: Sql;
+// The PRODUCTION caller: the least-privilege webhook_activation_reviewer connection, which is exactly what
+// `GET /v1/internal/activation/weekly` opens over its Hyperdrive. 0092 revokes EXECUTE from PUBLIC and 0093
+// grants it back to this one role, so the ACL is {owner, reviewer} — and the Neon provider role is in
+// NEITHER (#717). Reading through the real role is the only thing that proves the prod path works: until
+// 0093 the role existed solely by hand in production, so nothing here exercised it (#721).
+let reviewer: Sql;
 
 /** Seed an org (with an explicit created_at = signup time) + one endpoint + optionally one event at
  *  `eventAtMs`. received_at is trigger-stamped to now() on INSERT (events_received_at_biu), so the fixture
@@ -149,14 +152,14 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
   provider = createClient(pg.providerUrl);
-  owner = createClient(pg.ownerUrl);
+  reviewer = createClient(pg.urlFor({ role: DB_ROLES.activationReviewer }));
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
   await meter?.end();
   await provider?.end();
-  await owner?.end();
+  await reviewer?.end();
   await pg?.stop();
 });
 
@@ -277,12 +280,13 @@ describe("activation_weekly_review (SECURITY DEFINER, aggregate-only)", () => {
     // never writes them.
     await provider`insert into activation_org_exclusions (org_id, reason) values (${d.orgId}, ${"test"})`;
 
-    // Called via the SCHEMA OWNER connection — the only role holding EXECUTE. 0092 revokes it from PUBLIC
-    // and grants it to nobody, so the ACL is `{webhook_owner=X/webhook_owner}`. NOT `provider`: on the
-    // nightly's Neon branch that role holds webhook_owner membership with inherit_option = f AND
-    // set_option = f, so it carries none of the owner's rights (`42501`, #717) — a local superuser papers
-    // over it. And NOT webhook_app, which must never read cross-org platform aggregates (asserted below).
-    const rows = await owner<
+    // Called through the REAL PRODUCTION ROLE — the same least-privilege webhook_activation_reviewer
+    // connection the internal endpoint opens over its Hyperdrive. 0092 revokes EXECUTE from PUBLIC and 0093
+    // grants it back to this role alone. NOT `provider`: on the nightly's Neon branch that role holds
+    // webhook_owner membership with inherit_option = f AND set_option = f, so it carries none of the owner's
+    // rights (`42501`, #717) — a local superuser papers over it. And NOT webhook_app, which must never read
+    // cross-org platform aggregates (asserted below).
+    const rows = await reviewer<
       {
         iso_week: Date;
         signups: string;
@@ -323,23 +327,97 @@ describe("activation_weekly_review (SECURITY DEFINER, aggregate-only)", () => {
     );
   });
 
-  it("EXECUTE is pinned to the schema owner ALONE — PUBLIC revoked, no role granted it back", async () => {
+  it("the reviewer holds EXECUTE and ZERO table privileges — no activation table, no orgs, no events", async () => {
+    // Half the safety argument for handing a network-reachable endpoint its own DB role: the SECURITY
+    // DEFINER function does the reading, so the reviewer needs no table grants at all. If a future migration
+    // hands it `select` on any of these, this fails.
+    //
+    // Scope, precisely: this pins TABLE privileges only. The other half of the boundary is EXECUTE — USAGE
+    // on schema public carries PUBLIC's default EXECUTE on anything that has not revoked it, which is why
+    // 0094 revokes it from the identity definers (pinned in rls.test.ts). Neither assertion alone is
+    // containment; together they are.
+    const [priv] = await provider<
+      {
+        exec: boolean;
+        milestones: boolean;
+        weekly: boolean;
+        exclusions: boolean;
+        orgs: boolean;
+        events: boolean;
+      }[]
+    >`
+      select has_function_privilege(${DB_ROLES.activationReviewer}, 'activation_weekly_review()', 'EXECUTE') as exec,
+             has_table_privilege(${DB_ROLES.activationReviewer}, 'activation_org_milestones', 'SELECT') as milestones,
+             has_table_privilege(${DB_ROLES.activationReviewer}, 'activation_org_weekly', 'SELECT') as weekly,
+             has_table_privilege(${DB_ROLES.activationReviewer}, 'activation_org_exclusions', 'SELECT') as exclusions,
+             has_table_privilege(${DB_ROLES.activationReviewer}, 'orgs', 'SELECT') as orgs,
+             has_table_privilege(${DB_ROLES.activationReviewer}, 'events', 'SELECT') as events`;
+    expect(priv).toEqual({
+      exec: true,
+      milestones: false,
+      weekly: false,
+      exclusions: false,
+      orgs: false,
+      events: false,
+    });
+  });
+
+  it("the reviewer is a LOGIN role that is NON-OWNER, NOSUPERUSER, NOBYPASSRLS", async () => {
+    // `login` is load-bearing, not decoration: apps/api connects AS this role over its Hyperdrive, and
+    // scripts/dev-db.sh gates `pnpm dev:db` on exactly `rolcanlogin` for every role the wrangler bindings
+    // name — which is the check that was failing before 0093 created it (#721). The three negatives are the
+    // reason a network-reachable endpoint may hold its own credential at all: it cannot bypass RLS, cannot
+    // own anything, and cannot mint roles, so it is confined to the one SECURITY DEFINER function.
+    const [role] = await provider<
+      { login: boolean; sup: boolean; brls: boolean; createrole: boolean; createdb: boolean }[]
+    >`
+      select rolcanlogin as login, rolsuper as sup, rolbypassrls as brls, rolcreaterole as createrole,
+             rolcreatedb as createdb
+        from pg_roles where rolname = ${DB_ROLES.activationReviewer}`;
+    expect(role).toEqual({
+      login: true,
+      sup: false,
+      brls: false,
+      createrole: false,
+      createdb: false,
+    });
+  });
+
+  it("EXECUTE is pinned to the owner and the reviewer ALONE — PUBLIC revoked, webhook_app denied", async () => {
     // The declarative counterpart to the rejection above, and the invariant #717 turned on: 0092 revokes
-    // EXECUTE from PUBLIC and grants it to nobody, so `webhook_owner` is the only caller. Two ways this
-    // can silently rot: a future `grant execute … to webhook_app` (every tenant could then enumerate
-    // platform-wide signup/activation), or a re-grant to PUBLIC (same, for every role at once). Asserted
-    // with has_function_privilege + aclexplode, never information_schema — that view only shows grants
-    // visible to the QUERYING role, so on Neon it reports [] and the assertion would false-pass (#413).
+    // EXECUTE from PUBLIC and 0093 grants it back to exactly ONE role, so the callers are {owner, reviewer}.
+    // Two ways this can silently rot: a future `grant execute … to webhook_app` (every tenant could then
+    // enumerate platform-wide signup/activation), or a re-grant to PUBLIC (same, for every role at once).
+    // The grantee COUNT is asserted too, so a grant to some third role also fails here rather than sliding
+    // in unnoticed. Asserted with has_function_privilege + aclexplode, never information_schema — that view
+    // only shows grants visible to the QUERYING role, so on Neon it reports [] and this would false-pass
+    // (#413).
     const [acl] = await provider<
-      { owner_exec: boolean; app_exec: boolean; public_exec: boolean }[]
+      {
+        owner_exec: boolean;
+        reviewer_exec: boolean;
+        app_exec: boolean;
+        public_exec: boolean;
+        grantees: number;
+      }[]
     >`
       select has_function_privilege(${DB_ROLES.owner}, 'activation_weekly_review()', 'EXECUTE') as owner_exec,
+             has_function_privilege(${DB_ROLES.activationReviewer}, 'activation_weekly_review()', 'EXECUTE') as reviewer_exec,
              has_function_privilege(${DB_ROLES.app}, 'activation_weekly_review()', 'EXECUTE') as app_exec,
              exists (
                select 1 from pg_proc p, aclexplode(p.proacl) a
                 where p.proname = 'activation_weekly_review' and a.grantee = 0
-             ) as public_exec`;
-    expect(acl).toEqual({ owner_exec: true, app_exec: false, public_exec: false });
+             ) as public_exec,
+             (select count(distinct a.grantee)::int
+                from pg_proc p, aclexplode(p.proacl) a
+               where p.proname = 'activation_weekly_review') as grantees`;
+    expect(acl).toEqual({
+      owner_exec: true,
+      reviewer_exec: true,
+      app_exec: false,
+      public_exec: false,
+      grantees: 2, // webhook_owner + webhook_activation_reviewer, nobody else
+    });
   });
 });
 
@@ -556,9 +634,10 @@ describe("readActivationWeeklyReview (typed reader)", () => {
     await seedDelivery(f.orgId, f.eventId, "forwarded", wSignup + 168 * HOUR); // +7 days → Jun-22 week
     for (const o of [a, b, c, e, f]) await rollupOrg(o.orgId);
 
-    // Read via the SCHEMA OWNER connection — readActivationWeeklyReview's own contract ("`sql` MUST be an
-    // OWNER connection"). webhook_app is denied EXECUTE by design; so is the Neon provider role (#717).
-    const rows = await readActivationWeeklyReview(owner);
+    // Read through the reviewer role — the exact handle apps/api hands this same function in production, so
+    // this covers the wrapper AND its caller's grant in one go. webhook_app is denied EXECUTE by design; so
+    // is the Neon provider role (#717).
+    const rows = await readActivationWeeklyReview(reviewer);
     const row = rows.find((r) => r.isoWeek === wk);
 
     expect(row).toBeDefined();

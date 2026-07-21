@@ -129,6 +129,7 @@ let owner: Sql; // webhook_owner — schema owner (non-superuser)
 let anchor: Sql; // webhook_anchor — WORM head-anchor cross-org chain-head reader
 let sweeper: Sql; // webhook_sweeper — cross-org expiry cron-sweep (DELETE-only on the two token tables)
 let reconciler: Sql; // webhook_reconciler — cross-org delivery-reconciliation reader (re-wake cron)
+let reviewer: Sql; // webhook_activation_reviewer — least-privilege activation read (0093)
 let notifier: Sql; // webhook_notifier — cross-org notification-drain (read intents+owner email, mark sent)
 let root: Sql; // cluster superuser — used only to prove trigger-level immutability
 let orgA: Seeded;
@@ -209,6 +210,7 @@ beforeAll(async () => {
   sweeper = createClient(pg.urlFor({ role: DB_ROLES.sweeper }));
   reconciler = createClient(pg.urlFor({ role: DB_ROLES.reconciler }));
   notifier = createClient(pg.urlFor({ role: DB_ROLES.notifier }));
+  reviewer = createClient(pg.urlFor({ role: DB_ROLES.activationReviewer }));
   root = createClient(pg.providerUrl);
   orgA = await seedOrg("aaa");
   orgB = await seedOrg("bbb");
@@ -222,6 +224,7 @@ afterAll(async () => {
   await sweeper?.end();
   await reconciler?.end();
   await notifier?.end();
+  await reviewer?.end();
   await root?.end();
   await pg?.stop();
 });
@@ -1689,6 +1692,79 @@ describe("no unexpected SECURITY DEFINER functions", () => {
       where pronamespace = 'public'::regnamespace and prosecdef
       order by proname`;
     expect(definers.map((d) => d.proname)).toEqual(ALLOWED_SECURITY_DEFINERS);
+  });
+
+  it("no identity/directory definer is executable by PUBLIC — a definer is not a public API", async () => {
+    // A SECURITY DEFINER supplies its OWN privilege, so EXECUTE is the entire access control on it. Postgres
+    // grants EXECUTE to PUBLIC by default, which made the explicit `grant … to webhook_app` on these three
+    // decorative: any role that can log in and holds USAGE on schema public — all twelve least-privilege
+    // roles, incl. webhook_ingest on the unauthenticated hot path — could call them. And their only gate is a
+    // GUC the CALLER sets, so `set_config('app.current_user', <victim>)` + current_user_profile() returned a
+    // victim's name and email. 0094 revokes PUBLIC; this pins it.
+    //
+    // Asserted over the FINAL migrated schema on purpose: `create or replace` preserves an ACL but
+    // `drop`+`create` RESETS it, and 0069/0070/0082/0083/0091 all recreate these. So a future migration that
+    // rebuilds one of them hands PUBLIC its EXECUTE back — and fails here rather than in the wild.
+    const leaky = await owner<{ proname: string }[]>`
+      select p.proname
+        from pg_proc p, aclexplode(p.proacl) a
+       where p.pronamespace = 'public'::regnamespace
+         and a.grantee = 0
+         and a.privilege_type = 'EXECUTE'
+         and p.proname in ('current_user_profile', 'user_org_directory', 'org_member_directory',
+                           'activation_weekly_review')
+       order by 1`;
+    expect(leaky.map((r) => r.proname)).toEqual([]);
+  });
+
+  it("webhook_app is the ONLY grantee on the identity definers — exclusivity, not just no-PUBLIC", async () => {
+    // Asserting "PUBLIC is gone" and "webhook_app still has it" would BOTH stay green if someone later
+    // added `grant execute … to webhook_ingest`, quietly reopening cross-tenant identity reads through a
+    // caller-set GUC. So pin the whole grantee SET, the way activation_weekly_review's ACL test does.
+    const grants = await owner<{ proname: string; grantee: string }[]>`
+      select p.proname, pg_get_userbyid(a.grantee) as grantee
+        from pg_proc p, aclexplode(p.proacl) a
+       where p.pronamespace = 'public'::regnamespace
+         and a.privilege_type = 'EXECUTE'
+         and a.grantee <> 0
+         and p.proname in ('current_user_profile', 'user_org_directory', 'org_member_directory')
+       order by p.proname, grantee`;
+    // webhook_owner appears as the definer/owner's own implicit entry; every OTHER grantee must be the
+    // request-path role and nothing else.
+    const nonOwner = grants.filter((g) => g.grantee !== DB_ROLES.owner);
+    expect([...new Set(nonOwner.map((g) => g.grantee))]).toEqual([DB_ROLES.app]);
+    expect(new Set(nonOwner.map((g) => g.proname))).toEqual(
+      new Set(["current_user_profile", "user_org_directory", "org_member_directory"]),
+    );
+  });
+
+  it("a least-privilege role CANNOT read another user's identity through the definer (behavioural)", async () => {
+    // The catalog assertions above describe the ACL; this one performs the actual attack 0094 closes, as
+    // the two roles that most matter — the unauthenticated ingest hot-path role, and the newest
+    // least-privilege reader. Both hold USAGE on schema public, so before 0094 both got a name and email
+    // back for ANY user id they cared to name.
+    for (const [label, sql] of [
+      ["webhook_ingest", ingest],
+      ["webhook_activation_reviewer", reviewer],
+    ] as const) {
+      await expect(
+        sql.begin(async (tx) => {
+          await tx`select set_config('app.current_user', ${orgA.userId}, true)`;
+          return tx`select name, email from current_user_profile()`;
+        }),
+        `${label} must not reach current_user_profile()`,
+      ).rejects.toThrow(/permission denied for function/i);
+    }
+  });
+
+  it("webhook_app KEEPS execute on the identity definers — the revoke must not break the request path", async () => {
+    // The other half of 0094: revoking PUBLIC is only safe because the request-path role holds an explicit
+    // grant. If a rebuild ever drops that, the members list and org switcher break at runtime, not here.
+    const [priv] = await owner<{ profile: boolean; userdir: boolean; orgdir: boolean }[]>`
+      select has_function_privilege(${DB_ROLES.app}, 'current_user_profile()', 'EXECUTE') as profile,
+             has_function_privilege(${DB_ROLES.app}, 'user_org_directory()', 'EXECUTE') as userdir,
+             has_function_privilege(${DB_ROLES.app}, 'org_member_directory()', 'EXECUTE') as orgdir`;
+    expect(priv).toEqual({ profile: true, userdir: true, orgdir: true });
   });
 
   it("webhook_app cannot read the identity table directly — the function is the ONLY path", async () => {

@@ -253,6 +253,47 @@ export function sqlSites(src) {
 }
 
 /**
+ * Transaction handles DERIVED from a bound connection, mapped to the role they therefore carry:
+ * `app.begin(async (tx) => …)`, and the `withTenant` / `withUser` helpers, `withX(app, …, (tx) => …)`.
+ * A transaction is scoped to the SAME connection, so `tx` is exactly as entitled as `app` is.
+ *
+ * Without this, every correct `withTenant(app, …)` call site reads as an unbound handle and the rule cries
+ * wolf — which teaches authors to silence it, a worse outcome than the bug it prevents. Bound only when
+ * every derivation of a given NAME agrees on one role; a name derived from two different connections in the
+ * same file stays unbound, i.e. fails closed.
+ * @param {string} src @param {Map<string, string>} bound already-resolved connection handles
+ * @returns {Map<string, string>}
+ */
+export function derivedHandleScopes(src, bound) {
+  const scopes = [];
+  const add = (
+    /** @type {number} */ open,
+    /** @type {string} */ outer,
+    /** @type {string} */ param,
+  ) => {
+    const role = bound.get(outer);
+    const end = role ? matchParen(src, open) : -1;
+    if (role && end !== -1 && param) scopes.push({ start: open, end, param, role });
+  };
+
+  // `handle.begin(async (tx) => …)`
+  for (const m of src.matchAll(/(\w+)\.begin\(\s*(?:async\s*)?\(\s*(\w+)\s*\)/g)) {
+    add(src.indexOf("(", m.index + m[1].length), m[1], m[2]);
+  }
+  // `withTenant(handle, …, (tx) => …)` / `withUser(handle, …, async (tx) => …)`
+  for (const m of src.matchAll(/\bwith[A-Z]\w*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const end = matchParen(src, open);
+    if (end === -1) continue;
+    const inner = src.slice(open + 1, end);
+    const firstArg = inner.match(/^\s*(\w+)\s*,/);
+    const callback = inner.match(/\(\s*(\w+)\s*\)\s*=>/);
+    if (firstArg && callback) add(open, firstArg[1], callback[1]);
+  }
+  return scopes;
+}
+
+/**
  * Blank quoted string literals (spaces, so offsets and line numbers survive). A wrapper's NAME shows
  * up in prose that is not code — `describe("readActivationWeeklyReview (typed reader)", …)` reads as
  * a call to it with a handle named `typed`. Backtick templates are deliberately LEFT ALONE: they
@@ -264,11 +305,34 @@ export function blankQuotedStrings(src) {
   return src.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, blank);
 }
 
-/** A call the test ASSERTS is rejected is not a mistake — it is the denial being pinned.
- *  @param {string} src @param {number} index @returns {boolean} */
-function isExpectedRejection(src, index) {
-  const before = src.slice(Math.max(0, index - 48), index);
-  return /expect\(\s*(?:\(\s*\)\s*=>\s*)?(?:async\s+)?$/.test(before);
+/** Index of the `)` matching the `(` at `open`, or -1. @param {string} s @param {number} open */
+function matchParen(s, open) {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "(") depth++;
+    else if (s[i] === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The argument spans of every `expect(…)` whose result is `.rejects`. A call the test ASSERTS is
+ * rejected is not a mistake — it IS the denial being pinned, and the strongest form of that assertion
+ * runs the query as the role that must be refused.
+ *
+ * Span-based rather than "does `expect(` sit immediately before the handle": a denial test worth
+ * writing often wraps a whole transaction — `expect(sql.begin(async (tx) => { … tx\`select fn()\` … }))
+ * .rejects` — so the offending handle can be many lines inside the argument.
+ * @param {string} src @returns {[number, number][]}
+ */
+function expectedRejectionSpans(src) {
+  const spans = [];
+  for (const m of src.matchAll(/\bexpect\s*\(/g)) {
+    const open = src.indexOf("(", m.index);
+    const end = matchParen(src, open);
+    if (end !== -1 && /^\s*\.rejects\b/.test(src.slice(end + 1, end + 40))) spans.push([open, end]);
+  }
+  return spans;
 }
 
 /**
@@ -316,13 +380,21 @@ export function ownerOnlyExecuteViolations(file, rawSrc, ctx) {
   const src = blankComments(rawSrc);
   const ownerRole = ctx.roles?.get("owner") ?? "webhook_owner";
   const handles = handleRoles(src, ctx.roles);
+  // A transaction inherits its connection's role, resolved by the INNERMOST enclosing callback rather
+  // than file-globally: a big suite hands `(tx)` out from eight different role pools, so a global name
+  // map would see a conflict everywhere and fail closed on correct code.
+  const scopes = derivedHandleScopes(src, handles);
+  const rejectionSpans = expectedRejectionSpans(src);
   const violations = [];
 
   /** @param {string} handle @param {number} index @param {number} line @param {string} fn @param {string} via */
   const check = (handle, index, line, fn, via) => {
-    if (isExpectedRejection(src, index)) return;
+    if (rejectionSpans.some(([open, end]) => index > open && index < end)) return;
     const allowed = new Set([ownerRole, ...(ctx.ownerOnly.get(fn) ?? [])]);
-    const role = handles.get(handle);
+    const enclosing = scopes
+      .filter((s) => s.param === handle && index > s.start && index < s.end)
+      .sort((a, b) => b.start - a.start)[0];
+    const role = handles.get(handle) ?? enclosing?.role;
     if (role && allowed.has(role)) return;
     violations.push(
       `${file}:${line}: calls the owner-only function \`${fn}()\`${via} on \`${handle}\`, which this ` +

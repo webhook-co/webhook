@@ -85,11 +85,21 @@ private-by-default and must never reach a tenant.
 
 ### Read path
 
-The metric is queryable today over an **owner** connection: `select * from activation_weekly_review();`. A
-typed reader (`readActivationWeeklyReview`) maps the aggregate rows for any caller. A **founder-gated HTTP
-endpoint** is deliberately deferred: it needs a dedicated read-only reviewer DB role + Hyperdrive binding
-(the first HTTP surface for platform-wide aggregates), which a background session can't provision — so it is
-a founder-run follow-up, not shipped dark. See "Deferred" below.
+The metric is read by exactly two identities: the **schema owner** (`select * from activation_weekly_review();`
+— ops/manual) and **`webhook_activation_reviewer`**, the least-privilege role behind the founder-gated HTTP
+endpoint. 0092 revokes EXECUTE from PUBLIC and 0093 grants it back to that one role, so the ACL is
+`{owner, reviewer}` and nothing else — asserted declaratively, grantee count included, in
+`packages/db/test/activation-rollup.test.ts`.
+
+A typed reader (`readActivationWeeklyReview`) maps the aggregate rows; the endpoint hands it a per-request
+reviewer connection, and the tests drive it through that same role rather than through the owner, so the
+production grant is what CI actually exercises. Note the reviewer holds **no table grants** — not even SELECT
+on the three activation tables — because the SECURITY DEFINER function does the reading.
+
+⚠️ A managed provider role that merely holds owner MEMBERSHIP without inheriting it (Neon's `neondb_owner`,
+`inherit_option = f`) is in neither identity and gets `42501`; that cost a nightly in #717, and
+`scripts/remote-db-test-guard.mjs` rule R5 now derives this ACL from the migrations and enforces it at lint
+time.
 
 ### First-touch acquisition attribution
 
@@ -121,11 +131,26 @@ denominator no longer depends on the rollup, which only ever sees orgs that beca
   on the hourly cron; the typed weekly-review reader; and the signup first-touch capture. The metric is real
   and queryable today; no hot-path change; no new AE metric; no PII anywhere; cross-org reads confined to one
   owner-only, aggregate-only function.
+- **Shipped (PR 5, #708):** the founder-gated read surface — the internal, token-gated
+  `GET /v1/internal/activation/weekly`, reading over a dedicated `webhook_activation_reviewer` Hyperdrive.
+- **Shipped (PR 6, #721 / migration 0093):** `webhook_activation_reviewer` is now created **by a migration**.
+  It was originally provisioned by hand in production and lived in no migration, which meant a database
+  rebuilt from migrations silently lacked the read path, `pnpm dev:db` failed its required-login-role check,
+  and the production caller's grant was pinned by no test. Its entire privilege set is USAGE on schema public
+  + EXECUTE on `activation_weekly_review()` — deliberately **no table grants at all**, since the SECURITY
+  DEFINER function does the reading. This is the first `grant execute` in the schema aimed at a
+  least-privilege role rather than `webhook_app`; the review no longer runs as owner SQL.
+- **Shipped (migration 0094 — schema-wide hardening surfaced by the review of 0093):** no table grants is only
+  half a boundary, because USAGE on schema public also carries PUBLIC's **default EXECUTE** on any function
+  that has not revoked it. A SECURITY DEFINER supplies its own privilege, so EXECUTE is the *entire* access
+  control on one — which made the explicit `grant … to webhook_app` on the identity/directory definers
+  (`current_user_profile` 0068, `user_org_directory` 0067, `org_member_directory` 0066) decorative: every
+  least-privilege role already had it by default, and their only gate is a GUC the caller sets. 0094 revokes
+  PUBLIC from all three, leaving `webhook_app` — the only role that ever called them — as the sole caller.
+  Pinned over the FINAL migrated schema in `packages/db/test/rls.test.ts`, because `create or replace`
+  preserves an ACL but `drop`+`create` resets it, and several later migrations rebuild these.
 - **Deferred (founder-run):**
-  1. A **founder-gated read surface** (endpoint/dashboard) — needs a dedicated `webhook_activation_reviewer`
-     role + Hyperdrive binding, provisioned like `webhook_reaper` (a background session is prod-DB blocked).
-     Until then the review runs as owner SQL.
-  2. The **www → auth handoff** that turns first-touch on (below). Until it ships, `signed_up_at` is captured
+  1. The **www → auth handoff** that turns first-touch on (below). Until it ships, `signed_up_at` is captured
      for every signup but `first_touch_*` stays null.
 - **Cross-lane handoff (human-UI verification required):** to activate first-touch,
   (a) the marketing CTA links to `auth.webhook.co/login?utm_source=…&utm_medium=…&utm_campaign=…` (slug
