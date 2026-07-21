@@ -32,7 +32,7 @@ function Field({
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-fg">{label}</span>
-      {hint ? <span className="mb-1.5 block text-xs text-fg-secondary">{hint}</span> : null}
+      {hint ? <span className="mb-1.5 block text-xs text-fg-muted">{hint}</span> : null}
       {children}
     </label>
   );
@@ -192,7 +192,7 @@ export function VerifyTool({ initialProvider }: { initialProvider?: string }) {
       </Field>
 
       {isSigInBody ? (
-        <p className="text-sm text-fg-secondary">
+        <p className="text-sm text-fg-muted">
           {providerDisplayName(slug)} carries the signature inside the request body — no separate
           header needed.
         </p>
@@ -283,7 +283,7 @@ export function VerifyTool({ initialProvider }: { initialProvider?: string }) {
         <Button type="submit" disabled={busy}>
           {busy ? "Verifying…" : "Verify signature"}
         </Button>
-        <span className="text-xs text-fg-secondary">Runs entirely in your browser.</span>
+        <span className="text-xs text-fg-muted">Runs entirely in your browser.</span>
       </div>
 
       {result ? (
