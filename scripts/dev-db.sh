@@ -24,8 +24,12 @@ ROOT="$PWD"
 PGDATA="$ROOT/.dev-pg"
 LOGFILE="$PGDATA/postgres.log"
 
-PG_BIN="$(brew --prefix postgresql@14 2>/dev/null)/bin"
-[ -x "$PG_BIN/initdb" ] || { echo "❌ postgresql@14 not found. brew install postgresql@14" >&2; exit 1; }
+# PG17, matching CI (`postgres:17`), the test harness's floor, and both Neon projects. The version is
+# not cosmetic: the harness models the managed engine's NON-SUPERUSER provider role, which needs PG16+
+# role-membership semantics — see MIN_SERVER_MAJOR in packages/db/test/pg.ts.
+PG_MAJOR=17
+PG_BIN="$(brew --prefix postgresql@$PG_MAJOR 2>/dev/null)/bin"
+[ -x "$PG_BIN/initdb" ] || { echo "❌ postgresql@$PG_MAJOR not found. brew install postgresql@$PG_MAJOR" >&2; exit 1; }
 command -v dbmate >/dev/null || { echo "❌ dbmate not found. brew install dbmate" >&2; exit 1; }
 
 # The dev cluster's shape is DERIVED from the wrangler configs, never restated — see dev-db-config.mjs.

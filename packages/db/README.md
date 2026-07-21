@@ -90,9 +90,16 @@ routines; `ingest_event()` dedup + server-stamped `received_at`; the audit chain
 immutability; and migration up→down→up reversibility.
 
 Locally the harness provisions an ephemeral cluster per test file (`test/pg.ts`). In
-CI (`test-db` job) the same suite runs against a `postgres:14` service container with
+CI (`test-db` job) the same suite runs against a `postgres:17` service container with
 `POSTGRES_HOST_AUTH_METHOD=trust`; each file creates its own database on the service
 for isolation. Set `TEST_DATABASE_URL` to attach to any running Postgres the same way.
+
+**PostgreSQL 17 is required**, in every lane. It is not cosmetic: the harness models the
+managed engine's **non-superuser provider role**, which relies on PG16+ role-membership
+semantics — on an older server the provider inherits the schema owner and silently regains
+every privilege `test/provider-fidelity.test.ts` exists to prove it lacks. The harness finds
+a PG17 install even when `initdb` on `PATH` is older (Homebrew links only one major); set
+`TEST_PG_BINDIR` to override.
 
 **Auth modes.** The harness auto-detects from `TEST_DATABASE_URL`: no password →
 **trust** mode (local cluster / trust-auth CI service); a password (e.g. a Neon URL)

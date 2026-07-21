@@ -862,3 +862,39 @@ test("R6 on the committed tree also proves turbo forwards the expectation", asyn
     );
   }
 });
+
+// ── R1 and negative-path tests ─────────────────────────────────────────────────────────────────
+// Once the LOCAL provider is a non-superuser too (#728), the denials R1 exists to prevent become
+// directly testable — and the strongest form of that test issues the owner-only statement on the
+// provider handle and asserts it is REFUSED. R1 must not flag its own proof. Same tolerance R5
+// already has, via the same expected-rejection spans.
+
+test("R1 tolerates an owner-only DDL that the test ASSERTS is rejected", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await expect(provider\`truncate table orgs\`).rejects.toThrow(/permission denied for table/i);`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", src, FIELDS), []);
+});
+
+test("R1 tolerates a rejection assertion that wraps a whole transaction", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await expect(
+      provider.begin(async (tx) => {
+        await tx\`create index probe_ix on orgs (name)\`;
+      }),
+    ).rejects.toThrow(/must be owner of table/i);`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", src, FIELDS), []);
+});
+
+test("R1 STILL flags the same statement when it is not asserted to reject", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await provider\`truncate table orgs\`;`;
+  const v = remoteSafetyViolations("x.test.ts", src, FIELDS);
+  assert.equal(v.length, 1);
+  assert.match(v[0], /truncate/i);
+});
+
+test("R1 does not treat a mere `expect(...)` without .rejects as permission", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    expect(await provider\`truncate table orgs\`).toBeDefined();`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src, FIELDS).length, 1);
+});
