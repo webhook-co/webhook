@@ -46,7 +46,7 @@ export default function VerifyPage() {
         <div className="mx-auto max-w-[62ch] rounded-panel border border-hairline bg-surface p-[clamp(20px,3vw,32px)]">
           <VerifyTool />
         </div>
-        <p className="mx-auto mt-6 max-w-[62ch] text-sm text-fg-faint">
+        <p className="mx-auto mt-6 max-w-[62ch] text-sm text-fg-secondary">
           How it works: your inputs are assembled into the exact bytes the provider signs, and the
           signature is recomputed with Web Crypto and compared in constant time — the same audited
           engine that verifies every event on webhook.co. Providers whose key is fetched from their
