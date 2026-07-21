@@ -672,3 +672,28 @@ test("R5 fails closed when the same tx name is derived from CONFLICTING roles in
     });`;
   assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
 });
+
+test("R5 exempts a denial test that wraps a whole transaction in expect(...).rejects", () => {
+  // The strongest denial test runs the query AS the refused role, so the handle sits many lines inside
+  // the expect() argument — not immediately after `expect(`. Flagging it would make the guard punish the
+  // very assertion that proves the revoke works.
+  const src = `for (const [label, sql] of [["ingest", ingest]]) {
+      await expect(
+        sql.begin(async (tx) => {
+          await tx\`select set_config('app.current_user', 'x', true)\`;
+          return tx\`select name, email from current_user_profile()\`;
+        }),
+        \`\${label} must not reach it\`,
+      ).rejects.toThrow(/permission denied for function/i);
+    }`;
+  const acl = new Map([["current_user_profile", new Set(["webhook_app"])]]);
+  assert.deepEqual(ownerOnlyExecuteViolations("x.test.ts", src, ctx({ ownerOnly: acl })), []);
+});
+
+test("R5 still flags the SAME shape when it is not asserted to reject", () => {
+  const src = `const provider = createClient(pg.providerUrl);
+    await provider.begin(async (tx) => {
+      return tx\`select * from activation_weekly_review()\`;
+    });`;
+  assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
+});

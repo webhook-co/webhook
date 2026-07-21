@@ -265,16 +265,6 @@ export function sqlSites(src) {
  * @returns {Map<string, string>}
  */
 export function derivedHandleScopes(src, bound) {
-  /** Index of the `)` matching the `(` at `open`, or -1. @param {string} s @param {number} open */
-  const matchParen = (s, open) => {
-    let depth = 0;
-    for (let i = open; i < s.length; i++) {
-      if (s[i] === "(") depth++;
-      else if (s[i] === ")" && --depth === 0) return i;
-    }
-    return -1;
-  };
-
   const scopes = [];
   const add = (
     /** @type {number} */ open,
@@ -315,11 +305,34 @@ export function blankQuotedStrings(src) {
   return src.replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, blank);
 }
 
-/** A call the test ASSERTS is rejected is not a mistake — it is the denial being pinned.
- *  @param {string} src @param {number} index @returns {boolean} */
-function isExpectedRejection(src, index) {
-  const before = src.slice(Math.max(0, index - 48), index);
-  return /expect\(\s*(?:\(\s*\)\s*=>\s*)?(?:async\s+)?$/.test(before);
+/** Index of the `)` matching the `(` at `open`, or -1. @param {string} s @param {number} open */
+function matchParen(s, open) {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "(") depth++;
+    else if (s[i] === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The argument spans of every `expect(…)` whose result is `.rejects`. A call the test ASSERTS is
+ * rejected is not a mistake — it IS the denial being pinned, and the strongest form of that assertion
+ * runs the query as the role that must be refused.
+ *
+ * Span-based rather than "does `expect(` sit immediately before the handle": a denial test worth
+ * writing often wraps a whole transaction — `expect(sql.begin(async (tx) => { … tx\`select fn()\` … }))
+ * .rejects` — so the offending handle can be many lines inside the argument.
+ * @param {string} src @returns {[number, number][]}
+ */
+function expectedRejectionSpans(src) {
+  const spans = [];
+  for (const m of src.matchAll(/\bexpect\s*\(/g)) {
+    const open = src.indexOf("(", m.index);
+    const end = matchParen(src, open);
+    if (end !== -1 && /^\s*\.rejects\b/.test(src.slice(end + 1, end + 40))) spans.push([open, end]);
+  }
+  return spans;
 }
 
 /**
@@ -371,11 +384,12 @@ export function ownerOnlyExecuteViolations(file, rawSrc, ctx) {
   // than file-globally: a big suite hands `(tx)` out from eight different role pools, so a global name
   // map would see a conflict everywhere and fail closed on correct code.
   const scopes = derivedHandleScopes(src, handles);
+  const rejectionSpans = expectedRejectionSpans(src);
   const violations = [];
 
   /** @param {string} handle @param {number} index @param {number} line @param {string} fn @param {string} via */
   const check = (handle, index, line, fn, via) => {
-    if (isExpectedRejection(src, index)) return;
+    if (rejectionSpans.some(([open, end]) => index > open && index < end)) return;
     const allowed = new Set([ownerRole, ...(ctx.ownerOnly.get(fn) ?? [])]);
     const enclosing = scopes
       .filter((s) => s.param === handle && index > s.start && index < s.end)

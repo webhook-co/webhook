@@ -369,11 +369,18 @@ describe("activation_weekly_review (SECURITY DEFINER, aggregate-only)", () => {
     // reason a network-reachable endpoint may hold its own credential at all: it cannot bypass RLS, cannot
     // own anything, and cannot mint roles, so it is confined to the one SECURITY DEFINER function.
     const [role] = await provider<
-      { login: boolean; sup: boolean; brls: boolean; createrole: boolean }[]
+      { login: boolean; sup: boolean; brls: boolean; createrole: boolean; createdb: boolean }[]
     >`
-      select rolcanlogin as login, rolsuper as sup, rolbypassrls as brls, rolcreaterole as createrole
+      select rolcanlogin as login, rolsuper as sup, rolbypassrls as brls, rolcreaterole as createrole,
+             rolcreatedb as createdb
         from pg_roles where rolname = ${DB_ROLES.activationReviewer}`;
-    expect(role).toEqual({ login: true, sup: false, brls: false, createrole: false });
+    expect(role).toEqual({
+      login: true,
+      sup: false,
+      brls: false,
+      createrole: false,
+      createdb: false,
+    });
   });
 
   it("EXECUTE is pinned to the owner and the reviewer ALONE — PUBLIC revoked, webhook_app denied", async () => {
