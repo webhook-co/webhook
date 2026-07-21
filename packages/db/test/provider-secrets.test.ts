@@ -21,6 +21,7 @@ import {
   getEndpointProviderSecrets,
   MAX_PROVIDER_SECRETS_PER_ENDPOINT,
   registerProviderSecret,
+  listEndpointProviderSecrets,
   retireProviderSecret,
   revokeProviderSecret,
   type RegisterProviderSecretDeps,
@@ -480,5 +481,47 @@ describe("registerProviderSecret (the shared api/mcp/web core)", () => {
     expect(await countLiveProviderSecrets(app, orgA, ep)).toBe(2);
     await revokeProviderSecret(app, { orgId: orgA, endpointId: ep, secretId: a.id });
     expect(await countLiveProviderSecrets(app, orgA, ep)).toBe(1); // revoked excluded
+  });
+});
+
+describe("a RETIRED provider slug still sitting in provider_secrets", () => {
+  // `provider_secrets.provider` is plain `text`, so a secret registered before `customerio` was retired
+  // still holds the dead slug. `ProviderSecretSummarySchema.provider` is a STRICT enum, so an
+  // un-canonicalised value fails validation at the API edge — and because the whole list is validated,
+  // one legacy secret hides EVERY secret on that endpoint, not just its own row.
+  //
+  // Inserted straight into SQL because `addProviderSecret` takes a typed `Provider` and the slug is no
+  // longer in the vocabulary; this reproduces the row an existing database already holds.
+
+  it("listEndpointProviderSecrets reports the LIVE slug, never the dead one", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-retired-slug" }, hasher)).id;
+    const live = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_live" },
+      store,
+    );
+    const legacyId = randomUUID();
+    await withTenant(app, orgA, async (tx) => {
+      // Clone the envelope columns off the row we just added — this test is about the `provider`
+      // string, and the sealed bytes are irrelevant to it (this read projects none of them).
+      await tx`
+        insert into provider_secrets
+          (id, endpoint_id, org_id, provider, label, secret_ciphertext, wrapped_dek, kek_ref,
+           enc_nonce, envelope_version, status)
+        select ${legacyId}, endpoint_id, org_id, 'customerio', 'legacy', secret_ciphertext,
+               wrapped_dek, kek_ref, enc_nonce, envelope_version, status
+        from provider_secrets where id = ${live.id}`;
+      const [row] = await tx<{ provider: string }[]>`
+        select provider from provider_secrets where id = ${legacyId}`;
+      // The fixture really is the dead slug — otherwise the assertion below proves nothing.
+      expect(row?.provider).toBe("customerio");
+    });
+
+    const listed = await listEndpointProviderSecrets(app, orgA, ep);
+    expect(listed.length).toBe(2);
+    const legacy = listed.find((s) => s.id === legacyId);
+    expect(legacy?.provider).toBe("customer_io");
+    // ...and the endpoint's other secrets are still visible alongside it.
+    expect(listed.find((s) => s.id === live.id)?.provider).toBe("stripe");
   });
 });

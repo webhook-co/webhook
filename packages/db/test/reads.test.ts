@@ -1650,3 +1650,53 @@ describe("browseEvents bounds itself with a statement_timeout", () => {
     });
   });
 });
+
+describe("a RETIRED provider slug still sitting in the events table", () => {
+  // `events.provider` is plain `text` and records what the registry called the provider when the event
+  // was captured, so a row written before `customerio` was retired still holds the dead slug. Both read
+  // paths parse through `EventSummarySchema`/`EventSchema`, whose `provider` is a STRICT enum — an
+  // un-canonicalised value throws, and because the parse happens per row inside the list mapper, one
+  // legacy event takes down the ENTIRE events list for that org, not just its own row.
+  //
+  // Seeded straight into SQL on purpose: every write path rejects the slug now, so the only way to
+  // reproduce the row an existing database already contains is to bypass them.
+
+  let epLegacy: string;
+  let legacyEventId: string;
+
+  beforeAll(async () => {
+    epLegacy = (await createEndpoint(app, { orgId: orgA, name: "ep-legacy-slug" }, hasher)).id;
+    legacyEventId = await seedEvent(orgA, epLegacy, { provider: "customerio" });
+  }, setupHookTimeoutMs());
+
+  it("stores the dead slug verbatim (the fixture is real, not already normalised)", async () => {
+    // Guards the test itself: if the insert silently wrote `customer_io`, everything below would pass
+    // while proving nothing about canonicalisation.
+    const [row] = await withTenant(
+      app,
+      orgA,
+      (tx) => tx<{ provider: string }[]>`select provider from events where id = ${legacyEventId}`,
+    );
+    expect(row?.provider).toBe("customerio");
+  });
+
+  it("listEvents returns the row under the LIVE slug instead of throwing", async () => {
+    const page = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: epLegacy, limit: 50 }),
+    );
+    expect(page.items.length).toBe(1);
+    expect(page.items[0]?.provider).toBe("customer_io");
+  });
+
+  it("getEvent returns the row under the LIVE slug instead of throwing", async () => {
+    const ev = await withTenant(app, orgA, (tx) => getEvent(tx, legacyEventId));
+    expect(ev?.provider).toBe("customer_io");
+  });
+
+  it("the org-wide browse survives it too — one legacy row must not break the whole list", async () => {
+    const page = await withTenant(app, orgA, (tx) => listOrgEvents(tx, { limit: 100 }));
+    const found = page.items.find((e) => e.id === legacyEventId);
+    expect(found?.provider).toBe("customer_io");
+    expect(page.items.length).toBeGreaterThan(1); // the other org-A events still came back
+  });
+});
