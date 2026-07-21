@@ -1199,6 +1199,32 @@ export function tutorialPath(slug: string): string {
   return `/test/${slug}`;
 }
 
+/** How many siblings each tutorial links to. Also, therefore, the inbound count each one receives. */
+export const RELATED_COUNT = 5;
+
+/**
+ * The siblings a tutorial links to: a wrapping window of the {@link RELATED_COUNT} entries that
+ * follow it in {@link TUTORIALS}.
+ *
+ * The choice of a fixed window over anything content-aware is deliberate. Any scheme that ranks
+ * siblings by similarity, popularity, or alphabet concentrates links on a favoured few and leaves the
+ * tail with zero inbound links — which is precisely the orphaning this lane exists to fix, reproduced
+ * one level down. A rotation makes the link graph a regular cycle, so every page gives exactly
+ * `RELATED_COUNT` and receives exactly `RELATED_COUNT`, by construction rather than by review.
+ * `tutorials.test.ts` measures that distribution rather than trusting this comment.
+ *
+ * An unknown slug (the shared component is rendered with a fixture in tests) yields the first window
+ * instead of throwing — a tutorial page must never fail to render over a related-links strip.
+ */
+export function relatedTutorials(slug: string): readonly Tutorial[] {
+  const start = TUTORIALS.findIndex((t) => t.slug === slug);
+  const from = start === -1 ? -1 : start;
+  return Array.from(
+    { length: Math.min(RELATED_COUNT, Math.max(TUTORIALS.length - (start === -1 ? 0 : 1), 0)) },
+    (_, i) => TUTORIALS[(from + 1 + i) % TUTORIALS.length]!,
+  );
+}
+
 /**
  * The AUTHORED prose of a tutorial, as one string — what the near-duplicate guard compares.
  *

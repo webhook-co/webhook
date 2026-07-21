@@ -309,6 +309,11 @@ jobs:
       # and a dead link is worse than a missing one — it's a tab stop that announces as a link and,
       # with smooth scrolling on, yanks the reader back to the top of the page.
       - run: pnpm --filter @webhook-co/www test:links
+      # No indexable page is an ORPHAN. Sixteen /test/<slug> tutorials shipped reachable only from a
+      # search result or a typed URL — sitemapped, SEO-checked, axe-scanned and export-verified, four
+      # green gates, none of which can tell you whether a human can GET there. This reads the emitted
+      # link graph and fails when a sitemapped route has no inbound link from another page.
+      - run: pnpm --filter @webhook-co/www test:orphans
 
   # The DASHBOARD's end-to-end gate: a real Chromium, against a real `next dev`, against a real Postgres
   # (the app connecting as the non-superuser `webhook_app` role, so RLS is actually enforced — the superuser

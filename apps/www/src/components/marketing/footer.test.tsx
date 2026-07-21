@@ -21,6 +21,38 @@ describe("Footer", () => {
     expect(byLabel["MCP"]).toBe("https://docs.webhook.co/mcp/overview");
   });
 
+  // The Resources ROW, not a fifth column. A column caps out around six links before it goes tall and
+  // unbalanced; a full-width band wraps, which is what the estate this feeds (tutorials today, more
+  // later) actually needs. It also leaves the `1.6fr repeat(4,1fr)` grid and its ≤940px behaviour
+  // untouched, and sits AFTER the columns so the socials-<ul>-is-first assumption below still holds.
+  it("carries a Resources row with the three usable tools, in order", () => {
+    render(<Footer />);
+    const links = columnLinks("Resources");
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Signature verifier", "/verify"],
+      ["Webhook tutorials", "/test"],
+      ["Sandbox", "/play"],
+    ]);
+  });
+
+  // Moved OUT of Developers, deliberately. Developers is docs deep-links; the verifier is a tool you
+  // use. Pinned in both directions so a merge that restores the old row shows up as a failure.
+  it("no longer lists the signature verifier under Developers", () => {
+    render(<Footer />);
+    expect(columnLinks("Developers").map((a) => a.textContent)).not.toContain("Signature verifier");
+  });
+
+  // The tutorial hub is the ONLY /test link the chrome carries — never individual provider slugs.
+  // Sixteen footer links would be link-stuffing, and the seventeenth tutorial would be orphaned again.
+  it("links the tutorial hub and never an individual tutorial slug", () => {
+    const { container } = render(<Footer />);
+    const hrefs = within(container)
+      .getAllByRole("link")
+      .map((a) => a.getAttribute("href") ?? "");
+    expect(hrefs).toContain("/test");
+    expect(hrefs.filter((h) => h.startsWith("/test/"))).toEqual([]);
+  });
+
   // Developers is where a developer looks for OUR docs. "Standard Webhooks" (a third-party spec) and
   // "Open source" (the repo) both sent them off-site from the column meant to keep them here, and the
   // repo already has a home in the socials row below. Removed on purpose — pinned so a future tidy-up

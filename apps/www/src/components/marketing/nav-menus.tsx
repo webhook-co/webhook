@@ -4,7 +4,7 @@ import { cn } from "@webhook-co/ui";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { PRODUCT_LINKS } from "@/components/marketing/nav-links";
+import { PRODUCT_LINKS, RESOURCE_LINKS } from "@/components/marketing/nav-links";
 import { focusRing } from "@/lib/styles";
 
 interface MenuDef {
@@ -13,15 +13,25 @@ interface MenuDef {
   links: readonly { label: string; href: string }[];
 }
 
-// The Product menu now points at real www /product/* pages (built in the IA lane), so the only nav
-// item that leaves for docs.webhook.co is the top-level "Docs" link (see nav.tsx). The old
-// "Developers" dropdown was a set of docs deep-links; those live in the footer now, keeping the top
-// nav to one door per destination. The links render in the SSR HTML (hidden), so they exist without JS.
+// Two menus: Product (what it does) and Resources (what you can use right now, without an account).
+// Both point only at www pages, so the only nav item that leaves for docs.webhook.co is the top-level
+// "Docs" link (see nav.tsx). The old "Developers" dropdown was a set of docs deep-links; those live in
+// the footer, keeping the top nav to one door per destination.
+//
+// Resources was added because the tutorial estate and the sandbox were unreachable from the site's own
+// chrome — see the note in `nav-links.ts`. It links the tutorial HUB, not individual providers.
+//
+// The links render in the SSR HTML (hidden), so they exist without JS and a crawler still sees them.
 const MENUS: readonly MenuDef[] = [
   {
     id: "product",
     label: "Product",
     links: PRODUCT_LINKS,
+  },
+  {
+    id: "resources",
+    label: "Resources",
+    links: RESOURCE_LINKS,
   },
 ];
 

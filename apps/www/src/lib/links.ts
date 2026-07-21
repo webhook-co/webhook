@@ -86,6 +86,13 @@ export const LINKS = {
    * good it is. Linked from the footer (site-wide) and contextually from `/product/verification`.
    */
   verify: "/verify",
+  /**
+   * The tutorial hub, and the parent of every `/test/<slug>` page. It exists because those sixteen
+   * pages had NO inbound internal link of any kind — `sitemap.xml` was the only thing that knew about
+   * them, which is an orphan by any crawler's reckoning. Anything linking the tutorial estate links
+   * HERE rather than enumerating slugs, so the seventeenth tutorial inherits the audience.
+   */
+  tutorials: "/test",
 
   // ── external ─────────────────────────────────────────────────────────────
   openSource: REPO,

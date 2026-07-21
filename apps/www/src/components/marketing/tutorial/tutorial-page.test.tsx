@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import type { Tutorial } from "@/lib/tutorials";
+import { RELATED_COUNT, relatedTutorials, type Tutorial, tutorialPath } from "@/lib/tutorials";
 import { TutorialPage } from "./tutorial-page";
 
 const fixture: Tutorial = {
@@ -95,6 +95,36 @@ describe("TutorialPage", () => {
         container.querySelector(`#${CSS.escape(id)}`),
         `${id} is referenced but absent`,
       ).toBeTruthy();
+    }
+  });
+});
+
+// The related-providers strip. Every tutorial used to be a leaf: no link to a sibling, no link to a
+// parent, so a reader who landed on one from a search result had nowhere to go but the nav. These
+// assertions pin the two escape hatches — siblings and the hub — and that the strip never links the
+// page back to itself.
+describe("TutorialPage related links", () => {
+  it("links RELATED_COUNT siblings and the hub, and never itself", () => {
+    render(<TutorialPage tutorial={fixture} />);
+    const strip = screen.getByRole("navigation", { name: /more providers/i });
+    const hrefs = within(strip)
+      .getAllByRole("link")
+      .map((a) => a.getAttribute("href"));
+
+    expect(hrefs).toContain("/test");
+    expect(hrefs).not.toContain(tutorialPath(fixture.slug));
+    // The siblings, plus the one hub link.
+    expect(hrefs).toHaveLength(RELATED_COUNT + 1);
+    for (const related of relatedTutorials(fixture.slug)) {
+      expect(hrefs).toContain(tutorialPath(related.slug));
+    }
+  });
+
+  it("renders each sibling under its provider name, so the link text is not 'read more'", () => {
+    render(<TutorialPage tutorial={fixture} />);
+    const strip = screen.getByRole("navigation", { name: /more providers/i });
+    for (const related of relatedTutorials(fixture.slug)) {
+      expect(within(strip).getByRole("link", { name: new RegExp(related.name, "i") })).toBeTruthy();
     }
   });
 });
