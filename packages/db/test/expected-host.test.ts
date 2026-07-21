@@ -13,6 +13,7 @@ import {
   EXPECTED_HOST_ENV,
   UnexpectedTestClusterError,
 } from "./expected-host";
+import { setup as globalSetup } from "./global-setup";
 import { startEphemeralPostgres } from "./pg";
 
 const REMOTE =
@@ -26,8 +27,68 @@ describe("assertExpectedTestDatabaseHost", () => {
     expect(() => assertExpectedTestDatabaseHost("   ", undefined)).not.toThrow();
   });
 
-  it("is a no-op for a trust-auth CI service (no password, no TLS) — the fast lanes cost nothing", () => {
+  it("is a no-op for the trust-auth CI service on localhost — the fast lanes cost nothing", () => {
     expect(() => assertExpectedTestDatabaseHost(TRUST_CI, undefined)).not.toThrow();
+  });
+
+  it("exempts loopback in every spelling, and ONLY loopback", () => {
+    for (const host of ["localhost", "127.0.0.1", "127.0.0.53", "[::1]"]) {
+      expect(() =>
+        assertExpectedTestDatabaseHost(`postgres://postgres@${host}:5432/postgres`, undefined),
+      ).not.toThrow();
+    }
+  });
+
+  // THE HOLE the first cut of this file had, found by adversarial review and reproduced end to end:
+  // the exemption keyed on AUTH MODE, so a trust-auth Postgres on a LAN address was waved through
+  // even when TEST_DATABASE_EXPECTED_HOST explicitly named a different cluster. A full
+  // migrations.test.ts run then created — and dropped — 19 cluster-global roles on the unnamed host.
+  it("REFUSES a trust-auth cluster that is not loopback, even though it has no password", () => {
+    const lan = "postgres://postgres@192.168.1.70:54399/postgres";
+    expect(() => assertExpectedTestDatabaseHost(lan, undefined)).toThrow(
+      UnexpectedTestClusterError,
+    );
+    expect(() =>
+      assertExpectedTestDatabaseHost(lan, "ep-the-only-cluster-i-authorised.neon.tech"),
+    ).toThrow(UnexpectedTestClusterError);
+    // ...and passes only when it is actually named.
+    expect(() => assertExpectedTestDatabaseHost(lan, "192.168.1.70")).not.toThrow();
+  });
+
+  it("REFUSES a managed cluster using a stricter sslmode than 'require'", () => {
+    // The old predicate matched sslmode === "require" EXACTLY, so verify-full — a *more* secure
+    // managed connection — fell through the exemption.
+    expect(() =>
+      assertExpectedTestDatabaseHost(
+        "postgres://u@ep-x.us-east-2.aws.neon.tech/db?sslmode=verify-full",
+        undefined,
+      ),
+    ).toThrow(UnexpectedTestClusterError);
+  });
+
+  it("treats a host as equal regardless of case or a trailing dot", () => {
+    const url = "postgres://u:p@EP-Real-Host-123.us-east-2.aws.neon.tech/db?sslmode=require";
+    expect(() =>
+      assertExpectedTestDatabaseHost(url, "ep-real-host-123.us-east-2.aws.neon.tech."),
+    ).not.toThrow();
+  });
+
+  it("refuses a URL whose host the DRIVER would resolve differently", () => {
+    // postgres.js splits userinfo at the FIRST '@', WHATWG at the LAST — so an unencoded '@' in the
+    // password makes this assertion talk about one host while the client dials another.
+    expect(() =>
+      assertExpectedTestDatabaseHost(
+        "postgres://user:p@ss@evil.example.test/db?sslmode=require",
+        "evil.example.test",
+      ),
+    ).toThrow(UnexpectedTestClusterError);
+    // libpq multi-host lists: which cluster gets mutated is not determined by the assertion.
+    expect(() =>
+      assertExpectedTestDatabaseHost(
+        "postgres://u:p@approved.example.test,other.example.test/db?sslmode=require",
+        "approved.example.test",
+      ),
+    ).toThrow(UnexpectedTestClusterError);
   });
 
   it("REFUSES when the expectation is unset, rather than defaulting to 'allow'", () => {
@@ -68,7 +129,7 @@ describe("assertExpectedTestDatabaseHost", () => {
     ).not.toThrow();
   });
 
-  it("guards a TLS URL even when it carries no password (fail closed on the broader predicate)", () => {
+  it("guards a TLS URL even when it carries no password", () => {
     const tlsNoPassword =
       "postgres://someone@ep-real-host-123.us-east-2.aws.neon.tech/db?sslmode=require";
     expect(() => assertExpectedTestDatabaseHost(tlsNoPassword, undefined)).toThrow(
@@ -136,6 +197,17 @@ describe("the guard runs BEFORE the harness touches the cluster", () => {
     delete process.env[EXPECTED_HOST_ENV];
 
     await expect(startEphemeralPostgres()).rejects.toThrow(UnexpectedTestClusterError);
+  });
+
+  // globalSetup runs BEFORE any suite and drops databases with its OWN client, so it — not
+  // startEphemeralPostgres — is the first thing that can damage a mis-pointed cluster. Same
+  // unresolvable host, same reasoning: our error, not a DNS error, proves we never connected.
+  it("globalSetup refuses an unexpected cluster before its DROP DATABASE sweep", async () => {
+    process.env.TEST_DATABASE_URL =
+      "postgres://someone:sekret@this-host-does-not-resolve.invalid:5432/db?sslmode=require";
+    delete process.env[EXPECTED_HOST_ENV];
+
+    await expect(globalSetup()).rejects.toThrow(UnexpectedTestClusterError);
   });
 
   it("startEphemeralPostgres refuses when the expectation names a different cluster", async () => {

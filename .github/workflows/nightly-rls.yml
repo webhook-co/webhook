@@ -25,7 +25,9 @@ name: nightly-rls
 # taken ~4h. No clock-based assumption about branch availability is sound — if you need the branch,
 # check for an in-flight run rather than reasoning from the cron.
 #
-# Until the Neon secret + expected-host variable exist, this workflow SKIPS cleanly (no red nightly).
+# With NO Neon secret this workflow SKIPS cleanly (green, no red nightly). Once the secret IS set,
+# NEON_TEST_DATABASE_HOST is REQUIRED and its absence FAILS the job rather than skipping — a leak
+# suite that silently stops running is worse than one that goes red.
 
 on:
   schedule:
@@ -51,7 +53,7 @@ jobs:
     # Surfaced to open-issue-on-failure so the issue it files names WHAT broke, not just that
     # something did. Both are empty when the suite dies before its own classifier runs.
     outputs:
-      classification: ${{ steps.suite.outputs.classification }}
+      classification: ${{ steps.suite.outputs.classification || steps.cap.outputs.classification }}
       signature: ${{ steps.suite.outputs.signature }}
     steps:
       - name: Check for the Neon secret and the expected-host variable
@@ -95,10 +97,10 @@ jobs:
       - name: RLS / tenant-leak suite vs Neon branch (retry once on TRANSIENT failure)
         id: suite
         if: steps.guard.outputs.enabled == 'true'
-        # Bounds the suite itself, inside the job's backstop above. A STEP timeout fails the step,
-        # so a runaway suite reports through the normal failure path with a real classification;
-        # the job cap only fires for something that hangs outside this step. Either way the
-        # widened gate below files an issue — the reporting does not depend on which one trips.
+        # Bounds the suite itself, inside the job's backstop above. A STEP timeout KILLS this shell
+        # mid-`pnpm test:db`, so the classifier at the bottom never runs and this step publishes an
+        # EMPTY classification — the next step turns that silence into an explicit verdict. The step
+        # still ends as FAILED (not cancelled), so the gate below files an issue either way.
         timeout-minutes: 300
         env:
           TEST_DATABASE_URL: ${{ secrets.NEON_TEST_DATABASE_URL }}
@@ -137,6 +139,21 @@ jobs:
               exit "${status}"
             fi
           done
+      # A step that was KILLED by its own cap never reached the classifier above, so the job would
+      # otherwise report the generic "did not reach its own failure classifier" placeholder — which
+      # reads like an infra fault and sends the reader hunting. Name it instead. `always()` is
+      # required because the step above has already failed by this point.
+      - name: Name a suite that was killed by its runtime cap
+        id: cap
+        if: ${{ always() && steps.guard.outputs.enabled == 'true' && steps.suite.outcome == 'failure' && steps.suite.outputs.classification == '' }}
+        run: |
+          {
+            echo "classification=TIMED-OUT — the suite step hit its ${SUITE_CAP}-minute cap and was killed before it could classify its own failure. This is NOT a verdict about the code: the run may have been merely slow (durations have reached ~4h and trend upward). Check the run log for how far it got."
+            echo 'signature<<SIGEOF'
+            echo 'SIGEOF'
+          } >> "$GITHUB_OUTPUT"
+        env:
+          SUITE_CAP: 300
 
   # On a real failure (not the clean skip when the secret is unset — that leaves rls-neon green),
   # file a NEW issue — one per failing run, never a comment on a previous one.
@@ -156,7 +173,12 @@ jobs:
     # rather than raising it. Both results are covered, and a cancellation is reported honestly as a
     # cancellation (it may also be a superseding run under the concurrency group, or a manual stop)
     # instead of being dressed up as a deterministic bug.
-    if: ${{ always() && (needs.rls-neon.result == 'failure' || needs.rls-neon.result == 'cancelled') }}
+    #
+    # `!cancelled()` rather than `always()`: when the WHOLE RUN is cancelled — a superseding run under
+    # the concurrency group above, or a human hitting stop — `cancelled()` is true and this job skips,
+    # so we do not file an issue about a run somebody deliberately stopped. A job killed by its own
+    # `timeout-minutes` does NOT cancel the run, so that case still reports.
+    if: ${{ !cancelled() && (needs.rls-neon.result == 'failure' || needs.rls-neon.result == 'cancelled') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -187,9 +209,7 @@ jobs:
           # A cancelled job never reached its own classifier, and a cancellation is not a verdict
           # about the code — say which one it was rather than inventing a bug report.
           if [ "$RESULT" = "cancelled" ]; then
-            class="CANCELLED — the job was stopped before it finished (its ${RUN_ID} runtime cap, a
-          superseding run under the \`nightly-rls\` concurrency group, or a manual cancel). This is
-          NOT evidence of a bug; check the run to see which."
+            class="CANCELLED — the job was stopped before it finished (its runtime cap, a superseding run under the \`nightly-rls\` concurrency group, or a manual cancel). This is NOT evidence of a bug; check the run to see which."
           else
             class="${CLASSIFICATION:-unknown (the suite did not reach its own failure classifier — likely a setup/infra fault)}"
           fi

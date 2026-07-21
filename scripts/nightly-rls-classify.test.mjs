@@ -287,3 +287,100 @@ test("the REAL #717 log classifies as NON-TRANSIENT and is not re-run", () => {
   assert.equal(classification.startsWith(NON_TRANSIENT), true, classification);
   assert.equal(retry, false);
 });
+
+// ── regressions found by adversarial review of this file's first cut ───────────────────────────
+
+test("a beforeAll failure prints 'Failed Suites', NOT 'Failed Tests' — and must still be scoped", () => {
+  // This repo's provisioning hooks all live in beforeAll, so this is the shape a broken harness
+  // produces. Matching only "Failed Tests" sent every such run down the UNSCOPED whole-log path —
+  // re-publishing the tolerated auth.sweep.skipped noise as the signature, i.e. the exact defect
+  // this module exists to remove.
+  const log = `
+{"message":"auth.sweep.skipped","table":"auth_refresh_token","error":"permission denied for table auth_refresh_token"}
+⎯⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/rls.test.ts > RLS
+PostgresError: permission denied for function activation_weekly_review
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 99 passed (100)
+`;
+  const section = failureSection(log);
+  assert.equal(section.scoped, true, "a Failed Suites section must be recognised");
+  const sig = signatureLines(log).join("\n");
+  assert.match(sig, /permission denied for function activation_weekly_review/);
+  assert.ok(!sig.includes("auth_refresh_token"), sig);
+});
+
+test("both failure sections together are captured, and passing output still excluded", () => {
+  const log = `
+{"message":"auth.sweep.skipped","error":"permission denied for table auth_refresh_token"}
+⎯⎯⎯ Failed Suites 1 ⎯⎯⎯
+ FAIL  test/a.test.ts > setup
+Error: Hook failed in beforeAll
+⎯⎯⎯ Failed Tests 1 ⎯⎯⎯
+ FAIL  test/b.test.ts > t
+AssertionError: expected 1 to be 2
+ Test Files  2 failed | 98 passed (100)
+`;
+  const sig = signatureLines(log).join("\n");
+  assert.match(sig, /Hook failed in beforeAll/);
+  assert.match(sig, /AssertionError: expected 1 to be 2/);
+  assert.ok(!sig.includes("auth_refresh_token"), sig);
+});
+
+test("turbo per-line pkg:task prefixes do not defeat the scoping", () => {
+  // pnpm test:db runs TWO turbo invocations. The packages/db one reaches test-db.out unprefixed
+  // (verified against real run 29819273539), but the apps' one fans out to @webhook-co/api and
+  // @webhook-co/web and IS prefixed — so without stripping it, half the suite could never be scoped.
+  const log = [
+    '@webhook-co/api:test:db: {"message":"auth.sweep.skipped","error":"permission denied for table auth_refresh_token"}',
+    "@webhook-co/api:test:db: ⎯⎯⎯ Failed Tests 1 ⎯⎯⎯",
+    "@webhook-co/api:test:db:  FAIL  src/x.pg.test.ts > t",
+    "@webhook-co/api:test:db: PostgresError: permission denied for table usage",
+    "@webhook-co/api:test:db:  Test Files  1 failed (1)",
+  ].join("\n");
+  const section = failureSection(log);
+  assert.equal(section.scoped, true, "the turbo prefix must not hide the banner");
+  const sig = signatureLines(log).join("\n");
+  assert.match(sig, /permission denied for table usage/);
+  assert.ok(!sig.includes("auth_refresh_token"), sig);
+});
+
+test("the signature keeps ERROR shapes when many files fail, not just their names", () => {
+  // A 'FAIL <file>' line says WHERE, never WHAT — and it is the one thing already recoverable from
+  // the run. A plain sort put every 'FAIL ...' (F) ahead of 'PostgresError:' (P), so once 8 distinct
+  // files failed the whole cap was spent on filenames and the issue body carried no error at all.
+  const files = Array.from(
+    { length: 12 },
+    (_, i) => ` FAIL  test/f${i}.test.ts > t\nPostgresError: permission denied for table t_${i}`,
+  ).join("\n");
+  const log = `⎯⎯⎯ Failed Tests 12 ⎯⎯⎯\n${files}\n Test Files  12 failed (100)`;
+  const sig = signatureLines(log);
+  assert.ok(
+    sig.some((l) => l.startsWith("PostgresError:")),
+    `the signature is all filenames and no error:\n${sig.join("\n")}`,
+  );
+});
+
+test("a log downloaded with `gh run view --log` classifies correctly (the documented triage path)", () => {
+  // That download prefixes every line with `<job>\t<step>\t<ISO timestamp> `, and every pattern in
+  // this module is ^-anchored — so without stripping it, reproducing a red nightly locally returned
+  // the unscoped fallback and none of the scoping this module exists for.
+  const prefixed = REAL_717_LOG.split("\n")
+    .map((l) => `rls-neon\tRLS / tenant-leak suite\t2026-07-21T11:37:43.1036776Z ${l}`)
+    .join("\n");
+  const { classification, signature } = classify({ log: prefixed, attempt: 1 });
+  assert.equal(classification.startsWith(NON_TRANSIENT), true, classification);
+  assert.match(signature, /permission denied for function activation_weekly_review/);
+  assert.ok(!signature.includes("auth_refresh_token"), signature);
+  assert.ok(!/whole log/i.test(signature), "it must be SCOPED, not the fallback");
+});
+
+test("stripAnsi handles the caret form a downloaded log renders, alongside the real escape", () => {
+  const caret = REAL_717_LOG.split(ESC).join("^[");
+  assert.ok(!stripAnsi(caret).includes("^["), "the caret form must be stripped too");
+  assert.match(failureSection(caret).text, /permission denied for function/);
+  assert.equal(failureSection(caret).scoped, true);
+});
