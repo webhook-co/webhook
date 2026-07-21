@@ -7,10 +7,15 @@
 
 import postgres from "postgres";
 
+import { assertExpectedTestDatabaseHost } from "./expected-host";
 import { isRemoteTestDatabase, orphanTestDatabases, waitForDatabase } from "./pg-timing";
 
 export async function setup(): Promise<void> {
   const url = process.env.TEST_DATABASE_URL;
+  // BEFORE the sweep below, which is an unconditional `DROP DATABASE … WITH (FORCE)`. globalSetup
+  // runs ahead of every suite, so this — not startEphemeralPostgres — is the FIRST thing that can
+  // damage a mis-pointed cluster. A no-op for the local/trust-auth lanes. (R6 pins the ordering.)
+  assertExpectedTestDatabaseHost(url);
   if (!isRemoteTestDatabase(url)) return;
 
   // Short per-probe connect budget so a cold connection fails fast and we retry, instead

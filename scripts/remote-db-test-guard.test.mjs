@@ -15,7 +15,9 @@ import {
   readDbSrcSources,
   readDbTestSources,
   readMigrationSources,
+  readTargetClusterSources,
   remoteSafetyViolations,
+  targetClusterGuardViolations,
   testDbSerializationViolations,
   unmodelableExecuteRevokes,
 } from "./remote-db-test-guard.mjs";
@@ -23,6 +25,21 @@ import {
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HARNESS_SRC = readFileSync(join(ROOT, "packages/db/test/pg.ts"), "utf8");
 const FIELDS = harnessFields(HARNESS_SRC);
+
+/** A minimally-valid assertion module, so R6's unit cases exercise the ORDERING arm, not the floor. */
+const TURBO_STUB = {
+  tasks: {
+    test: { passThroughEnv: ["TEST_DATABASE_URL", "TEST_DATABASE_EXPECTED_HOST"] },
+    "test:db": { passThroughEnv: ["TEST_DATABASE_URL", "TEST_DATABASE_EXPECTED_HOST"] },
+  },
+};
+
+const ASSERTION_STUB = {
+  file: "expected-host.ts",
+  src: `export function assertExpectedTestDatabaseHost() {
+    return process.env.TEST_DATABASE_EXPECTED_HOST;
+  }`,
+};
 
 // The guard running against PRODUCTION: every real, committed source the nightly runs against Neon.
 // This is the assertion that actually blocks the bug — the unit cases below only pin the brain's edges.
@@ -696,4 +713,152 @@ test("R5 still flags the SAME shape when it is not asserted to reject", () => {
       return tx\`select * from activation_weekly_review()\`;
     });`;
   assert.equal(ownerOnlyExecuteViolations("x.test.ts", src, ctx()).length, 1);
+});
+
+// ── R6: the target-cluster assertion must run BEFORE anything touches the cluster ──────────────
+// R1–R5 constrain WHICH ROLE runs a statement; none of them constrains WHICH CLUSTER it lands on.
+// The harness rotates cluster-global role passwords, DROPs every webhook_test_* it can see, and
+// (migrations.test.ts) rolls migrations down far enough to DROP those roles — all under role names
+// every environment shares, so a mis-pointed run never fails early. The rule below pins BOTH call
+// sites AND their position, so the assertion cannot be quietly moved after the first damage.
+
+test("R6 holds on the committed tree (the real assertion runs first in both entry points)", async () => {
+  const sources = await readTargetClusterSources();
+  // FLOOR: a rule whose inputs went missing would report ✔ while checking nothing.
+  assert.ok(sources.assertion, "the assertion module must be readable");
+  assert.ok(
+    sources.entryPoints.length >= 2,
+    "expected both entry points (pg.ts + global-setup.ts)",
+  );
+  assert.deepEqual(targetClusterGuardViolations(sources), []);
+});
+
+test("R6 fails closed when the assertion module is missing entirely", () => {
+  const v = targetClusterGuardViolations({ turbo: TURBO_STUB, assertion: null, entryPoints: [] });
+  assert.ok(v.length > 0);
+  assert.match(v.join("\n"), /assertion module/i);
+});
+
+test("R6 fails closed when the assertion no longer reads the expected-host variable", () => {
+  // A rewrite that keeps the function name but drops the env lookup would be a no-op that reads clean.
+  const v = targetClusterGuardViolations({
+    turbo: TURBO_STUB,
+    assertion: {
+      file: "expected-host.ts",
+      src: `export function assertExpectedTestDatabaseHost() {}`,
+    },
+    entryPoints: [],
+  });
+  assert.match(v.join("\n"), /TEST_DATABASE_EXPECTED_HOST/);
+});
+
+test("R6 fails closed when an entry point never calls the assertion", () => {
+  const v = targetClusterGuardViolations({
+    turbo: TURBO_STUB,
+    assertion: ASSERTION_STUB,
+    entryPoints: [
+      {
+        file: "pg.ts",
+        src: `const admin = postgres(provided); await admin.unsafe("create database x");`,
+      },
+    ],
+  });
+  assert.equal(v.length, 1);
+  assert.match(v[0], /never calls assertExpectedTestDatabaseHost/);
+});
+
+test("R6 flags an assertion placed AFTER the first destructive statement (the whole point)", () => {
+  const v = targetClusterGuardViolations({
+    turbo: TURBO_STUB,
+    assertion: ASSERTION_STUB,
+    entryPoints: [
+      {
+        file: "pg.ts",
+        src: `const admin = postgres(provided);
+              assertExpectedTestDatabaseHost(provided);`,
+      },
+    ],
+  });
+  assert.equal(v.length, 1);
+  assert.match(v[0], /before/i);
+});
+
+test("R6 accepts the assertion placed before the first destructive statement", () => {
+  const v = targetClusterGuardViolations({
+    turbo: TURBO_STUB,
+    assertion: ASSERTION_STUB,
+    entryPoints: [
+      {
+        file: "pg.ts",
+        src: `assertExpectedTestDatabaseHost(provided);
+              const admin = postgres(provided);`,
+      },
+    ],
+  });
+  assert.deepEqual(v, []);
+});
+
+test("R6 does not count a COMMENTED-OUT call as protection", () => {
+  const v = targetClusterGuardViolations({
+    turbo: TURBO_STUB,
+    assertion: ASSERTION_STUB,
+    entryPoints: [
+      {
+        file: "pg.ts",
+        src: `// assertExpectedTestDatabaseHost(provided);
+              const admin = postgres(provided);`,
+      },
+    ],
+  });
+  assert.equal(v.length, 1);
+  assert.match(v[0], /never calls/);
+});
+
+test("R6 flags an entry point with no destructive site at all (it would pass vacuously)", () => {
+  // If the markers stop matching, the ordering test becomes trivially true — that is how a guard
+  // silently stops guarding. Require the destructive site to be found.
+  const v = targetClusterGuardViolations({
+    turbo: TURBO_STUB,
+    assertion: ASSERTION_STUB,
+    entryPoints: [{ file: "pg.ts", src: `assertExpectedTestDatabaseHost(provided);` }],
+  });
+  assert.equal(v.length, 1);
+  assert.match(v[0], /no destructive/i);
+});
+
+test("R6 flags a turbo task that does not forward the expected-host variable", () => {
+  // Turbo 2.x is STRICT: a variable missing from passThroughEnv never reaches vitest, so the harness
+  // sees no expectation and refuses to run — the guard turns into an outage instead of a safety net.
+  const v = targetClusterGuardViolations({
+    turbo: {
+      tasks: {
+        test: { passThroughEnv: ["TEST_DATABASE_URL"] },
+        "test:db": { passThroughEnv: ["TEST_DATABASE_URL"] },
+      },
+    },
+    assertion: ASSERTION_STUB,
+    entryPoints: [],
+  });
+  assert.equal(v.length, 2, v.join("\n"));
+  assert.match(v[0], /passThroughEnv/);
+});
+
+test("R6 fails closed when turbo.json cannot be read", () => {
+  const v = targetClusterGuardViolations({
+    turbo: null,
+    assertion: ASSERTION_STUB,
+    entryPoints: [],
+  });
+  assert.match(v.join("\n"), /turbo\.json: unreadable/);
+});
+
+test("R6 on the committed tree also proves turbo forwards the expectation", async () => {
+  const sources = await readTargetClusterSources();
+  assert.ok(sources.turbo, "turbo.json must be readable");
+  for (const task of ["test", "test:db"]) {
+    assert.ok(
+      sources.turbo.tasks?.[task]?.passThroughEnv?.includes("TEST_DATABASE_EXPECTED_HOST"),
+      `turbo task ${task} must forward TEST_DATABASE_EXPECTED_HOST`,
+    );
+  }
 });

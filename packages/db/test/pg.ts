@@ -19,6 +19,7 @@ import { join } from "node:path";
 import postgres from "postgres";
 
 import { DB_ROLES } from "../src/constants";
+import { assertExpectedTestDatabaseHost } from "./expected-host";
 
 export interface RoleUrl {
   role: string;
@@ -44,7 +45,9 @@ export interface EphemeralPostgres {
    * It is NOT a superuser on the nightly's Neon branch (there it is `neondb_owner`, holding
    * webhook_owner membership with inherit_option = f), so it owns NOTHING and cannot TRUNCATE:
    * `42501 permission denied for table …`. Locally it IS the postgres superuser, so that mistake
-   * passes every local run and only breaks at 04:00 — which is precisely what happened (#383).
+   * passes every local run and only breaks on the NIGHTLY — which is precisely what happened (#383).
+   * (That nightly is cron'd for 07:17 UTC, but GitHub queue-delays scheduled runs and a single run
+   * has taken ~4h, so no clock-derived assumption about when it lands is sound.)
    * For TRUNCATE, use `ownerUrl`. scripts/remote-db-test-guard.mjs enforces this.
    */
   providerUrl: string;
@@ -137,6 +140,13 @@ function buildUrl(
 export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
   const provided = process.env.TEST_DATABASE_URL;
   if (provided && provided.trim() !== "") {
+    // FIRST, before anything reads or mutates the target: prove it is the cluster we were told to
+    // expect. Everything below this line is destructive on a shared server — the `create database`
+    // a few lines down, then the cluster-global role-password rotation in migrate.ts, then the
+    // globalSetup sweep's `DROP DATABASE … WITH (FORCE)`. A no-op for the local/trust-auth lanes.
+    // scripts/remote-db-test-guard.mjs (R6) pins this call AND its position.
+    assertExpectedTestDatabaseHost(provided);
+
     // Attach to a shared/managed Postgres (a trust-auth CI service OR a managed DB like
     // a Neon branch) and create a UNIQUE database per call so each serial test file is
     // isolated, just like the per-file local clusters. Auth is auto-detected from the

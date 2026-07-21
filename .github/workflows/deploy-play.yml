@@ -31,6 +31,7 @@ jobs:
   deploy:
     name: deploy-play
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Same-repo only: fork PRs don't receive secrets.
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     steps:

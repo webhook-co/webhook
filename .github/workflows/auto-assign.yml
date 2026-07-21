@@ -33,6 +33,7 @@ jobs:
   assign:
     name: assign
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # GITHUB_TOKEN is read-only on fork PRs, so assignment only works for same-repo PRs.
     if: github.event.pull_request.head.repo.full_name == github.repository
     steps:

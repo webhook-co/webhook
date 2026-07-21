@@ -10,9 +10,13 @@
 // Two auth modes (pg.auth):
 //   - "trust": local ephemeral (--auth=trust) or a trust-auth CI service — no passwords.
 //   - "password": a managed Postgres (e.g. a Neon branch, nightly run) that requires
-//     SCRAM. The harness mints per-run, in-memory passwords; we set them on the owner
-//     (here) and on the app/ingest roles (applyRolePasswords) so they can log in. The
-//     passwords are never written to source and rotate every run.
+//     SCRAM. The harness mints per-run, in-memory passwords for EVERY role in DB_ROLES;
+//     we set them on the owner (here) and on all the others (applyRolePasswords) so they
+//     can log in. The passwords are never written to source and rotate every run.
+//     (The set is DERIVED from DB_ROLES — see ROLES_NEEDING_PASSWORDS. It is not the
+//     owner/app/ingest trio an earlier version of this comment described; a hand-listed
+//     subset drifted out of lockstep when later migrations added roles, and the resulting
+//     28P01 was invisible to every trust-auth run.)
 
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";

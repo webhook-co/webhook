@@ -1,0 +1,50 @@
+### excerpt: workflow echoing its own scrape regex (a false signature source) ###
+[36;1m      | grep -aoE "PostgresError: [^\"]{0,70}|AssertionError: [^\"]{0,70}|permission denied for table [a-z_]+|password authentication failed for user .?[a-z_]+|Test timed out in [0-9]+ms|Hook timed out in [0-9]+ms|CONNECT_TIMEOUT|FAIL +[A-Za-z0-9/._-]+\.test\.ts" \[0m
+
+[22m[39m{"message":"auth.sweep.skipped","table":"auth_refresh_token","error":"permission denied for table auth_refresh_token"}
+[22m[39m{"message":"auth.sweep.skipped","table":"auth_session_exchange","error":"permission denied for table auth_session_exchange"}
+[36;1mtransient='CONNECT_TIMEOUT|Test timed out|Hook timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|Connection terminated|terminating connection|the database system is (starting up|shutting down)|too many clients|Client has encountered a connection error|fetch failed'[0m
+[22m[39m{"message":"provider_secret.register_evict_failed","error":"Error: KV blip"}
+ ✓ test/rls.test.ts (179 tests) 120054ms
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m test/activation-rollup.test.ts[2m > [22mactivation_weekly_review (SECURITY DEFINER, aggregate-only)[2m > [22mcohort funnel (signup week) + weekly NSM (activity week), TTFV percentiles, exclusions
+[31m[1mPostgresError[22m: permission denied for function activation_weekly_review[39m
+[90m [2m❯[22m ErrorResponse ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/connection.js:[2m815:30[22m[39m
+[90m [2m❯[22m handle ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/connection.js:[2m489:6[22m[39m
+[90m [2m❯[22m TLSSocket.data ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/connection.js:[2m324:9[22m[39m
+[90m [2m❯[22m cachedError ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/query.js:[2m170:23[22m[39m
+[90m [2m❯[22m new Query ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/query.js:[2m36:24[22m[39m
+[90m [2m❯[22m sql ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/index.js:[2m112:11[22m[39m
+[36m [2m❯[22m test/activation-rollup.test.ts:[2m288:6[22m[39m
+    [90m286|[39m         ttfv_p90_hours[33m:[39m string[33m;[39m
+    [90m287|[39m       }[]
+    [90m288|[39m     >`select iso_week, signups, reached_capture, reached_forward, acti…
+    [90m   |[39m      [31m^[39m
+    [90m289|[39m              ttfv_median_hours, ttfv_p90_hours
+    [90m290|[39m         from activation_weekly_review() where iso_week = [39m[36m${[39mwk[36m}[39m[32m::date`[39m[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m test/activation-rollup.test.ts[2m > [22mreadActivationWeeklyReview (typed reader)[2m > [22mmaps activation_weekly_review() rows to a typed, camel-cased shape (numbers, ISO week)
+[31m[1mPostgresError[22m: permission denied for function activation_weekly_review[39m
+[90m [2m❯[22m ErrorResponse ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/connection.js:[2m815:30[22m[39m
+[90m [2m❯[22m handle ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/connection.js:[2m489:6[22m[39m
+[90m [2m❯[22m TLSSocket.data ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/connection.js:[2m324:9[22m[39m
+[90m [2m❯[22m cachedError ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/query.js:[2m170:23[22m[39m
+[90m [2m❯[22m new Query ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/query.js:[2m36:24[22m[39m
+[90m [2m❯[22m sql ../../node_modules/.pnpm/postgres@3.4.9/node_modules/postgres/src/index.js:[2m112:11[22m[39m
+[36m [2m❯[22m readActivationWeeklyReview src/activation-review.ts:[2m51:4[22m[39m
+    [90m 49|[39m       ttfv_p90_hours[33m:[39m string [33m|[39m number [33m|[39m [35mnull[39m[33m;[39m
+    [90m 50|[39m     }[33m>[39m
+    [90m 51|[39m   [33m>[39m[32m`
+    [90m   |[39m    [31m^[39m
+    [90m 52|[39m     select iso_week, signups, reached_capture, reached_forward, activa…
+    [90m 53|[39m            activation_rate, ttfv_median_hours, ttfv_p90_hours
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m99 passed[39m[22m[90m (100)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m1530 passed[39m[22m[90m (1532)[39m

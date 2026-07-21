@@ -15,8 +15,10 @@
 //   EXECUTE on a function revoked from PUBLIC ............ false  → R5
 //   pg_has_role(…, 'webhook_owner', 'USAGE') ............. false  (MEMBER = true, set_option = f)
 //
-// Anything the local superuser papers over is therefore invisible until the nightly goes red at
-// 04:00. This guard makes those failure modes red at lint time instead. Each has already cost a
+// Anything the local superuser papers over is therefore invisible until the NIGHTLY goes red — a run
+// cron'd for 07:17 UTC, but which GitHub queue-delays by hours and which has itself taken ~4h, so the
+// feedback is not merely slow, it lands at an unpredictable time the next day. This guard makes those
+// failure modes red at lint time instead. Each has already cost a
 // nightly: R1 is owner-only DDL on the provider handle — the 2026-07-12 `42501 permission denied
 // for table …` on TRUNCATE (#383), then the 2026-07-19/20 poison CREATE TRIGGER on `usage` (#637)
 // that the TRUNCATE-only first cut let straight through; R2 is the false-passing rate-limiter class
@@ -591,6 +593,145 @@ export function remoteSafetyViolations(file, rawSrc, fields) {
   return violations;
 }
 
+// ── R6 — the TARGET CLUSTER, not just the acting role ─────────────────────────────────────────────
+//
+// R1–R5 all answer "may THIS ROLE run this statement?". None of them answers "which CLUSTER does it
+// land on?". On the password path the harness rotates the passwords of every role in DB_ROLES (roles
+// are CLUSTER-GLOBAL, not per-database), `DROP DATABASE … WITH (FORCE)`s every `webhook_test_*` it can
+// see, and migrations.test.ts rolls the stack down far enough to DROP those roles. Every environment
+// uses the SAME role names and every role create is `if not exists`-guarded, so a mistyped or
+// mis-pasted TEST_DATABASE_URL does not fail early — it proceeds and lands its damage.
+//
+// packages/db/test/expected-host.ts fixes that. This rule keeps it fixed: it pins that the assertion
+// exists, that BOTH entry points call it, and — the part that actually matters — that the call sits
+// BEFORE the first statement that touches the cluster. A guard moved below the first `DROP DATABASE`
+// still reads as present while protecting nothing.
+
+/** The assertion module, and the entry points that must call it before their first destructive site.
+ *  Keyed by the marker whose FIRST occurrence bounds where the call has to appear. */
+const TARGET_CLUSTER_ASSERTION = "packages/db/test/expected-host.ts";
+const TARGET_CLUSTER_FN = "assertExpectedTestDatabaseHost";
+const TARGET_CLUSTER_ENV = "TEST_DATABASE_EXPECTED_HOST";
+const TARGET_CLUSTER_ENTRY_POINTS = ["packages/db/test/pg.ts", "packages/db/test/global-setup.ts"];
+/** Turbo tasks that run the suites against a shared cluster; each must forward the expectation. */
+const TARGET_CLUSTER_TURBO_TASKS = ["test", "test:db"];
+/** The first thing in an entry point that reaches the cluster: opening a client, or the DDL itself. */
+const DESTRUCTIVE_SITE = /\bpostgres\s*\(|\b(?:create|drop)\s+database\b/i;
+
+/**
+ * R6's decision. Pure.
+ * @param {{assertion: {file: string, src: string} | null,
+ *          entryPoints: {file: string, src: string}[]}} sources
+ * @returns {string[]}
+ */
+export function targetClusterGuardViolations(sources) {
+  const violations = [];
+  const assertion = sources?.assertion;
+
+  // THE FLOOR. Without a real assertion module every ordering check below is theatre — this is the
+  // "a guard that matches nothing reads as clean" failure mode, so say so loudly instead.
+  if (!assertion || typeof assertion.src !== "string") {
+    violations.push(
+      `${TARGET_CLUSTER_ASSERTION}: the target-cluster assertion module is missing or unreadable, so ` +
+        `nothing proves which cluster the suite mutates. Restore it (see #727) rather than deleting R6.`,
+    );
+    return violations;
+  }
+  const assertionSrc = blankComments(assertion.src);
+  if (!new RegExp(`function\\s+${TARGET_CLUSTER_FN}\\b`).test(assertionSrc)) {
+    violations.push(
+      `${assertion.file}: does not define ${TARGET_CLUSTER_FN}() — the entry points' calls would not ` +
+        `resolve to a real check.`,
+    );
+  }
+  if (!assertionSrc.includes(TARGET_CLUSTER_ENV)) {
+    violations.push(
+      `${assertion.file}: never reads ${TARGET_CLUSTER_ENV}, so it cannot compare the target cluster ` +
+        `against anything. A rename that keeps the function but drops the expectation is a silent no-op.`,
+    );
+  }
+
+  // The assertion reads its expectation from the ENVIRONMENT, and every consumer reaches it through
+  // turbo. Turbo 2.x defaults to STRICT env mode, so a variable absent from passThroughEnv is simply
+  // not forwarded to the task — the harness would then see an unset expectation and (correctly) refuse
+  // to run, turning a safety feature into a hard outage. Pin it: the guard is inert without it.
+  const turbo = sources.turbo;
+  if (turbo === null || turbo === undefined) {
+    violations.push(
+      `turbo.json: unreadable, so R6 cannot prove ${TARGET_CLUSTER_ENV} is forwarded to the test tasks.`,
+    );
+  } else {
+    for (const task of TARGET_CLUSTER_TURBO_TASKS) {
+      const passThrough = turbo?.tasks?.[task]?.passThroughEnv;
+      if (!Array.isArray(passThrough) || !passThrough.includes(TARGET_CLUSTER_ENV)) {
+        violations.push(
+          `turbo.json: task \`${task}\` does not pass ${TARGET_CLUSTER_ENV} through. Turbo 2.x runs in ` +
+            `STRICT env mode, so the variable never reaches vitest, the harness sees no expectation, and ` +
+            `every remote run fails closed. Add it to passThroughEnv alongside TEST_DATABASE_URL.`,
+        );
+      }
+    }
+  }
+
+  for (const entry of sources.entryPoints ?? []) {
+    const src = blankComments(entry.src);
+    const call = src.indexOf(`${TARGET_CLUSTER_FN}(`);
+    if (call === -1) {
+      violations.push(
+        `${entry.file}: never calls ${TARGET_CLUSTER_FN}(), so a mis-pointed TEST_DATABASE_URL reaches ` +
+          `this file's cluster access unchecked. (A commented-out call does not count.)`,
+      );
+      continue;
+    }
+    const destructive = src.search(DESTRUCTIVE_SITE);
+    if (destructive === -1) {
+      // The markers stopped matching. Left alone, the ordering assertion below would be trivially
+      // true forever — a guard that silently stopped guarding.
+      violations.push(
+        `${entry.file}: R6 found no destructive site (${String(DESTRUCTIVE_SITE)}) to order the ` +
+          `assertion against, so the ordering check would pass vacuously. Teach R6 the new shape.`,
+      );
+      continue;
+    }
+    if (call > destructive) {
+      violations.push(
+        `${entry.file}: calls ${TARGET_CLUSTER_FN}() at offset ${call}, AFTER the first statement that ` +
+          `touches the cluster at offset ${destructive}. The assertion must run BEFORE it — by the time ` +
+          `a \`create database\`/\`drop database\` has been issued, the damage a wrong host would take ` +
+          `is already done.`,
+      );
+    }
+  }
+  return violations;
+}
+
+/** R6's inputs: the assertion module + the entry points that must call it. Missing file ⇒ null/skip,
+ *  which the rule reports as a violation rather than silently passing.
+ *  @returns {Promise<{assertion: {file: string, src: string} | null,
+ *                     entryPoints: {file: string, src: string}[]}>} */
+export async function readTargetClusterSources() {
+  const read = async (rel) => {
+    try {
+      return { file: rel, src: await readFile(join(ROOT, rel), "utf8") };
+    } catch {
+      return null;
+    }
+  };
+  const [assertion, turboRaw, ...entries] = await Promise.all([
+    read(TARGET_CLUSTER_ASSERTION),
+    read("turbo.json"),
+    ...TARGET_CLUSTER_ENTRY_POINTS.map(read),
+  ]);
+  let turbo;
+  try {
+    turbo = turboRaw ? JSON.parse(turboRaw.src) : null;
+  } catch {
+    // Unparseable turbo.json ⇒ we cannot prove the variable is forwarded ⇒ the rule reports it.
+    turbo = null;
+  }
+  return { assertion, turbo, entryPoints: entries.filter(Boolean) };
+}
+
 /** Every `*.pg.test.ts` under apps/ — the app-level suites `pnpm test:db` also runs on Neon.
  *  @param {string} dir @returns {Promise<string[]>} absolute paths */
 async function findAppPgTests(dir) {
@@ -650,14 +791,25 @@ export async function readDbSrcSources() {
 }
 
 async function main() {
-  const [sources, fields, pkg, migrations, dbSrc, roles] = await Promise.all([
+  const [sources, fields, pkg, migrations, dbSrc, roles, targetCluster] = await Promise.all([
     readDbTestSources(),
     readFile(HARNESS, "utf8").then(harnessFields),
     readFile(join(ROOT, "package.json"), "utf8").then(JSON.parse),
     readMigrationSources(),
     readDbSrcSources(),
     readFile(CONSTANTS, "utf8").then(dbRoles),
+    readTargetClusterSources(),
   ]);
+  // FAIL CLOSED on R6's inputs, for the same reason R5 does: an entry point that quietly stopped
+  // being read would make its ordering check vacuous while the summary still printed a ✔.
+  if (targetCluster.entryPoints.length !== TARGET_CLUSTER_ENTRY_POINTS.length) {
+    console.error(
+      `✖ remote-db-test-guard: expected ${TARGET_CLUSTER_ENTRY_POINTS.length} target-cluster entry ` +
+        `point(s) (${TARGET_CLUSTER_ENTRY_POINTS.join(", ")}), read ` +
+        `${targetCluster.entryPoints.length}. R6 cannot prove the assertion runs first.`,
+    );
+    process.exit(1);
+  }
   // FAIL CLOSED on R5's inputs: an empty derivation would silently make the rule a no-op, which is
   // exactly the "a guard that matches nothing reads as clean" failure mode.
   if (migrations.length === 0) {
@@ -708,6 +860,7 @@ async function main() {
     ...sources.flatMap(({ file, src }) => remoteSafetyViolations(file, src, fields)),
     ...sources.flatMap(({ file, src }) => ownerOnlyExecuteViolations(file, src, execCtx)),
     ...testDbSerializationViolations(pkg.scripts?.["test:db"]),
+    ...targetClusterGuardViolations(targetCluster),
   ];
   if (violations.length > 0) {
     console.error(
@@ -719,8 +872,9 @@ async function main() {
   console.log(
     `✔ remote-db-test safety: ${sources.length} sources hold under the Neon provider role ` +
       `(incl. EXECUTE on ${ownerOnly.size} owner-only function(s) derived from ${migrations.length} ` +
-      `migrations, reached through ${readers.size} typed wrapper(s)), and test:db serializes every ` +
-      `suite that touches the shared branch.`,
+      `migrations, reached through ${readers.size} typed wrapper(s)), test:db serializes every ` +
+      `suite that touches the shared branch, and ${targetCluster.entryPoints.length} entry point(s) ` +
+      `assert the target cluster before touching it.`,
   );
 }
 

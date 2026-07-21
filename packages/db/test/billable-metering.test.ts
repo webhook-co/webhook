@@ -64,7 +64,7 @@ beforeAll(async () => {
   // webhook_owner membership with inherit_option = f) → 42501 permission denied. RLS never filters
   // TRUNCATE, so the owner's FORCE RLS is not in the way. Locally the provider IS the postgres
   // superuser, which bypasses the ACL check — which is exactly why truncating on it passed every
-  // local run and only broke at 04:00 against Neon (issue #383).
+  // local run and only broke on the nightly, against Neon (issue #383).
   owner = createClient(pg.ownerUrl);
 }, setupHookTimeoutMs());
 
