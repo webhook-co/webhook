@@ -157,7 +157,7 @@ wbhk endpoints add-provider-secret <endpoint-id> \
 ```
 
 ```ts TypeScript
-await webhook.endpoints.addProviderSecret({
+await webhook.endpoints.providerSecrets.add({
   endpointId,
   provider: "stripe",
   secret: process.env.STRIPE_SIGNING_SECRET!,
