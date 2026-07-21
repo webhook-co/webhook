@@ -1217,12 +1217,12 @@ export const RELATED_COUNT = 5;
  * instead of throwing — a tutorial page must never fail to render over a related-links strip.
  */
 export function relatedTutorials(slug: string): readonly Tutorial[] {
+  // -1 for an unknown slug is deliberately load-bearing: the window then starts at index 0, and every
+  // published tutorial is a candidate because none of them is the current page.
   const start = TUTORIALS.findIndex((t) => t.slug === slug);
-  const from = start === -1 ? -1 : start;
-  return Array.from(
-    { length: Math.min(RELATED_COUNT, Math.max(TUTORIALS.length - (start === -1 ? 0 : 1), 0)) },
-    (_, i) => TUTORIALS[(from + 1 + i) % TUTORIALS.length]!,
-  );
+  const candidates = start === -1 ? TUTORIALS.length : TUTORIALS.length - 1;
+  const count = Math.min(RELATED_COUNT, Math.max(candidates, 0));
+  return Array.from({ length: count }, (_, i) => TUTORIALS[(start + 1 + i) % TUTORIALS.length]!);
 }
 
 /**
