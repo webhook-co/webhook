@@ -289,7 +289,7 @@ test.describe("homepage accessibility (real browser)", () => {
   });
 
   test("no violations on each surface tab (covers all four dark terminals)", async ({ page }) => {
-    for (const name of ["MCP", "CLI", "API", "Web app"]) {
+    for (const name of ["MCP", "CLI", "API", "Web"]) {
       const tab = page.getByRole("tab", { name, exact: true });
       await tab.click();
       await expect(tab).toHaveAttribute("aria-selected", "true");

@@ -66,11 +66,16 @@ export function Tabs({
       {/* Arrow/Home/End handling lives on each tab button (the focusable element under roving
           tabindex), not the tablist container — the active tab always holds focus, so it receives
           the key event directly. */}
+      {/* One row on a phone, content-sized pills from `sm` up. Below `sm` the tabs become equal
+          columns (`auto-cols-fr` is `minmax(0, 1fr)`, so N tabs split the width whatever N is) —
+          a wrapped tablist put the widest label on a line of its own at every common phone width
+          (390, 375, and the very common Android 360), which read as three surfaces plus an orphan.
+          `mobile.spec.ts` pins the single row at all three widths; jsdom cannot see it. */}
       <div
         role="tablist"
         aria-label={ariaLabel}
         aria-orientation="horizontal"
-        className="flex flex-wrap gap-1.5"
+        className="grid grid-flow-col auto-cols-fr gap-1.5 sm:flex sm:flex-wrap"
       >
         {items.map((item, index) => {
           const isSelected = item.id === selected;
@@ -90,7 +95,9 @@ export function Tabs({
               onKeyDown={onKeyDown}
               className={cn(
                 focusRing,
-                "inline-flex items-center gap-2 rounded-control px-3.5 py-2 text-sm font-medium transition-colors",
+                // `px-2` below `sm` only so the label never outgrows its grid column at 360px; the
+                // visible breathing room there comes from the column, which is wider than the label.
+                "inline-flex items-center justify-center gap-2 rounded-control px-2 py-2 text-sm font-medium transition-colors sm:px-3.5",
                 isSelected
                   ? "bg-surface-inverse text-fg-on-inverse"
                   : "border border-hairline bg-surface text-fg-secondary hover:bg-surface-sunken hover:text-fg",
