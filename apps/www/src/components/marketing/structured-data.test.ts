@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { SITE_URL } from "@/app/metadata";
 import {
   breadcrumbList,
+  howToNode,
   ORG_ID,
   organizationNode,
   PERSON_ID,
@@ -104,5 +105,36 @@ describe("structured-data builders", () => {
       name: "About",
       item: `${SITE_URL}/about`,
     });
+  });
+
+  // HowTo marks up a genuinely step-structured page (the /test/* tutorials: create → point → trigger →
+  // replay). It carries NO rich-result rating shape — HowTo is a process, not a product — so it does
+  // not reintroduce the fabricated-rating risk that keeps SoftwareApplication off this site.
+  it("howToNode numbers each step and never fabricates a rating", () => {
+    const node = howToNode({
+      name: "How to test Stripe webhooks locally",
+      description: "A short lede.",
+      steps: [
+        { name: "Create an endpoint", text: "It prints a permanent ingest URL." },
+        { name: "Point Stripe at the URL", text: "Paste the URL into the Stripe dashboard." },
+        { name: "Trigger a test event", text: "Send a test event from the dashboard." },
+      ],
+    });
+    expect(node["@type"]).toBe("HowTo");
+    expect(node.name).toBe("How to test Stripe webhooks locally");
+    expect(node.description).toBe("A short lede.");
+    expect(node.step).toHaveLength(3);
+    expect(node.step[0]).toMatchObject({
+      "@type": "HowToStep",
+      position: 1,
+      name: "Create an endpoint",
+    });
+    expect(node.step[2]!.position).toBe(3);
+    // No product/rating shape leaks in — the whole reason HowTo is safe where SoftwareApplication is not.
+    expect(JSON.stringify(node)).not.toMatch(/aggregateRating|ratingValue|offers/i);
+  });
+
+  it("howToNode refuses a HowTo with no steps (a floor, not a silent empty node)", () => {
+    expect(() => howToNode({ name: "x", steps: [] })).toThrow(/step/i);
   });
 });

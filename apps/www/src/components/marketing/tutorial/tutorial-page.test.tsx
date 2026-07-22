@@ -63,6 +63,30 @@ describe("TutorialPage", () => {
     expect(faqLd.mainEntity[0].name).toBe(fixture.faq[0]!.question);
   });
 
+  it("emits a per-provider HowTo whose steps mirror the visible tutorial", () => {
+    // A tutorial IS a how-to (create → point → trigger → replay), so it is marked up as one. The two
+    // middle steps are the provider-specific `configure`/`fireTest` prose the page renders, which is
+    // what keeps sixteen HowTos from being sixteen clones — and keeps the markup matching the page.
+    const { container } = render(<TutorialPage tutorial={fixture} />);
+    const howTo = [...container.querySelectorAll('script[type="application/ld+json"]')]
+      .map((s) => JSON.parse(s.textContent!.replace(/\\u003c/g, "<")))
+      .find((j) => j["@type"] === "HowTo");
+    expect(howTo, "the tutorial must publish HowTo JSON-LD").toBeDefined();
+    expect(howTo.name).toMatch(new RegExp(fixture.name, "i"));
+    expect(howTo.step.length, "a HowTo needs the whole loop").toBeGreaterThanOrEqual(3);
+    const stepTexts = howTo.step.map((s: { text: string }) => s.text);
+    expect(stepTexts, "the configure step must carry the page's own configure prose").toContain(
+      fixture.configure,
+    );
+    expect(stepTexts, "the trigger step must carry the page's own fireTest prose").toContain(
+      fixture.fireTest,
+    );
+    // And every step's text must actually be visible on the page — the schema may not out-run the DOM.
+    for (const text of stepTexts) {
+      expect(container.textContent, `HowTo step text not on the page: ${text}`).toContain(text);
+    }
+  });
+
   it("renders the CLI commands with their spacing intact", () => {
     // This shipped once as "$wbhk listen": JSX drops the whitespace around a child that wraps onto a
     // second source line, and prettier chooses where that wrap falls, so the bug appears at format

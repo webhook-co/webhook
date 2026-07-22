@@ -1,0 +1,39 @@
+# webhook.co
+
+> A free, permanent, signed webhook URL. Capture the webhooks other services send you — inspect them, verify their signatures, and replay them to localhost — then reliably deliver them onward or hand your agents an event they can act on. Reachable identically from a CLI, an API, the web, and an MCP server.
+
+webhook.co is open-core webhook infrastructure: receive, inspect, replay-to-localhost, and reliably deliver webhooks. Signing and verification follow the Standard Webhooks spec, for both send and receive. This file indexes the pages most useful to a person — or an agent — trying to understand what webhook.co does. The full product reference lives in the docs.
+
+## Product
+
+- [Capture and replay](https://www.webhook.co/product/capture-replay): capture every request whole — headers, body, exact bytes — and replay any one of them to localhost as often as you need.
+- [Signature verification](https://www.webhook.co/product/verification): verify inbound webhook signatures against the Standard Webhooks spec and per-provider schemes.
+- [Delivery](https://www.webhook.co/product/delivery): reliable outbound delivery with retries and a dead-letter queue.
+- [Agent triggers](https://www.webhook.co/product/agent-triggers): turn an incoming webhook into an event an agent can act on.
+- [Pricing](https://www.webhook.co/pricing): single-dimension pricing on events, disclosed up front, with a soft cap that pauses rather than surprises.
+
+## Tools
+
+- [Test webhooks locally](https://www.webhook.co/test): point a provider's webhooks at a permanent URL, stream them to localhost, and replay them while you fix the handler.
+- [Verify a webhook signature](https://www.webhook.co/verify): check a signature against its payload and secret for 120+ providers, entirely in your browser — nothing you paste leaves the page.
+- [Test Stripe webhooks locally](https://www.webhook.co/test/stripe): register the endpoint, trigger a real event, and debug signature verification against the live engine.
+- [Test GitHub webhooks locally](https://www.webhook.co/test/github)
+- [Test Shopify webhooks locally](https://www.webhook.co/test/shopify)
+
+## Compare
+
+- [How webhook.co compares to the alternatives](https://www.webhook.co/vs): honest, sourced comparisons — including where the other tool is the better choice.
+- [webhook.co vs ngrok](https://www.webhook.co/vs/ngrok)
+- [webhook.co vs webhook.site](https://www.webhook.co/vs/webhook-site)
+- [webhook.co vs Hookdeck](https://www.webhook.co/vs/hookdeck)
+- [webhook.co vs RequestBin](https://www.webhook.co/vs/requestbin)
+
+## Company
+
+- [About](https://www.webhook.co/about)
+- [Security](https://www.webhook.co/security): what we do and do not have, said plainly.
+
+## Docs
+
+- [Documentation](https://docs.webhook.co): the full CLI, API, web, and MCP reference.
+- [Source on GitHub](https://github.com/webhook-co): the open core is Apache-2.0.

@@ -340,6 +340,46 @@ describe("comparisons: the estate", () => {
     expect(everything).toContain(`${DELIVERY_MAX_ATTEMPTS} attempts`);
   });
 
+  // Before status.webhook.co shipped, the Hookdeck comparison conceded on four surfaces that we had no
+  // status page. We publish one now (LINKS.status, footer-linked), so every one of those concessions is
+  // a published falsehood. Contractual uptime/latency commitments are STILL genuinely Hookdeck's — our
+  // own terms disclaim any uptime commitment — so that concession stays. The correction narrows the
+  // claim; it does not trade one false row for another.
+  it("corrects the stale status-page concession without over-claiming on uptime", () => {
+    const hd = getComparison("hookdeck")!;
+    const prose = comparisonText(hd);
+
+    // Corrected positively: we acknowledge we publish a status page too.
+    expect(prose, "the corrected status-page acknowledgment is missing").toMatch(
+      /we publish a status page too/i,
+    );
+    // None of the four stale concessions may remain.
+    expect(prose, "where-they-are-ahead still says 'we publish neither'").not.toMatch(
+      /we publish neither/i,
+    );
+    expect(prose, "chooseThem still lists 'the status page,' among their advantages").not.toMatch(
+      /the status page,/i,
+    );
+    expect(prose, "the FAQ still lists a status page among their maturity markers").not.toMatch(
+      /publish a status page and/i,
+    );
+    for (const row of hd.table) {
+      if (/status page/i.test(row.label)) {
+        expect(row.us, `table row "${row.label}" still concedes no status page`).not.toMatch(
+          /^\s*no\.?\s*$/i,
+        );
+      }
+    }
+
+    // The concession that is still TRUE stays, conceded plainly: no contractual uptime/latency
+    // commitment on our side. Dropping it entirely would over-correct in the other direction.
+    const uptimeRow = hd.table.find((r) =>
+      /uptime and latency commitment|contractual .*commitment/i.test(r.label),
+    );
+    expect(uptimeRow, "the contractual-commitment concession was dropped entirely").toBeDefined();
+    expect(uptimeRow!.us).toMatch(/^\s*no\.?\s*$/i);
+  });
+
   it("resolves a known slug and refuses an unknown one", () => {
     expect(getComparison(COMPARISONS[0]!.slug)?.slug).toBe(COMPARISONS[0]!.slug);
     expect(getComparison("not-a-competitor")).toBeUndefined();
