@@ -204,7 +204,7 @@ describe("LoginMethodsManager", () => {
       { providerId: "google", accountId: "g-2", linkedAt: 1_700_200_000 },
     ];
     render(<LoginMethodsManager initialMethods={two} hasMagicLink disconnect={disconnect} />);
-    fireEvent.click(screen.getAllByRole("button", { name: /disconnect/i })[1]!);
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect Google (g-2)" }));
     await waitFor(() => expect(disconnect).toHaveBeenCalledWith("google", "g-2"));
   });
 
