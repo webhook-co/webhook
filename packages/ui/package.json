@@ -47,7 +47,7 @@
     "jsdom": "^29.1.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "tailwindcss": "^4.3.2",
+    "tailwindcss": "^4.3.3",
     "vite-node": "^6.0.0"
   }
 }
