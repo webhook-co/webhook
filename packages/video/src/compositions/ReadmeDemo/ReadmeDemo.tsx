@@ -35,9 +35,10 @@ const WINDOW_Y = 112;
 export function ReadmeDemo() {
   const frame = useCurrentFrame();
 
-  // A restrained settle — the window is already there by the time the first
-  // event lands, so this never delays the proof.
-  const intro = Math.min(1, frame / 10);
+  // NO intro fade, deliberately. This asset loops forever in a README, so any
+  // fade-in on the chrome becomes a flash of empty frame every 12s at the loop
+  // seam. The window and brand are simply always present; only the terminal
+  // content cycles, which reads as the command being run again.
 
   return (
     // A STATIC backdrop, deliberately. The promo film's drifting dot lattice
@@ -60,7 +61,6 @@ export function ReadmeDemo() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          opacity: intro,
         }}
       >
         <DemoLockup />
@@ -80,8 +80,6 @@ export function ReadmeDemo() {
           overflow: "hidden",
           border: `1px solid ${colors.termBorder}`,
           boxShadow: shadows.terminal,
-          opacity: intro,
-          transform: `scale(${0.995 + intro * 0.005})`,
         }}
       >
         <WindowChromeView title="wbhk listen" />
