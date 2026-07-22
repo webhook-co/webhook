@@ -1,6 +1,8 @@
 import type { Cursor } from "@webhook-co/shared";
 import { describe, expect, it, vi } from "vitest";
 
+import type { EventFilters } from "@/lib/event-filters";
+
 import {
   loadEvent,
   loadEvents,
@@ -35,7 +37,7 @@ const detail: EventDetailItem = {
   verification: { ok: true, keyId: "key_1", scheme: "stripe" },
 };
 
-const cursor: Cursor = { receivedAt: new Date("2026-06-28T00:00:00Z"), id: EVENT_ID };
+const cursor: Cursor = { orderKey: "2026-06-28T00:00:00.000000Z", id: EVENT_ID };
 
 function readers(over: Partial<EventReaders> = {}): EventReaders {
   return {
@@ -45,6 +47,15 @@ function readers(over: Partial<EventReaders> = {}): EventReaders {
     })),
     listEvents: vi.fn(async () => ({ items: [summary], nextCursor: null })),
     getEvent: vi.fn(async () => detail),
+    // The org-wide browse pair. They belong here even though most cases below drive the per-endpoint
+    // readers: the factory's return type CLAIMS to be a whole EventReaders, and every `readers(over)` call
+    // hands that claim to code under test. Omitting them left the object structurally short of the
+    // interface — a defect the excluded-from-tsconfig test file could never report.
+    orgFirstPage: vi.fn(async () => ({
+      page: { items: [summary], nextCursor: null },
+      endpointNames: { [ENDPOINT_ID]: { name: "Stripe prod", deleted: false } },
+    })),
+    listOrgEvents: vi.fn(async () => ({ items: [summary], nextCursor: null })),
     revealHeader: vi.fn(async () => ({ value: "Bearer secret" })),
     ...over,
   };
@@ -98,7 +109,10 @@ describe("loadEvents", () => {
 
   it("threads the active filters into the first-page reader", async () => {
     const r = readers();
-    const filters = { provider: "github", receivedAfter: new Date("2026-06-01T00:00:00Z") };
+    const filters: EventFilters = {
+      provider: ["github"],
+      receivedAfter: new Date("2026-06-01T00:00:00Z"),
+    };
     await loadEvents("o", ENDPOINT_ID, filters, r);
     expect(r.firstPage).toHaveBeenCalledWith("o", ENDPOINT_ID, filters);
   });
@@ -211,7 +225,7 @@ describe("loadEvent", () => {
 
 describe("loadMoreEvents", () => {
   it("returns the next page via the injected reader", async () => {
-    const next = { receivedAt: new Date("2026-06-27T00:00:00Z"), id: EVENT_ID };
+    const next: Cursor = { orderKey: "2026-06-27T00:00:00.000000Z", id: EVENT_ID };
     const r = readers({ listEvents: vi.fn(async () => ({ items: [summary], nextCursor: next })) });
     const page = await loadMoreEvents("o", ENDPOINT_ID, cursor, undefined, r);
     expect(page).toEqual({ items: [summary], nextCursor: next });
@@ -220,7 +234,10 @@ describe("loadMoreEvents", () => {
 
   it("threads the active filters into the load-more reader", async () => {
     const r = readers();
-    const filters = { provider: "stripe", receivedBefore: new Date("2026-06-02T00:00:00Z") };
+    const filters: EventFilters = {
+      provider: ["stripe"],
+      receivedBefore: new Date("2026-06-02T00:00:00Z"),
+    };
     await loadMoreEvents("o", ENDPOINT_ID, cursor, filters, r);
     expect(r.listEvents).toHaveBeenCalledWith("o", ENDPOINT_ID, cursor, filters);
   });
