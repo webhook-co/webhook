@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ORG_SLUG_RESERVED } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { buildLegacyTarget, isLegacyDashboardPath, MOVED_SEGMENTS } from "./legacy-redirect";
@@ -71,5 +72,19 @@ describe("MOVED_SEGMENTS drift guard", () => {
       .map((e) => e.name)
       .sort();
     expect([...MOVED_SEGMENTS].sort()).toEqual(onDisk);
+  });
+});
+
+// A legacy-redirect segment that a user can ALSO register as an org slug is a cross-org misdirect waiting to
+// happen: `(app)/[...legacy]` claims any first segment in MOVED_SEGMENTS and 307s the reader to their DEFAULT
+// org, and if the second segment is a registrable slug the target is a REAL org they never asked for. Every
+// moved segment must therefore be reserved. `suspended` was the one that wasn't — it postdates migration 0069
+// where the rest were reserved — and this guard is what caught it. (`ORG_SLUG_RESERVED` ⇔ the DB
+// `org_slug_reserved()` function is guarded separately by org-slug-parity.test.ts, so a segment reserved here
+// is reserved at the database too.)
+describe("MOVED_SEGMENTS ⊆ ORG_SLUG_RESERVED", () => {
+  it("reserves every legacy segment, so none can name a real org", () => {
+    const registrable = [...MOVED_SEGMENTS].filter((s) => !ORG_SLUG_RESERVED.has(s));
+    expect(registrable, "moved segments a user could still register as an org slug").toEqual([]);
   });
 });
