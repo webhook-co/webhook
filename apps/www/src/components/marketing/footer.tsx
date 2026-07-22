@@ -2,7 +2,7 @@ import { cn, Wordmark } from "@webhook-co/ui";
 
 import { GithubIcon, LinkedinIcon } from "@/components/ui/brand-icons";
 import { COMPARISONS, comparisonPath } from "@/lib/comparisons";
-import { StatusIndicator, type StatusBadge } from "@/components/marketing/status-indicator";
+import { LiveStatusIndicator } from "@/components/marketing/live-status-indicator";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
@@ -118,7 +118,7 @@ const socials: { label: string; icon: typeof GithubIcon; href?: string }[] = [
   { label: "webhook.co on LinkedIn", icon: LinkedinIcon, href: LINKS.linkedin },
 ];
 
-export function Footer({ status = null }: { status?: StatusBadge | null } = {}) {
+export function Footer() {
   return (
     <footer className="border-t border-hairline pt-[clamp(48px,7vw,80px)] pb-12">
       <div className={container}>
@@ -225,7 +225,7 @@ export function Footer({ status = null }: { status?: StatusBadge | null } = {}) 
             renders NOTHING if that read fails, so this row can never claim health it cannot see. */}
         <div className="mt-[clamp(40px,5vw,64px)] flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6 text-sm text-fg-muted">
           <span>© 2026 webhook.co</span>
-          <StatusIndicator status={status} />
+          <LiveStatusIndicator />
         </div>
       </div>
     </footer>
