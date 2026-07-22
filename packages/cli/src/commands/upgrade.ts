@@ -168,6 +168,11 @@ export type UpgradePlan =
       readonly current: string;
       readonly latest: string;
       readonly assetName: string;
+      /** The release this plan installs FROM. Carried on the variant (rather than re-read from the handler's
+       *  own `release`) because `install` is the one action that implies a non-null release — putting it here
+       *  is what makes "install without a release" unrepresentable, so the handler needs no null check it
+       *  could never satisfy and can never silently return out of one. */
+      readonly release: ReleaseSummary;
     };
 
 export function planUpgrade(opts: {
@@ -191,7 +196,7 @@ export function planUpgrade(opts: {
   if (name === null) {
     return { action: "unsupported", current, latest, platform: opts.platform, arch: opts.arch };
   }
-  return { action: "install", current, latest, assetName: name };
+  return { action: "install", current, latest, assetName: name, release: opts.release };
 }
 
 // ── command handler (impure: GitHub fetch + binary self-replace, both via injected io seams) ──
@@ -344,16 +349,12 @@ export const upgradeCommand = buildCommand<UpgradeFlags, [], AppContext>({
         );
         return;
       case "install": {
-        // plan.action === "install" implies release !== null (planUpgrade); narrow it for TS.
-        if (release === null) {
-          throw new Error("internal error: invariant violated (install action requires a release)");
-        }
         if (format !== "json") {
           this.process.stderr.write(`downloading wbhk ${plan.latest} (${plan.assetName})…\n`);
         }
         // Resolve + download + verify, surfacing any failure (missing asset / network / bad checksum) as a
         // clean UpgradeError — fail-closed BEFORE we touch the binary.
-        const data = await fetchVerifiedAsset(this.io.fetch, release, plan.assetName);
+        const data = await fetchVerifiedAsset(this.io.fetch, plan.release, plan.assetName);
         // Verify the sigstore/SLSA build provenance (that GitHub Actions built this exact binary from this
         // repo) — strict by default; on top of the checksum. `--no-verify-provenance` is the escape hatch
         // for an air-gapped box or a sigstore outage (falls back to the checksum alone).
