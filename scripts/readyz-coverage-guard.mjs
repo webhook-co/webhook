@@ -25,7 +25,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const APPS_DIR = join(REPO, "apps");
 
 /** Apps that serve a customer-facing component on status.webhook.co and MUST have /readyz. */
-export const REQUIRES_READYZ = ["api", "auth", "engine", "mcp", "web"];
+export const REQUIRES_READYZ = ["api", "auth", "engine", "health", "mcp", "web"];
 
 /**
  * Apps deliberately without `/readyz`, each with the reason. An exemption is where scrutiny goes to

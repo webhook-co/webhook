@@ -60,7 +60,18 @@ export const TRACING_SAFE_APPS = new Set(["api", "www", "get", "telemetry"]);
  * be enabled here. This set drives a precise error message and a live test that none of them carry tracing;
  * the enforcement itself is "enabled ⟹ in SAFE", so even an unlisted worker is caught.
  */
-export const TRACING_FORBIDDEN_APPS = new Set(["engine", "auth", "web", "mcp", "play"]);
+export const TRACING_FORBIDDEN_APPS = new Set([
+  "engine",
+  "auth",
+  "web",
+  "mcp",
+  "play",
+  // health: its INBOUND urls are secret-free (fixed paths plus a registered job slug; the heartbeat
+  // credential rides in the Authorization header). It is forbidden for its OUTBOUND call: the
+  // delivery canary fetches CANARY_INGEST_URL, whose path contains a live ingest token, so an auto
+  // fetch span would capture a credential.
+  "health",
+]);
 
 /** A wrangler config but no fetch handler (email/queue only) — no auto fetch span can fire. */
 export const TRACING_NO_FETCH_APPS = new Set(["dmarc"]);

@@ -259,6 +259,16 @@ importers:
         specifier: ^5.20260722.1
         version: 5.20260722.1
 
+  apps/health:
+    dependencies:
+      '@webhook-co/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260722.1
+        version: 5.20260722.1
+
   apps/mcp:
     dependencies:
       '@modelcontextprotocol/sdk':

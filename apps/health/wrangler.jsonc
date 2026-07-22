@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-health",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-15",
+  // health.wbhk.my — the derived-signal plane. Components with a public endpoint of their own are
+  // probed directly on that endpoint, NOT through here, so this Worker failing cannot paint the whole
+  // status page red. Only signals with no endpoint of their own live here (scheduled-job liveness;
+  // the delivery canary next).
+  //
+  // NOT YET WIRED FOR DEPLOY. The KV id below is a placeholder and there is no entry in
+  // scripts/gen-wrangler-prod.mjs, deliberately: adding one with a required env var would fail every
+  // existing deploy until the operator provisions the namespace. See
+  // internal/runbooks/status-health-activation.md for the provisioning order.
+  "kv_namespaces": [{ "binding": "HEALTH_KV", "id": "<KV_HEALTH_ID>" }],
+  "observability": { "enabled": true },
+  // Every response is either a fixed string or a status verdict; no token or tenant identifier ever
+  // reaches a URL here, so tracing is safe.
+  "workers_dev": false,
+  "preview_urls": true,
+}
