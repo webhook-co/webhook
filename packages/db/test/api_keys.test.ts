@@ -157,7 +157,7 @@ describe("hash at rest (plaintext never stored)", () => {
         select key_hash, start, name from api_keys where id = ${id}`;
     });
     // The stored hash equals sha256(plaintext)...
-    expect(Buffer.compare(row.key_hash, keyHash)).toBe(0);
+    expect(Buffer.compare(row!.key_hash, keyHash)).toBe(0);
     // ...and the full plaintext secret never lands in any text column. (base64url can
     // itself contain '_', so strip the known "whk_" prefix rather than splitting on '_'.)
     const secret = plaintext.slice(PREFIX.length + 1);
@@ -165,9 +165,9 @@ describe("hash at rest (plaintext never stored)", () => {
       return tx<{ t: string }[]>`
         select coalesce(start,'') || '|' || coalesce(name,'') as t from api_keys where id = ${id}`;
     });
-    expect(dump[0].t).not.toContain(secret);
+    expect(dump[0]!.t).not.toContain(secret);
     // `start` is a truncated, non-sensitive display prefix — never the full secret.
-    expect(row.start.length).toBeLessThan(plaintext.length);
+    expect(row!.start.length).toBeLessThan(plaintext.length);
   });
 
   it("verifies via the hash, not the plaintext — a wrong plaintext fails", async () => {
@@ -201,9 +201,9 @@ describe("cross-org isolation (webhook_app is RLS-bound to its own org's keys)",
 
     // webhook_app under org A's context: org B's row is invisible and immutable.
     const visible = await withTenant(app, orgA, async (tx) => {
-      const [{ n }] = await tx<{ n: number }[]>`
+      const rows = await tx<{ n: number }[]>`
         select count(*)::int as n from api_keys where org_id = ${orgB}`;
-      return n;
+      return rows[0]!.n;
     });
     expect(visible).toBe(0);
 

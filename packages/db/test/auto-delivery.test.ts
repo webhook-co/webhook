@@ -118,7 +118,13 @@ describe("enqueueAutoDeliveries", () => {
     const destinationIds = await enqueueAutoDeliveries(app, {
       orgId,
       sourceEndpointId: ep,
-      event: { eventId, provider: "stripe", eventType: "charge.succeeded", verified: true },
+      event: {
+        eventId,
+        provider: "stripe",
+        eventType: "charge.succeeded",
+        verified: true,
+        verification: { ok: true },
+      },
     });
     expect(destinationIds).toEqual([dest]);
 
@@ -142,7 +148,13 @@ describe("enqueueAutoDeliveries", () => {
     const destinationIds = await enqueueAutoDeliveries(app, {
       orgId,
       sourceEndpointId: ep,
-      event: { eventId, provider: "stripe", eventType: "charge.succeeded", verified: true },
+      event: {
+        eventId,
+        provider: "stripe",
+        eventType: "charge.succeeded",
+        verified: true,
+        verification: { ok: true },
+      },
     });
     expect(destinationIds).toEqual([]);
     expect(await openDeliveries(dest)).toHaveLength(0);
@@ -163,7 +175,7 @@ describe("enqueueAutoDeliveries", () => {
     const unverified = await enqueueAutoDeliveries(app, {
       orgId,
       sourceEndpointId: ep,
-      event: { eventId, provider: "stripe", eventType: "x", verified: false },
+      event: { eventId, provider: "stripe", eventType: "x", verified: false, verification: null },
     });
     expect(unverified).toEqual([]); // require_verified gates the unverified event out
     expect(await openDeliveries(dest)).toHaveLength(0);
@@ -227,7 +239,13 @@ describe("enqueueAutoDeliveries", () => {
     const destinationIds = await enqueueAutoDeliveries(app, {
       orgId,
       sourceEndpointId: ep,
-      event: { eventId, provider: "stripe", eventType: "any.thing", verified: true },
+      event: {
+        eventId,
+        provider: "stripe",
+        eventType: "any.thing",
+        verified: true,
+        verification: { ok: true },
+      },
     });
     expect(destinationIds.sort()).toEqual([d1, d2].sort());
     expect(await openDeliveries(d1)).toHaveLength(1);
@@ -245,7 +263,13 @@ describe("enqueueAutoDeliveries", () => {
     const destinationIds = await enqueueAutoDeliveries(app, {
       orgId,
       sourceEndpointId: ep,
-      event: { eventId, provider: "stripe", eventType: "x", verified: true },
+      event: {
+        eventId,
+        provider: "stripe",
+        eventType: "x",
+        verified: true,
+        verification: { ok: true },
+      },
     });
     expect(destinationIds).toEqual([]);
   });
@@ -270,7 +294,7 @@ describe("enqueueAutoDeliveries", () => {
     const destinationIds = await enqueueAutoDeliveries(app, {
       orgId,
       sourceEndpointId: ep,
-      event: { eventId, provider: null, eventType: null, verified: false },
+      event: { eventId, provider: null, eventType: null, verified: false, verification: null },
     });
     expect(destinationIds).toEqual([anyDest]); // the stripe-pinned sub does not match a null provider
   });

@@ -313,7 +313,7 @@ describe("agent_triggers RLS + grants (isolation red-team)", () => {
                or has_table_privilege(${role}, 'agent_triggers', 'INSERT')
                or has_table_privilege(${role}, 'agent_triggers', 'UPDATE')
                or has_table_privilege(${role}, 'agent_triggers', 'DELETE')) as any`;
-        if (p.any) withAccess.push(role);
+        if (p!.any) withAccess.push(role);
       }
       expect(withAccess.sort()).toEqual([DB_ROLES.app]);
     } finally {
@@ -501,7 +501,13 @@ describe("triggers.wait inline body (C2 — PayloadReader attachment)", () => {
   };
   function fakeReader(bodies: Record<string, Body>) {
     return {
-      readBoundedBodies: async ({ eventIds }: { eventIds: readonly string[] }) =>
+      readBoundedBodies: async ({
+        eventIds,
+      }: {
+        orgId: string;
+        eventIds: readonly string[];
+        maxBytesEach: number;
+      }) =>
         eventIds.map((eventId) => {
           const b = bodies[eventId];
           return b

@@ -65,8 +65,8 @@ describe("recordStripeEventOnce", () => {
     const [row] = await billing<{ event_type: string; event_created: string }[]>`
       select event_type, event_created::text as event_created
       from processed_stripe_events where event_id = ${"evt_row"}`;
-    expect(row.event_type).toBe("customer.subscription.updated");
-    expect(row.event_created).toBe("1752537600");
+    expect(row!.event_type).toBe("customer.subscription.updated");
+    expect(row!.event_created).toBe("1752537600");
   });
 
   it("records exactly once when two deliveries of the SAME event race concurrently", async () => {
@@ -83,9 +83,9 @@ describe("recordStripeEventOnce", () => {
         recordStripeEventOnce(b2, ev),
       ]);
       expect([a, b].filter(Boolean)).toHaveLength(1); // exactly one claimant
-      const [{ n }] = await billing<{ n: number }[]>`
+      const rows = await billing<{ n: number }[]>`
         select count(*)::int as n from processed_stripe_events where event_id = ${"evt_race"}`;
-      expect(n).toBe(1); // and a single durable row
+      expect(rows[0]!.n).toBe(1); // and a single durable row
     } finally {
       await Promise.all([b1.end(), b2.end()]);
     }

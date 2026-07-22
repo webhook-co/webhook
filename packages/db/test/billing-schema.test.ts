@@ -69,7 +69,7 @@ describe("stripe_meter_reports outbox constraints", () => {
         insert into stripe_meter_reports (org_id, day, event_count, identifier)
         values (${orgId}, ${day}, ${100}, ${ownId}) returning identifier`,
     );
-    expect(row.identifier).toBe(ownId);
+    expect(row!.identifier).toBe(ownId);
   });
 
   it("REJECTS a spoofed identifier bound to ANOTHER org (the CHECK closes the cross-tenant claim)", async () => {
@@ -131,7 +131,7 @@ describe("stripe_meter_reports outbox constraints", () => {
         insert into stripe_meter_reports (org_id, day, event_count, identifier, status)
         values (${orgId}, ${"2026-07-19"}, ${1}, ${okId}, ${"sending"}) returning status`,
     );
-    expect(ok.status).toBe("sending");
+    expect(ok!.status).toBe("sending");
   });
 
   it("RLS WITH CHECK rejects a cross-org insert (org A cannot write a row under org B's org_id)", async () => {
@@ -150,13 +150,13 @@ describe("stripe_meter_reports outbox constraints", () => {
           values (${orgB}, ${day}, ${999}, ${`${orgB}:${day}`})`,
       ),
     ).rejects.toThrow(/row-level security|policy|violates/i);
-    const [{ n }] = await withTenant(
+    const [row] = await withTenant(
       app,
       orgB,
       (tx) =>
         tx<{ n: number }[]>`select count(*)::int as n from stripe_meter_reports where day = ${day}`,
     );
-    expect(n).toBe(0); // org B has no such row — the cross-org insert never landed
+    expect(row!.n).toBe(0); // org B has no such row — the cross-org insert never landed
   });
 
   it("rejects a negative event_count (never report a negative meter event to Stripe)", async () => {

@@ -144,13 +144,13 @@ describe("requestOrgDeletion enqueues the same Stripe cancellation (#665)", () =
     await seedSubscription(paid, "active");
     await requestOrgDeletion(app, { orgId: paid, actor: userActor("u1") }, key);
     await requestOrgDeletion(app, { orgId: paid, actor: userActor("u1") }, key); // idempotent re-request
-    const [{ n }] = await withTenant(
+    const [row] = await withTenant(
       app,
       paid,
       (tx) => tx<{ n: number }[]>`
       select count(*)::int as n from org_billing_cancellations where org_id = ${paid}`,
     );
-    expect(n).toBe(1);
+    expect(row!.n).toBe(1);
   });
 });
 
@@ -178,8 +178,8 @@ describe("drainBillingCancellations", () => {
     expect(canceller.ids).toEqual(["sub_live"]);
     expect(result).toMatchObject({ claimed: 1, canceled: 1, retried: 0, failed: 0 });
     const job = await readJob(orgId);
-    expect(job.status).toBe("canceled");
-    expect(job.canceled_at).not.toBeNull();
+    expect(job!.status).toBe("canceled");
+    expect(job!.canceled_at).not.toBeNull();
   });
 
   it("treats resource_missing (already gone at Stripe) as an idempotent success", async () => {
@@ -202,7 +202,7 @@ describe("drainBillingCancellations", () => {
     });
 
     expect(result).toMatchObject({ canceled: 1, alreadyGone: 1, failed: 0 });
-    expect((await readJob(orgId)).status).toBe("canceled");
+    expect((await readJob(orgId))!.status).toBe("canceled");
   });
 
   it("leaves a transiently-failing (5xx) job pending with an incremented attempt count", async () => {
@@ -221,8 +221,8 @@ describe("drainBillingCancellations", () => {
 
     expect(result).toMatchObject({ canceled: 0, retried: 1, failed: 0 });
     const job = await readJob(orgId);
-    expect(job.status).toBe("pending");
-    expect(job.attempts).toBe(1);
+    expect(job!.status).toBe("pending");
+    expect(job!.attempts).toBe(1);
   });
 
   it("marks a TERMINAL 4xx (e.g. revoked key = 401) failed on the FIRST attempt — no week of silent retries", async () => {
@@ -241,8 +241,8 @@ describe("drainBillingCancellations", () => {
 
     expect(result).toMatchObject({ failed: 1, retried: 0 });
     const job = await readJob(orgId);
-    expect(job.status).toBe("failed");
-    expect(job.attempts).toBe(1); // alarmed immediately, not after the cap
+    expect(job!.status).toBe("failed");
+    expect(job!.attempts).toBe(1); // alarmed immediately, not after the cap
   });
 
   it("marks a transiently-failing job failed once attempts reach maxAttempts (alarm, stops retrying)", async () => {
@@ -263,8 +263,8 @@ describe("drainBillingCancellations", () => {
 
     expect(result).toMatchObject({ failed: 1, retried: 0 });
     const job = await readJob(orgId);
-    expect(job.status).toBe("failed");
-    expect(job.attempts).toBe(5);
+    expect(job!.status).toBe("failed");
+    expect(job!.attempts).toBe(5);
   });
 
   it("reports capped when the claimed set hits the limit", async () => {
@@ -295,7 +295,7 @@ describe("org_billing_cancellations RLS — a tenant cannot forge a cancellation
         tx`insert into org_billing_cancellations (org_id, stripe_subscription_id)
            values (${org}, ${subId})`,
     );
-    expect((await readJob(org)).stripe_subscription_id).toBe(subId);
+    expect((await readJob(org))!.stripe_subscription_id).toBe(subId);
   });
 
   it("rejects a FORGED foreign subscription id under the tenant's own org (the hardened with-check)", async () => {

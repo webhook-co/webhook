@@ -81,7 +81,7 @@ export function assertExpectedTestDatabaseHost(
   //   - libpq accepts a COMMA-SEPARATED host list; WHATWG parses the whole thing as one hostname.
   //
   // Neither is legitimate in any of our lanes, so refusing costs nothing and closes the bypass.
-  const authority = url.slice(url.indexOf("//") + 2).split(/[/?#]/)[0];
+  const authority = url.slice(url.indexOf("//") + 2).split(/[/?#]/)[0]!;
   const hostPart = authority.slice(authority.lastIndexOf("@") + 1);
   if ((authority.match(/@/g) ?? []).length > 1) {
     throw new UnexpectedTestClusterError(

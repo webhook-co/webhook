@@ -168,13 +168,13 @@ describe.skipIf(!hasLocalPostgresBinaries())("password-auth cluster handed a sup
     // `28P01 password authentication failed for user "test_provider"`.
     provider = createClient(pg!.providerUrl);
     const [row] = await provider<{ ok: number }[]>`select 1 as ok`;
-    expect(row.ok).toBe(1);
+    expect(row!.ok).toBe(1);
   });
 
   it("is still a non-superuser here too — password mode must not buy back privileges", async () => {
     const [row] = await provider!<{ rolsuper: boolean; rolbypassrls: boolean }[]>`
       select rolsuper, rolbypassrls from pg_roles where rolname = current_user`;
-    expect(row.rolsuper).toBe(false);
-    expect(row.rolbypassrls).toBe(true);
+    expect(row!.rolsuper).toBe(false);
+    expect(row!.rolbypassrls).toBe(true);
   });
 });

@@ -60,24 +60,24 @@ describe("the provider role is not a superuser (in EITHER lane)", () => {
     // silently flip to ALLOWED — the suite would go green while proving the opposite of its claim.
     // It is also the assertion that catches a machine resolving `initdb` from an older Homebrew
     // formula, which is easy to do since brew keeps every major side by side and links only one.
-    const [{ major }] = await provider<{ major: number }[]>`
+    const [row] = await provider<{ major: number }[]>`
       select (current_setting('server_version_num')::int / 10000)::int as major`;
-    expect(major).toBeGreaterThanOrEqual(17);
+    expect(row!.major).toBeGreaterThanOrEqual(17);
   });
 
   it("is NOSUPERUSER with BYPASSRLS — the managed engine's shape", async () => {
     const [row] = await provider<
       { rolsuper: boolean; rolbypassrls: boolean; rolname: string }[]
     >`select rolname, rolsuper, rolbypassrls from pg_roles where rolname = current_user`;
-    expect(row.rolsuper).toBe(false);
-    expect(row.rolbypassrls).toBe(true);
+    expect(row!.rolsuper).toBe(false);
+    expect(row!.rolbypassrls).toBe(true);
   });
 
   it("owns none of the schema's tables", async () => {
-    const [{ count }] = await provider<{ count: string }[]>`
+    const [row] = await provider<{ count: string }[]>`
       select count(*)::text as count from pg_tables
       where schemaname = 'public' and tableowner = current_user`;
-    expect(count).toBe("0");
+    expect(row!.count).toBe("0");
   });
 
   it("is a MEMBER of webhook_owner but does not carry its privileges", async () => {
@@ -85,8 +85,8 @@ describe("the provider role is not a superuser (in EITHER lane)", () => {
     const [row] = await provider<{ usage: boolean; member: boolean }[]>`
       select pg_has_role(current_user, ${DB_ROLES.owner}, 'USAGE')  as usage,
              pg_has_role(current_user, ${DB_ROLES.owner}, 'MEMBER') as member`;
-    expect(row.usage).toBe(false);
-    expect(row.member).toBe(true);
+    expect(row!.usage).toBe(false);
+    expect(row!.member).toBe(true);
   });
 });
 

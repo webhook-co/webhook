@@ -152,7 +152,7 @@ describe("seedAuditChain — the DB accepts the batch, and the chain it stores v
       ),
     );
     // The limiters count exactly this way: rows for the org + action inside a 60s wall clock.
-    const [{ count }] = await withTenant(
+    const [countRow] = await withTenant(
       app,
       orgId,
       (tx) => tx<{ count: number }[]>`
@@ -160,7 +160,7 @@ describe("seedAuditChain — the DB accepts the batch, and the chain it stores v
         where org_id = ${orgId} and action = ${"event.deleted"}
           and created_at > now() - make_interval(secs => ${60})`,
     );
-    expect(count).toBe(50);
+    expect(countRow!.count).toBe(50);
   });
 
   it("is RLS-policed like any other app write — it cannot seed another org's chain", async () => {

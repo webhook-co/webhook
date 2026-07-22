@@ -42,7 +42,7 @@ async function seedOrg(slug: string): Promise<string> {
 async function verifyChain(rows: readonly StoredAuthAuditRow[]): Promise<boolean> {
   let prev: Uint8Array | null = null;
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
+    const r = rows[i]!;
     if (r.seq !== i + 1) return false;
     if (prev === null ? r.prevHash !== null : Buffer.compare(r.prevHash!, prev) !== 0) return false;
     if (!(await verifyAuthAuditRowHash(key, r.prevHash, r, r.rowHash))) return false;
@@ -125,7 +125,7 @@ describe("appendAuthAuditEntry (aae1 append-service)", () => {
       }),
     );
     const chain = await withTenant(app, orgId, (tx) => readAuthAuditChain(tx, orgId));
-    expect(chain[0].ip).toBe("203.0.113.9");
+    expect(chain[0]!.ip).toBe("203.0.113.9");
     expect(await verifyChain(chain)).toBe(true); // recompute over READBACK jsonb still matches
   });
 

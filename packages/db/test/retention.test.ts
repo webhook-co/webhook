@@ -159,14 +159,14 @@ describe("deleteExpiredEvents", () => {
     const deleted = await deleteExpiredEvents(retention, o.orgId, [oldId]);
     expect(deleted).toEqual([oldId]);
 
-    const [{ n: events }] = await admin<
+    const [eventsRow] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${oldId}`;
-    expect(events).toBe(0);
-    const [{ n: attempts }] = await admin<
+    expect(eventsRow!.n).toBe(0);
+    const [attemptsRow] = await admin<
       { n: number }[]
     >`select count(*)::int as n from delivery_attempts where event_id = ${oldId}`;
-    expect(attempts).toBe(0);
+    expect(attemptsRow!.n).toBe(0);
   });
 
   it("is a no-op for an empty id list", async () => {
@@ -180,10 +180,10 @@ describe("deleteExpiredEvents", () => {
     const b = await seedOrg("scope-b");
     // Ask to delete A's event but under B's org — the `where org_id = $b` predicate spares it.
     expect(await deleteExpiredEvents(retention, b.orgId, [idA])).toEqual([]);
-    const [{ n }] = await admin<
+    const [row] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${idA}`;
-    expect(n).toBe(1);
+    expect(row!.n).toBe(1);
   });
 
   it("the age-FLOOR DELETE policy REFUSES to remove an in-retention event even if its id is passed", async () => {
@@ -193,10 +193,10 @@ describe("deleteExpiredEvents", () => {
     const freshId = await seedEvent(o.orgId, o.endpointId, { ageDays: 1 });
     const deleted = await deleteExpiredEvents(retention, o.orgId, [freshId]);
     expect(deleted).toEqual([]);
-    const [{ n }] = await admin<
+    const [row] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${freshId}`;
-    expect(n).toBe(1); // still there
+    expect(row!.n).toBe(1); // still there
   });
 
   it("the RLS DELETE POLICY blocks a bare cross-org delete of a PAID org's data inside its window", async () => {
@@ -214,10 +214,10 @@ describe("deleteExpiredEvents", () => {
     const removedIds = removed.map((r) => r.id);
     expect(removedIds).toContain(freeOld); // past the Free org's window → removable
     expect(removedIds).not.toContain(proInWindow); // inside Pro's 30 days → the policy spares it
-    const [{ n }] = await admin<
+    const [row] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${proInWindow}`;
-    expect(n).toBe(1);
+    expect(row!.n).toBe(1);
   });
 
   it("REFUSES to delete an event whose org UPGRADED mid-tick, even if its id is passed (atomic re-check)", async () => {
@@ -228,10 +228,10 @@ describe("deleteExpiredEvents", () => {
     await setRetentionDays(o.orgId, 30); // upgrade lands between list and delete
     const deleted = await deleteExpiredEvents(retention, o.orgId, [oldId]);
     expect(deleted).toEqual([]);
-    const [{ n }] = await admin<
+    const [row] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${oldId}`;
-    expect(n).toBe(1); // survives
+    expect(row!.n).toBe(1); // survives
   });
 });
 
@@ -253,13 +253,13 @@ describe("webhook_retention least privilege", () => {
     for (const c of granted) {
       const [p] = await admin<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.retention}, 'events', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     const denied = ["headers", "dedup_key", "verification", "content_hash"] as const;
     for (const c of denied) {
       const [p] = await admin<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.retention}, 'events', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     const [w] = await admin<{ del: boolean; ins: boolean; upd: boolean }[]>`
       select has_table_privilege(${DB_ROLES.retention}, 'events', 'DELETE') as del,
@@ -292,7 +292,7 @@ describe("webhook_retention least privilege", () => {
              or has_table_privilege(${DB_ROLES.retention}, ${table}, 'INSERT')
              or has_table_privilege(${DB_ROLES.retention}, ${table}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.retention}, ${table}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
   });
 
@@ -304,7 +304,7 @@ describe("webhook_retention least privilege", () => {
       select count(*)::int as n from pg_class
       where relkind = 'r' and relnamespace = 'public'::regnamespace
         and pg_get_userbyid(relowner) = ${DB_ROLES.retention}`;
-    expect(owned.n).toBe(0);
+    expect(owned!.n).toBe(0);
   });
 });
 

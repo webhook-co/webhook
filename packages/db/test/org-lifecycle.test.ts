@@ -69,7 +69,7 @@ const countIn = (orgId: string, table: string) =>
   withTenant(
     app,
     orgId,
-    async (tx) => (await tx<{ n: number }[]>`select count(*)::int as n from ${tx(table)}`)[0].n,
+    async (tx) => (await tx<{ n: number }[]>`select count(*)::int as n from ${tx(table)}`)[0]!.n,
   );
 
 /** Give an org an endpoint plus `n` events, each with one delivery attempt — the two unbounded cascade
@@ -138,10 +138,10 @@ describe("deleteOrgWithAudit", () => {
       (tx) => tx<{ status: string; requested_by: string; objects_purged: string }[]>`
         select status, requested_by, objects_purged from org_deletions where org_id = ${orgA}`,
     );
-    expect(job.status).toBe("purging");
+    expect(job!.status).toBe("purging");
     // The column keeps its pre-existing encoding: a bare user id, so old rows and new rows stay comparable.
-    expect(job.requested_by).toBe(ownerId);
-    expect(Number(job.objects_purged)).toBe(0);
+    expect(job!.requested_by).toBe(ownerId);
+    expect(Number(job!.objects_purged)).toBe(0);
 
     // The control org is fully intact.
     expect(await countIn(orgB, "orgs")).toBe(1);
@@ -349,9 +349,9 @@ describe("purge drain (webhook_purge)", () => {
         select status, objects_purged, purge_completed_at as done_at
         from org_deletions where org_id = ${o1}`,
     );
-    expect(done.status).toBe("completed");
-    expect(Number(done.objects_purged)).toBe(800);
-    expect(done.done_at).not.toBeNull();
+    expect(done!.status).toBe("completed");
+    expect(Number(done!.objects_purged)).toBe(800);
+    expect(done!.done_at).not.toBeNull();
   });
 
   it("holds least privilege: SELECT+UPDATE org_deletions only, no tenant-table access, non-super", async () => {
@@ -387,7 +387,7 @@ describe("purge drain (webhook_purge)", () => {
     for (const table of ["events", "orgs", "audit_log", "api_keys"]) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_table_privilege(${DB_ROLES.purge}, ${table}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
 
     const [r] = await owner<{ super: boolean; bypass: boolean }[]>`
@@ -428,7 +428,7 @@ describe("org_deletions RLS boundary (the anti-forgery gate)", () => {
           await tx<
             { n: number }[]
           >`select count(*)::int as n from org_deletions where org_id = ${orgB}`
-        )[0].n,
+        )[0]!.n,
     );
     expect(visibleFromA).toBe(0);
   });
@@ -473,8 +473,8 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
       (tx) => tx<{ status: string; at: string | null }[]>`
       select status, deleting_at::text as at from orgs where id = ${org}`,
     );
-    expect(row.status).toBe("deleting");
-    expect(row.at).toEqual(expect.any(String));
+    expect(row!.status).toBe("deleting");
+    expect(row!.at).toEqual(expect.any(String));
     expect(await countIn(org, "events")).toBe(4);
     expect(await countIn(org, "delivery_attempts")).toBe(4);
 
@@ -486,7 +486,7 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
       (tx) => tx<{ live: number }[]>`
       select count(*)::int as live from endpoints where org_id = ${org} and deleted_at is null`,
     );
-    expect(ep.live).toBe(0);
+    expect(ep!.live).toBe(0);
     // Credentials are revoked: no live api_key (cold lookup rejects `revoked_at`) AND no active OAuth grant
     // (a live grant would re-mint a fresh key via its refresh token otherwise).
     const [cred] = await withTenant(
@@ -497,8 +497,8 @@ describe("async org deletion (#665): requestOrgDeletion + reaper", () => {
         (select count(*)::int from api_keys where org_id = ${org} and revoked_at is null) as "liveKeys",
         (select count(*)::int from auth_grant where org_id = ${org} and status = 'active') as "activeGrants"`,
     );
-    expect(cred.liveKeys).toBe(0);
-    expect(cred.activeGrants).toBe(0);
+    expect(cred!.liveKeys).toBe(0);
+    expect(cred!.activeGrants).toBe(0);
 
     // The WORM audit chain gained org.deletion_requested (NOT org.deleted — the org still exists), and the R2
     // purge job was enqueued.

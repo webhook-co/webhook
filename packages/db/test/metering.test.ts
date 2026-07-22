@@ -50,9 +50,9 @@ async function usageCount(orgId: string): Promise<number> {
 
 async function hasUsageRow(orgId: string): Promise<boolean> {
   return withTenant(app, orgId, async (tx) => {
-    const [{ n }] = await tx<{ n: number }[]>`
+    const [row] = await tx<{ n: number }[]>`
       select count(*)::int as n from usage where org_id = ${orgId}`;
-    return n > 0;
+    return row!.n > 0;
   });
 }
 
@@ -87,7 +87,8 @@ describe("rollup_usage", () => {
     const before = await usageCount(orgA);
     // A retry collides on (endpoint_id, dedup_key) -> no new row -> count unchanged.
     await withTenant(app, orgA, async (tx) => {
-      const [{ id: endpointId }] = await tx<{ id: string }[]>`select id from endpoints limit 1`;
+      const [endpointRow] = await tx<{ id: string }[]>`select id from endpoints limit 1`;
+      const endpointId = endpointRow!.id;
       await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
                values (${randomUUID()}, ${orgA}, ${endpointId}, ${"kdup"}, ${10}, ${"d0"}, ${"content_hash"})
                on conflict (endpoint_id, dedup_key) do nothing`;

@@ -272,9 +272,10 @@ describe("runFreeOrgCapReconcile", () => {
     expect((await orgState(overflowOrg)).status).toBe("suspended");
 
     // The owner resolves the overage (delete an org they no longer need) → the overflow org is now restorable.
-    const [{ id: dropped }] = await admin<{ id: string }[]>`
+    const [droppedRow] = await admin<{ id: string }[]>`
       select id from orgs where id != ${overflowOrg}
         and id in (select org_id from memberships where user_id = ${victim}) limit 1`;
+    const dropped = droppedRow!.id;
     await admin`delete from orgs where id = ${dropped}`;
 
     // Meanwhile a DIFFERENT owner is over cap, and enforcing them will throw (intent INSERT revoked).

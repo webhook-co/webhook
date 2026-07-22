@@ -147,7 +147,7 @@ describe("bootstrapPersonalOrg", () => {
       const [e] = await tx<
         { n: number }[]
       >`select count(*)::int as n from endpoints where org_id = ${first.orgId}`;
-      return { o: o.n, mem: mem.n, e: e.n };
+      return { o: o!.n, mem: mem!.n, e: e!.n };
     });
     expect(counts).toEqual({ o: 1, mem: 1, e: 1 });
   });
@@ -204,9 +204,9 @@ describe("createOrgWithOwner (atomic — no orphan org can be born)", () => {
     ).rejects.toThrow();
     // The org insert shared the transaction with the failing membership insert, so it rolled back too.
     // Assert cross-org as the superuser seed role (RLS would hide another org from webhook_app).
-    const [{ n }] = await owner<{ n: number }[]>`
+    const rows = await owner<{ n: number }[]>`
       select count(*)::int as n from orgs where slug = ${slug}`;
-    expect(n).toBe(0);
+    expect(rows[0]!.n).toBe(0);
   });
 });
 
@@ -466,13 +466,13 @@ describe("bootstrapPersonalOrg — hardening", () => {
     expect([a.created, b.created].filter(Boolean)).toHaveLength(1); // exactly one created the org
     expect([a.ingestToken, b.ingestToken].filter(Boolean)).toHaveLength(1); // exactly one token minted
     // No duplicate rows.
-    const [{ n }] = await withTenant(
+    const rows = await withTenant(
       app,
       a.orgId,
       (tx) =>
         tx<{ n: number }[]>`select count(*)::int as n from endpoints where org_id = ${a.orgId}`,
     );
-    expect(n).toBe(1);
+    expect(rows[0]!.n).toBe(1);
   });
 });
 
