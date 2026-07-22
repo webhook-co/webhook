@@ -485,7 +485,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         id: "where-they-are-ahead",
         heading: "Where Hookdeck is straightforwardly ahead",
-        body: "We are pre-launch and they are not, and most of this list follows from that. They publish a component-level status page and contractual uptime and latency commitments on their upper tiers; we publish neither, and our own terms disclaim any uptime commitment. They have a first-party Terraform provider, so a platform team can manage connections as code. They have the compliance paperwork that gets a vendor through procurement, and a trust centre to serve it from; we hold no certifications and say so on our privacy page. Their issue model is more developed than ours — delivery, transformation and backpressure issues as first-class objects, with a configurable queue-time threshold and two-way sync into incident tooling. They support arbitrary JavaScript transformations on every tier including free. And their outbound product is Apache-2.0 and genuinely self-hostable, delivering to queues and brokers rather than only to HTTP.",
+        body: "We are pre-launch and they are not, and most of this list follows from that. They publish a component-level status page and contractual uptime and latency commitments on their upper tiers. We publish a status page too, but make no contractual uptime commitment — our own terms disclaim one. They have a first-party Terraform provider, so a platform team can manage connections as code. They have the compliance paperwork that gets a vendor through procurement, and a trust centre to serve it from; we hold no certifications and say so on our privacy page. Their issue model is more developed than ours — delivery, transformation and backpressure issues as first-class objects, with a configurable queue-time threshold and two-way sync into incident tooling. They support arbitrary JavaScript transformations on every tier including free. And their outbound product is Apache-2.0 and genuinely self-hostable, delivering to queues and brokers rather than only to HTTP.",
       },
       {
         id: "the-bill",
@@ -505,7 +505,7 @@ export const COMPARISONS: readonly Comparison[] = [
     ],
     chooseThem: {
       heading: "When to choose Hookdeck",
-      body: "If you are putting this in front of production traffic this quarter, choose Hookdeck. They have the operational maturity, the incident tooling, the status page, the contractual commitments and the compliance evidence, and we have a pre-launch product and a promise. Choose them if you need to fan out to queues and brokers rather than HTTP endpoints, if you need infrastructure-as-code, if you need transformations you can write in JavaScript, if you need to satisfy a security questionnaire, or if you are at a volume where their per-event rate card falls well below our flat tiers. Choose them if your organisation needs a read-only role. That is a lot of reasons, and they are all real.",
+      body: "If you are putting this in front of production traffic this quarter, choose Hookdeck. They have the operational maturity, the incident tooling, the contractual commitments and the compliance evidence, and we have a pre-launch product and a promise. Choose them if you need to fan out to queues and brokers rather than HTTP endpoints, if you need infrastructure-as-code, if you need transformations you can write in JavaScript, if you need to satisfy a security questionnaire, or if you are at a volume where their per-event rate card falls well below our flat tiers. Choose them if your organisation needs a read-only role. That is a lot of reasons, and they are all real.",
     },
     chooseUs: {
       heading: "When to choose us",
@@ -561,10 +561,15 @@ export const COMPARISONS: readonly Comparison[] = [
         sourceId: "hd-sdk-ts",
       },
       {
-        label: "Published status page and uptime commitments",
+        // We publish a status page too now (status.webhook.co), so that is no longer a difference and
+        // has left this table. What remains genuinely theirs is the CONTRACTUAL commitment — our terms
+        // disclaim any uptime guarantee — so the row is narrowed to that.
+        label: "Contractual uptime and latency commitments",
         them: "Yes",
         us: "No",
-        sourceId: "hd-status",
+        // A contractual SLA is a pricing-tier fact (their upper tiers), so it is cited to the pricing
+        // page — not the status page, which evidences uptime history rather than a commitment.
+        sourceId: "hd-pricing",
       },
       {
         label: "Payload transformations and filtering",
@@ -606,7 +611,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         question: "Is Hookdeck more mature than webhook.co?",
         answer:
-          "Yes. They have been running this in production for years, publish a status page and contractual availability commitments, hold compliance certifications, and ship a Terraform provider. We are pre-launch. If maturity is the deciding factor for you, it should point at them.",
+          "Yes. They have been running this in production for years, publish contractual availability commitments, hold compliance certifications, and ship a Terraform provider. We are pre-launch. If maturity is the deciding factor for you, it should point at them.",
       },
       {
         question: "What does Hookdeck charge for beyond the events it delivers?",
@@ -659,12 +664,6 @@ export const COMPARISONS: readonly Comparison[] = [
         id: "hd-sdk-ts",
         label: "Hookdeck TypeScript SDK repository",
         url: "https://github.com/hookdeck/hookdeck-typescript-sdk",
-        checked: CHECKED,
-      },
-      {
-        id: "hd-status",
-        label: "Hookdeck status page",
-        url: "https://status.hookdeck.com/",
         checked: CHECKED,
       },
     ],

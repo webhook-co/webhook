@@ -35,6 +35,10 @@ const infra = [
   "_headers",
   "sitemap.xml",
   "robots.txt",
+  // A curated, machine-readable index for answer engines (llmstxt.org). It ships as a static file
+  // under public/, so `output: 'export'` must copy it into out/ — asserted here because a static file
+  // that silently stops emitting looks identical to a green build. docs.webhook.co already serves one.
+  "llms.txt",
   "og.png",
   "bimi/logo.svg",
   "bimi/apple-branded-mail.png",

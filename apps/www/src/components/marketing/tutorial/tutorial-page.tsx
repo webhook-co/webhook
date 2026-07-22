@@ -3,7 +3,7 @@ import { cn } from "@webhook-co/ui";
 import { Faq } from "@/components/marketing/faq";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { PageShell } from "@/components/marketing/page-shell";
-import { BreadcrumbJsonLd } from "@/components/marketing/structured-data";
+import { BreadcrumbJsonLd, HowToJsonLd } from "@/components/marketing/structured-data";
 import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 import { Terminal, TerminalLine, Tok } from "@/components/ui/terminal";
 import { LINKS } from "@/lib/links";
@@ -18,16 +18,40 @@ import { relatedTutorials, type Tutorial, tutorialPath } from "@/lib/tutorials";
 const h2 = "text-2xl font-semibold tracking-heading text-fg sm:text-[1.75rem]";
 const body = "text-md text-pretty text-fg-secondary";
 
+// The two shared sentences of "The loop" section, reused VERBATIM as the first and last HowTo steps
+// so the machine-readable procedure can never drift from the visible one. They are exact substrings of
+// the paragraph rendered below; `tutorial-page.test.tsx` asserts every HowTo step text is on the page,
+// so an edit to one that forgets the other goes red rather than shipping a schema that lies.
+const LOOP_CREATE_STEP = "Create an endpoint and it prints a permanent ingest URL.";
+const LOOP_REPLAY_STEP =
+  "Stream those events to a port on your machine, and replay any one of them as often as you like while you fix the handler.";
+
 export function TutorialPage({ tutorial: t }: { tutorial: Tutorial }) {
+  // A tutorial is a genuine step-by-step how-to, so it's marked up as one. The two middle steps are the
+  // provider-specific prose the page already renders (`configure`/`fireTest`), which is what keeps
+  // sixteen sibling HowTos distinct rather than sixteen clones of the shared loop.
+  const howToSteps = [
+    { name: "Create an endpoint", text: LOOP_CREATE_STEP },
+    { name: `Point ${t.name} at the URL`, text: t.configure },
+    { name: `Trigger a ${t.name} event`, text: t.fireTest },
+    { name: "Stream to localhost and replay", text: LOOP_REPLAY_STEP },
+  ];
   return (
     <PageShell
       after={
-        <BreadcrumbJsonLd
-          crumbs={[
-            { name: "Home", path: "/" },
-            { name: t.name, path: tutorialPath(t.slug) },
-          ]}
-        />
+        <>
+          <BreadcrumbJsonLd
+            crumbs={[
+              { name: "Home", path: "/" },
+              { name: t.name, path: tutorialPath(t.slug) },
+            ]}
+          />
+          <HowToJsonLd
+            name={`How to test ${t.name} webhooks locally`}
+            description={t.lede}
+            steps={howToSteps}
+          />
+        </>
       }
     >
       <section className={container}>

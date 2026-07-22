@@ -66,6 +66,26 @@ describe("/vs hub", () => {
     }
   });
 
+  // status.webhook.co is live and footer-linked. The disqualification section used to list a status
+  // page among the things we cannot offer; it no longer may. Contractual availability commitments and
+  // a completed security questionnaire are still genuinely beyond us, so those stay named.
+  it("no longer concedes a status page it now publishes", () => {
+    const { container } = renderHub();
+    const section = container.querySelector("#not-for-you")?.closest("section");
+    expect(section, "the hub must carry a disqualification section").not.toBeNull();
+    expect(section!.textContent, "the hub still says we can't offer a status page").not.toMatch(
+      /status page/i,
+    );
+    // Non-vacuous: the concessions that remain true are still named.
+    expect(section!.textContent).toMatch(/availability commitments/i);
+  });
+
+  // The queries this hub competes for are competitor-alternative intent, so the title carries the
+  // "alternatives" shape rather than only naming the format. A cheap edit, not a project.
+  it("carries an alternatives-shaped title", () => {
+    expect(String(metadata.title)).toMatch(/alternatives/i);
+  });
+
   it("is registered in the route manifest as an indexable, axe-scanned page", () => {
     const row = MARKETING_ROUTES.find((r) => r.path === "/vs");
     expect(row).toBeDefined();

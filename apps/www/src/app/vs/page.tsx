@@ -28,7 +28,7 @@ const NAME_LIST = `${NAMES.slice(0, -1).join(", ")} and ${NAMES.at(-1)}`;
 
 export const metadata = pageMetadata({
   path: "/vs",
-  title: "How webhook.co compares",
+  title: "How webhook.co compares to the alternatives",
   description: `Honest, sourced comparisons against ${NAME_LIST} — including where each of them is the better choice, and who should not use us.`,
 });
 
@@ -135,9 +135,9 @@ export default function VsHubPage() {
           </h2>
           <p className={cn(body, "mb-4")}>
             We are pre-launch. If you are putting webhook infrastructure in front of production
-            traffic this quarter and need a status page, contractual availability commitments and a
-            completed security questionnaire, none of that is something we can offer you yet, and
-            Hookdeck can. That is the honest answer and it costs us the sale.
+            traffic this quarter and need contractual availability commitments and a completed
+            security questionnaire, none of that is something we can offer you yet, and Hookdeck
+            can. That is the honest answer and it costs us the sale.
           </p>
           <p className={cn(body, "mb-4")}>
             You also want a different tool if what you need is a general-purpose tunnel into a
