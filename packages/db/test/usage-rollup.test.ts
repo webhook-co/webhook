@@ -222,9 +222,9 @@ describe("runUsageRollup", () => {
 
   it("the webhook_meter role can enumerate (org_id, received_at) but never a payload column", async () => {
     const can = async (col: string): Promise<boolean> => {
-      const [{ ok }] = await meter<{ ok: boolean }[]>`
+      const [row] = await meter<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meter}, 'events', ${col}, 'SELECT') as ok`;
-      return ok;
+      return row!.ok;
     };
     expect(await can("org_id")).toBe(true);
     expect(await can("received_at")).toBe(true);
@@ -347,7 +347,7 @@ describe("Definition B — a billed event is one CAPTURE or one DELIVERY DISPATC
     // Simulate the DeliveryDO exhausting its retry schedule on that same dispatch.
     await withTenant(app, orgId, async (tx) => {
       for (const attempt of [2, 3, 4, 5, 6, 7, 8]) {
-        await tx`update delivery_attempts set attempt = ${attempt}, status = 'pending' where id = ${dispatchId}`;
+        await tx`update delivery_attempts set attempt = ${attempt}, status = 'pending' where id = ${dispatchId!}`;
       }
     });
     await run();
@@ -391,7 +391,7 @@ describe("Definition B — a billed event is one CAPTURE or one DELIVERY DISPATC
       (tx) => tx<{ counts_deliveries: boolean }[]>`
       select counts_deliveries from usage where org_id = ${orgId} and window_start = ${dayIso(1)}`,
     );
-    expect(row.counts_deliveries).toBe(true);
+    expect(row!.counts_deliveries).toBe(true);
   });
 
   it("marks rows it writes as counts_deliveries — the basis that produced them", async () => {
@@ -406,7 +406,7 @@ describe("Definition B — a billed event is one CAPTURE or one DELIVERY DISPATC
       (tx) => tx<{ counts_deliveries: boolean }[]>`
       select counts_deliveries from usage where org_id = ${orgId} and window_start = ${dayIso(1)}`,
     );
-    expect(row.counts_deliveries).toBe(true);
+    expect(row!.counts_deliveries).toBe(true);
   });
 
   it("does NOT retro-count deliveries into an already-FINALIZED day (no retro-billing)", async () => {
@@ -433,6 +433,6 @@ describe("Definition B — a billed event is one CAPTURE or one DELIVERY DISPATC
       (tx) => tx<{ counts_deliveries: boolean }[]>`
       select counts_deliveries from usage where org_id = ${orgId} and window_start = ${dayIso(4)}`,
     );
-    expect(row.counts_deliveries).toBe(false); // still recounted capture-only by the F6 oracle
+    expect(row!.counts_deliveries).toBe(false); // still recounted capture-only by the F6 oracle
   });
 });

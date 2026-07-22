@@ -65,9 +65,9 @@ describe("the TS slug rules match the database exactly", () => {
   it("every word ORG_SLUG_RESERVED holds is reserved in the DB too", async () => {
     const notReserved: string[] = [];
     for (const w of ORG_SLUG_RESERVED) {
-      const [{ reserved }] = await owner<{ reserved: boolean }[]>`
+      const [reservedRow] = await owner<{ reserved: boolean }[]>`
         select org_slug_reserved(${w}::citext) as reserved`;
-      if (!reserved) notReserved.push(w);
+      if (!reservedRow!.reserved) notReserved.push(w);
     }
     expect(notReserved, "words the TS list claims are reserved but the DB does not").toEqual([]);
   });
@@ -75,9 +75,9 @@ describe("the TS slug rules match the database exactly", () => {
   it("the DB reserves NOTHING the TS list has forgotten — the sets are equal", async () => {
     // Pull the reserved words straight out of the function body (it's an IMMUTABLE `s in (...)`), so a word
     // added to the SQL but not to the TS list is caught.
-    const [{ def }] = await owner<{ def: string }[]>`
+    const [defRow] = await owner<{ def: string }[]>`
       select pg_get_functiondef('org_slug_reserved(citext)'::regprocedure) as def`;
-    const inDb = new Set([...def!.matchAll(/'([a-z0-9_-]+)'/g)].map((m) => m[1]!));
+    const inDb = new Set([...defRow!.def.matchAll(/'([a-z0-9_-]+)'/g)].map((m) => m[1]!));
     const missingFromTs = [...inDb].filter((w) => !ORG_SLUG_RESERVED.has(w));
     expect(missingFromTs, "words the DB reserves but the TS list has not").toEqual([]);
   });

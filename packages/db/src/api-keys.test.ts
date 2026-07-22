@@ -15,8 +15,8 @@ const hasher = createCredentialHasher({
  * we only assert the minted plaintext shape, not the SQL.
  */
 function fakeTx(): TenantTx {
-  const tx = (() => Promise.resolve([])) as unknown as TenantTx & { json: (v: unknown) => unknown };
-  tx.json = (v: unknown) => v;
+  const tx = (() => Promise.resolve([])) as unknown as TenantTx;
+  tx.json = ((v: unknown) => v) as TenantTx["json"];
   return tx;
 }
 

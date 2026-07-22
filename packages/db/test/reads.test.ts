@@ -60,8 +60,8 @@ let epA: string; // an endpoint in org A with several events
 let epB: string; // an endpoint in org B (cross-org target)
 let epTail: string; // org A endpoint with 3 events at controlled (backdated) receive times
 
-const ctxA: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
-const ctxB: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
+let ctxA: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
+let ctxB: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
 
 // Deterministic receive times for the tail fixtures, far in the past so they're always well below
 // the gapless watermark (now() - δ, computed Postgres-side). eTail1 < eTail2 < eTail3 by received_at.
@@ -114,7 +114,7 @@ async function seedEvent(
          )},
          ${dedupKey}, ${opts.dedupStrategy ?? "content_hash"}, ${opts.method ?? null},
          ${opts.eventType ?? null}, ${opts.provider ?? null}, ${providerEventId}, ${externalId},
-         ${verified}, ${verification === null ? null : tx.json(verification)})`;
+         ${verified}, ${verification === null ? null : tx.json(verification as Parameters<typeof tx.json>[0])})`;
   });
   return id;
 }
@@ -150,8 +150,8 @@ beforeAll(async () => {
 
   orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
-  ctxA.orgId = orgA;
-  ctxB.orgId = orgB;
+  ctxA = { ...ctxA, orgId: orgA };
+  ctxB = { ...ctxB, orgId: orgB };
 
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   epB = (await createEndpoint(app, { orgId: orgB, name: "ep-b" }, hasher)).id;

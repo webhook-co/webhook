@@ -1,0 +1,17 @@
+{
+  // Type-checks the Playwright harness that tsconfig.json (the app program) excludes. The harness carries
+  // real logic now — the route-table readiness probe (playwright/deepest-route.ts, global-setup.ts) — and an
+  // untypechecked directory is where a signature change passes `tsc` and only fails at runtime.
+  //
+  // Extends the app config so the libs (DOM, for the `page.evaluate` browser callbacks) and the
+  // shared/webhooks-spec dist redirects come along; it just retargets `include` to playwright/** and drops
+  // the app's own sources. The specs are node-run but their evaluate callbacks reference browser globals, so
+  // the DOM lib the app already pulls in is exactly what they need.
+  "extends": "./tsconfig.json",
+  // The app program leaves `types` unset (Next supplies its ambient types); the harness needs Node's
+  // globals (process, node:fs, …) explicitly, and pulls @playwright/test + vitest in as module imports. The
+  // DOM lib is inherited from the app config for the `page.evaluate` browser callbacks.
+  "compilerOptions": { "types": ["node"] },
+  "include": ["playwright/**/*.ts"],
+  "exclude": ["node_modules", ".next", "dist", ".turbo"]
+}

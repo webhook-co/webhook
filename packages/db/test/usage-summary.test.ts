@@ -98,7 +98,7 @@ describe("readUsageSummary", () => {
 
     const summary = await withTenant(app, orgId, (tx) => readUsageSummary(tx, NOW));
     expect(summary.periodStart.toISOString()).toBe("2026-06-18T00:00:00.000Z"); // floored
-    expect(summary.periodEnd.toISOString()).toBe("2026-07-18T09:00:00.000Z"); // raw
+    expect(summary.periodEnd!.toISOString()).toBe("2026-07-18T09:00:00.000Z"); // raw
     expect(summary.events).toBe(115); // 10 + 40 + 60 rolled + 5 live; the pre-cycle 999 is excluded
   });
 

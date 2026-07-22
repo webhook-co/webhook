@@ -376,11 +376,12 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     const admin = postgres(provided, { max: 1, prepare: false, fetch_types: false });
     let providerRole = superRole;
     try {
-      const [{ rolsuper }] = await admin<{ rolsuper: boolean }[]>`
+      const [row] = await admin<{ rolsuper: boolean }[]>`
         select rolsuper from pg_roles where rolname = current_user`;
-      if (rolsuper) {
-        const [{ major }] = await admin<{ major: number }[]>`
+      if (row!.rolsuper) {
+        const [majorRow] = await admin<{ major: number }[]>`
           select (current_setting('server_version_num')::int / 10000) as major`;
+        const { major } = majorRow!;
         if (major < MIN_SERVER_MAJOR) throw new Error(serverTooOldMessage(major));
         await admin.unsafe(provisionProviderSql(passwords[PROVIDER_ROLE]));
         providerRole = PROVIDER_ROLE;

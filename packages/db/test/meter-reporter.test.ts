@@ -242,18 +242,18 @@ describe("runMeterReporter — drain + idempotency", () => {
     expect(first.sent).toBe(0);
     expect(first.failed).toBe(1);
     let rows = await outboxRows(org);
-    expect(rows[0].status).toBe("sending"); // claimed, not sent
-    expect(rows[0].attempts).toBe(1); // the failed send counted an attempt
-    expect(rows[0].ack).toBeNull();
+    expect(rows[0]!.status).toBe("sending"); // claimed, not sent
+    expect(rows[0]!.attempts).toBe(1); // the failed send counted an attempt
+    expect(rows[0]!.ack).toBeNull();
 
     // A later pass (Stripe healthy) resends the SAME identifier and completes it.
     const { sink, calls } = fakeSink();
     const second = await run(sink);
     expect(second.sent).toBe(1);
-    expect(calls[0].identifier).toBe(id); // same idempotency key → Stripe dedups if the first partially landed
+    expect(calls[0]!.identifier).toBe(id); // same idempotency key → Stripe dedups if the first partially landed
     rows = await outboxRows(org);
-    expect(rows[0].status).toBe("sent");
-    expect(rows[0].attempts).toBe(2); // the resend counted a second attempt
+    expect(rows[0]!.status).toBe("sent");
+    expect(rows[0]!.attempts).toBe(2); // the resend counted a second attempt
   });
 
   it("skips draining when the org has no Stripe customer yet (stays pending, retryable)", async () => {
@@ -265,7 +265,7 @@ describe("runMeterReporter — drain + idempotency", () => {
     expect(res.sent).toBe(0);
     expect(res.skippedNoCustomer).toBe(1);
     expect(calls).toEqual([]);
-    expect((await outboxRows(org))[0].status).toBe("pending"); // never claimed — a later pass retries
+    expect((await outboxRows(org))[0]!.status).toBe("pending"); // never claimed — a later pass retries
   });
 });
 
@@ -287,8 +287,8 @@ describe("runMeterReporter — enumeration bounds + cross-org isolation", () => 
     expect(second.orgsProcessed).toBe(2);
     expect(second.capped).toBe(false);
     // Across both passes exactly one row per org reached 'sent'.
-    expect((await outboxRows(a))[0].status).toBe("sent");
-    expect((await outboxRows(b))[0].status).toBe("sent");
+    expect((await outboxRows(a))[0]!.status).toBe("sent");
+    expect((await outboxRows(b))[0]!.status).toBe("sent");
     void calls;
   });
 

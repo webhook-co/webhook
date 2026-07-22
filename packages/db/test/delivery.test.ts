@@ -50,7 +50,7 @@ async function seedEvent(
         (${id}, ${forOrg}, ${forEndpoint}, ${`org/${forOrg}/ep/${forEndpoint}/${id}`}, ${10},
          ${"application/json"}, ${tx.json([["webhook-id", "in_1"]])}, ${newId()}, ${"content_hash"},
          ${"stripe"}, ${verified},
-         ${ver.verification != null ? tx.json(ver.verification as Record<string, unknown>) : null})`;
+         ${ver.verification != null ? tx.json(ver.verification as Parameters<typeof tx.json>[0]) : null})`;
   });
   return id;
 }
@@ -71,7 +71,7 @@ async function seedDelivery(
   const eventId = over.eventId ?? (await seedEvent());
   // An EXPLICIT `nextRetryAt: null` must insert a genuine SQL NULL (a never-scheduled queued row) — `??`
   // would coerce it back to epoch and mask the migration-mandated "null next_retry_at counts as due" path.
-  const nextRetryAt = "nextRetryAt" in over ? over.nextRetryAt : new Date(0);
+  const nextRetryAt: Date | null = "nextRetryAt" in over ? (over.nextRetryAt ?? null) : new Date(0);
   await withTenant(app, orgId, async (tx) => {
     await tx`
       insert into delivery_attempts

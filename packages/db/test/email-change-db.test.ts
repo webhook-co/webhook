@@ -88,9 +88,10 @@ const future = () => new Date(Date.now() + 600_000);
 describe("emailInUseByAnother", () => {
   it("is true only for a DIFFERENT user holding the address (citext, case-insensitive)", async () => {
     const a = await seedUser(`taken-${randomUUID().slice(0, 8)}@e.test`);
-    const [{ email }] = await auth<
+    const [emailRow] = await auth<
       { email: string }[]
     >`select "email" from "user" where "id" = ${a}`;
+    const { email } = emailRow!;
 
     // Another user asking for A's address (upper-cased) → taken.
     expect(
@@ -159,10 +160,10 @@ describe("commitEmailChange", () => {
 
     const after = await getAuthUserProfile(auth, u);
     expect(after?.email).toBe(target.toLowerCase()); // stored lowercased
-    const [{ v }] = await auth<
+    const [vRow] = await auth<
       { v: boolean }[]
     >`select "emailVerified" as v from "user" where "id" = ${u}`;
-    expect(v).toBe(true);
+    expect(vRow!.v).toBe(true);
   });
 
   it("throws EmailTakenError when the target collides with another account (citext backstop)", async () => {
@@ -185,10 +186,10 @@ describe("session revoke + verification purge", () => {
         values (${`sess_${randomUUID()}`}, ${`tok_${randomUUID()}`}, ${u}, ${future()}, now())`;
     }
     expect(await deleteAllUserSessions(auth, u)).toBe(3);
-    const [{ n }] = await auth<
+    const [nRow] = await auth<
       { n: number }[]
     >`select count(*)::int as n from "session" where "userId" = ${u}`;
-    expect(n).toBe(0);
+    expect(nRow!.n).toBe(0);
   });
 
   it("purges verification rows for BOTH addresses (identifier-keyed), leaving others", async () => {

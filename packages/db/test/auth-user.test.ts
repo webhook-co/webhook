@@ -85,7 +85,7 @@ describe("deleteUserIdentity", () => {
     const memLeft = await withTenant(
       app,
       orgId,
-      async (tx) => (await tx<{ n: number }[]>`select count(*)::int as n from memberships`)[0].n,
+      async (tx) => (await tx<{ n: number }[]>`select count(*)::int as n from memberships`)[0]!.n,
     );
     expect(memLeft).toBe(0); // the user's membership cascaded away with them
   });
@@ -119,7 +119,7 @@ describe("deleteUserIdentity", () => {
         (
           await tx<{ approved_by: string | null }[]>`
             select approved_by from auth_grant where id = ${grantId}`
-        )[0].approved_by,
+        )[0]!.approved_by,
     );
     expect(approvedBy).toBeNull();
   });
