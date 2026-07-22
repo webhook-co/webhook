@@ -51,15 +51,22 @@ npx @webhook-co/cli listen d7e4f8a1-3b60-4c2e-9f15-0a8c6b2e1d94 --forward http:/
 curl -X POST https://wbhk.my/whep_8QmZ4tN1p… -d '{"hello":"webhook.co"}'
 ```
 
-Each captured event prints one line — timestamp, provider, signature result, id — then the result of
-forwarding it to your local server (example output):
+With `--forward`, each captured event prints one line as it lands on your local server — the event
+id, the target, the status it returned, and how long it took:
 
 ```text
-2026-07-19T14:02:03.517Z  —  unverified  6b1f0c2a-9d84-4e02-b7a1-2c5f8e30a1bd
-forwarded 6b1f0c2a-9d84-4e02-b7a1-2c5f8e30a1bd → http://localhost:3000 · 200 · 12ms
-2026-07-19T14:02:11.884Z  github  verified  a0c33f19-72d6-4b58-8e41-6f9b0d2c4a77
-forwarded a0c33f19-72d6-4b58-8e41-6f9b0d2c4a77 → http://localhost:3000 · 200 · 9ms
+caught up — now tailing live events
+forwarded 019f8b88-55f0-7534-9ae9-f9fcfd07758c → http://localhost:3000 · 200 · 8ms
+forwarded 019f8b88-6121-72e7-b640-56ecb2b2ffb2 → http://localhost:3000 · 200 · 3ms
+forwarded 019f8b88-6c40-7bdf-a81f-7290b2752992 → http://localhost:3000 · 200 · 2ms
 ```
+
+Drop `--forward` and `wbhk listen` opens a live view of what's arriving instead — one row per event,
+with the provider it came from and whether its signature checked out:
+
+<p align="center">
+  <img src=".github/assets/listen-demo.gif" alt="wbhk listen streaming captured webhooks, each row showing the provider and whether its signature verified" width="820" />
+</p>
 
 `--forward` targets must be a full loopback URL (`http://localhost:3000`,
 `http://127.0.0.1:8080/webhooks`). Replay a past event with
