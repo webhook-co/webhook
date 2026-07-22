@@ -229,15 +229,31 @@ export function Footer() {
             sits beside a plain "Status" link that still works when the vendor does not. */}
         <div className="mt-[clamp(40px,5vw,64px)] flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6 text-sm text-fg-muted">
           <span>© 2026 webhook.co</span>
+          {/* TWO badges, CSS-switched on [data-theme], because the embed bakes its colours into the
+              URL and an iframe cannot read our CSS custom properties. Each variant is given only ONE
+              colour pair, which pins it rather than letting it follow the system.
+              They are INVERTED against the site on purpose: a white-ish pill on the dark theme, a
+              dark pill on the light one.
+              The white one is the default (no `hidden`), so a visitor with JS disabled — where the
+              pre-paint script never stamps data-theme — still gets the right badge for the site's
+              dark default rather than none at all. */}
           <iframe
-            src="https://status.webhook.co/embed-badges/live-status?align=start&background-light=f5f5f5&text-light=000000&background-dark=171717&text-dark=ffffff"
+            src="https://status.webhook.co/embed-badges/live-status?align=start&background-light=f5f5f5&text-light=000000"
             title="webhook.co system status"
             width={190}
             height={30}
             loading="lazy"
             scrolling="no"
-            className="border-0"
-            style={{ colorScheme: "light dark" }}
+            className="border-0 [[data-theme=light]_&]:hidden"
+          />
+          <iframe
+            src="https://status.webhook.co/embed-badges/live-status?align=start&background-dark=171717&text-dark=ffffff"
+            title="webhook.co system status"
+            width={190}
+            height={30}
+            loading="lazy"
+            scrolling="no"
+            className="hidden border-0 [[data-theme=light]_&]:block"
           />
         </div>
       </div>
