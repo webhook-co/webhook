@@ -142,6 +142,16 @@ export default function PrivacyPage() {
             follow you across sites — so it can't be tied back to you.
           </p>
           <p>
+            <strong>Page performance (in your browser, cookieless):</strong> we also load{" "}
+            <strong>Cloudflare Web Analytics</strong>, a small script that measures how fast the
+            page actually loaded for you — timings such as how long it took to render, plus the page
+            path, referring domain, and general device and browser type. It{" "}
+            <strong>sets no cookie</strong>, writes nothing to your browser's storage, and builds no
+            profile or cross-site identifier, which is why it runs without a consent prompt. We use
+            it to find slow pages. You can block it with any content blocker without affecting the
+            site.
+          </p>
+          <p>
             <strong>Acquisition source (attribution):</strong> separately, if you arrive from a
             marketing link <em>and</em> accept our cookie banner, we set one first-party cookie
             recording <em>only</em> that link's campaign (UTM) tags — never personal data — so we

@@ -5,6 +5,7 @@ import { GeistSans } from "geist/font/sans";
 
 import { ConsentBanner } from "@/components/marketing/consent-banner";
 import { StructuredData } from "@/components/marketing/structured-data";
+import { WebAnalytics } from "@/components/marketing/web-analytics";
 import { siteMetadata, siteViewport } from "./metadata";
 import "./globals.css";
 
@@ -52,6 +53,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             readers see a white flash. It is tiny, and the CSP already allows 'unsafe-inline' for
             Next's own hydration scripts. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        {/* Cookieless RUM. `defer`, so it never competes with the pre-paint theme script above. */}
+        <WebAnalytics />
       </head>
       <body>
         <script

@@ -221,10 +221,14 @@ const FAKE_TOKEN = "a".repeat(32);
 // a script[data-cf-beacon] querySelector fallback, then reads the token from data-cf-beacon or ?token=.
 // A classic script + attribute reports through both paths; a module + ?token= injection loads but
 // silently reports nothing. The guard requires the attribute token and rejects module scripts.
+// It must ALSO claim window.__cfBeacon with `load: "multi"` and pin the upload endpoint — see the
+// two tests at the bottom of this block for why each is load-bearing.
 const beacon = (token) =>
-  `(function(){const s=document.createElement("script");s.defer=true;` +
+  `(function(){window.__cfBeacon={load:"multi"};` +
+  `const s=document.createElement("script");s.defer=true;` +
   `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
-  `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${token}"}));` +
+  `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${token}",` +
+  `send:{to:"https://cloudflareinsights.com/cdn-cgi/rum"}}));` +
   `document.head.appendChild(s);})();`;
 
 test("checkAnalyticsBeacon: a real 32-hex classic data-cf-beacon beacon passes", () => {
@@ -271,5 +275,88 @@ test("checkAnalyticsBeacon: a bare ?token= src (no data-cf-beacon attribute) is 
   assert.ok(
     checkAnalyticsBeacon(queryForm).some((e) => e.includes("token")),
     "a bare ?token= src must be rejected",
+  );
+});
+
+test('checkAnalyticsBeacon: a beacon that does not claim __cfBeacon with load:"multi" is rejected', () => {
+  // THE REGRESSION THIS PINS (measured on the live docs site 2026-07-22): Mintlify's platform injects
+  // its OWN Cloudflare beacon into <head> (token ec498eea…, version 2024.11.0). beacon.min.js opens
+  // with `let p = window.__cfBeacon ? window.__cfBeacon : {}; if (p && "single" === p.load) return;`
+  // and every instance stamps `p.load = "single"` on the way out. Theirs runs first, so OUR
+  // runtime-appended script hit that early return and NEVER read our token — docs recorded 0 events
+  // for 7 days while every page view was reported into Mintlify's account. Resetting the global to
+  // `load: "multi"` is the ONLY thing that lets a second beacon run at all, so a version of this file
+  // without it is a dead beacon that still looks correct.
+  const noMulti =
+    `(function(){const s=document.createElement("script");s.defer=true;` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}",` +
+    `send:{to:"https://cloudflareinsights.com/cdn-cgi/rum"}}));` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(noMulti).some((e) => e.includes("__cfBeacon")),
+    'a beacon that never sets window.__cfBeacon load:"multi" must be rejected',
+  );
+});
+
+test("checkAnalyticsBeacon: a beacon that does not pin send.to is rejected", () => {
+  // beacon.min.js picks its upload endpoint as:
+  //   p.send && p.send.to ? p.send.to : (undefined === p.version ? "https://cloudflareinsights.com/cdn-cgi/rum" : null)
+  // …and a null endpoint falls back to same-origin `/cdn-cgi/rum`. On docs.webhook.co that origin is
+  // Mintlify's Cloudflare zone, which answers 204 and DROPS a token it does not own — the exact
+  // failure that makes a broken beacon look healthy in DevTools. Since we now share the global with
+  // their config, pin the documented manual-embed endpoint explicitly rather than inferring it from
+  // the absence of `version`.
+  const noSendTo =
+    `(function(){window.__cfBeacon={load:"multi"};` +
+    `const s=document.createElement("script");s.defer=true;` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}"}));` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(noSendTo).some((e) => e.includes("cloudflareinsights.com/cdn-cgi/rum")),
+    "a beacon that does not pin the manual-embed upload endpoint must be rejected",
+  );
+});
+
+test("checkAnalyticsBeacon: a COMMENT mentioning the right values cannot satisfy the guard", () => {
+  // Caught by ai-review on PR #749, and reproduced before fixing: the guard used to text-scan for
+  // `__cfBeacon =` and `load: "multi"` INDEPENDENTLY, and cf-analytics.js documents both in its header
+  // comment. So flipping the REAL assignment to "single" — which hands the page back to Mintlify's
+  // beacon and returns us to zero events — still satisfied a text scan, because the prose alone
+  // matched. A guard that a comment can satisfy is not a guard. This is why the check now EXECUTES the
+  // file and inspects what it actually did (see [[guard-scripts-must-parse-not-scan]]).
+  const sabotaged = [
+    `// Resetting the global to \`load: "multi"\` is what lets a second beacon run at all.`,
+    `(function(){window.__cfBeacon={load:"single"};`,
+    `const s=document.createElement("script");s.defer=true;`,
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";`,
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}",`,
+    `send:{to:"https://cloudflareinsights.com/cdn-cgi/rum"}}));`,
+    `document.head.appendChild(s);})();`,
+  ].join("\n");
+  assert.ok(
+    checkAnalyticsBeacon(sabotaged).some((e) => e.includes("__cfBeacon")),
+    'a real `load: "single"` assignment must be rejected even when a comment says "multi"',
+  );
+});
+
+test("checkAnalyticsBeacon: an endpoint that merely CONTAINS the pinned URL is rejected", () => {
+  // The endpoint used to be checked with a substring scan, which CodeQL flagged as
+  // js/incomplete-url-substring-sanitization — correctly: a substring match accepts any host that has
+  // the real URL somewhere inside it, so a typosquatted or wrapping endpoint would sail through the
+  // one guard whose whole job is pinning where our data goes. Compare it exactly.
+  const wrappedEndpoint =
+    `(function(){window.__cfBeacon={load:"multi"};` +
+    `const s=document.createElement("script");s.defer=true;` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}",` +
+    `send:{to:"https://evil.example/?u=https://cloudflareinsights.com/cdn-cgi/rum"}}));` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(wrappedEndpoint).some((e) =>
+      e.includes("cloudflareinsights.com/cdn-cgi/rum"),
+    ),
+    "an endpoint that only contains the pinned URL must be rejected",
   );
 });
