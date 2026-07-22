@@ -217,15 +217,28 @@ export function Footer() {
           ))}
         </div>
 
-        {/* Still no inline status indicator, and the reason is now a HARD constraint rather than a
-            missing status page. apps/www is `output: "export"` — a static export with no server — so
-            there is no route handler to proxy the vendor JSON through, and status.webhook.co sends no
-            Access-Control-Allow-Origin, so the browser cannot fetch it directly either. A
-            server-render fetch turns this footer into a suspense boundary and breaks every page test.
-            That leaves Phare's iframe embed as the only mechanism that actually works. The "Status"
-            link in the Developers column carries the same information and cannot fail. */}
+        {/* The status badge is Phare's iframe embed, which is not the shape I would pick in the
+            abstract — but it is the only one that works here. apps/www is `output: "export"`, so
+            there is no route handler to proxy the vendor JSON through; status.webhook.co sends no
+            Access-Control-Allow-Origin, so the browser cannot fetch it directly; and a server-render
+            fetch turns this footer into a suspense boundary and breaks every page test. Iframes are
+            not CORS-restricted, so this is what is left.
+            It is also less of a compromise than it first looks: status.webhook.co is OUR subdomain,
+            not a third-party domain, so this is not a tracking surface. It is lazy-loaded with fixed
+            dimensions so it costs nothing above the fold and reserves its own space (no CLS), and it
+            sits beside a plain "Status" link that still works when the vendor does not. */}
         <div className="mt-[clamp(40px,5vw,64px)] flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6 text-sm text-fg-muted">
           <span>© 2026 webhook.co</span>
+          <iframe
+            src="https://status.webhook.co/embed-badges/live-status?align=start&background-light=f5f5f5&text-light=000000&background-dark=171717&text-dark=ffffff"
+            title="webhook.co system status"
+            width={190}
+            height={30}
+            loading="lazy"
+            scrolling="no"
+            className="border-0"
+            style={{ colorScheme: "light dark" }}
+          />
         </div>
       </div>
     </footer>
