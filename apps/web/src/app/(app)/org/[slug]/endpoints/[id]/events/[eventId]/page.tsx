@@ -23,7 +23,15 @@ export default async function EventDetailPage({
 }: {
   params: Promise<{ slug: string; id: string; eventId: string }>;
 }) {
-  const { slug, id, eventId } = await params;
+  const { slug, id: rawId, eventId: rawEventId } = await params;
+  // CANONICALIZE ONCE, AT THE BOUNDARY — the same discipline destinations/[id] uses. A uuid path segment is
+  // case-INsensitive by shape (isUuid accepts either, and so does Postgres), but every id we store and every
+  // id we COMPARE in JS is canonical lowercase. `id` is not just a query parameter here: it is bound into
+  // the reveal and payload actions and into the back-link. Threading the caller's casing through would give
+  // an uppercase-hex URL a page whose click-to-reveal and payload download both fail against the very event
+  // it is displaying — the two surfaces disagreeing about one URL.
+  const id = rawId.toLowerCase();
+  const eventId = rawEventId.toLowerCase();
   const session = await requireActiveOrgAccess(slug, `/endpoints/${id}/events/${eventId}`);
   // The event read and the replay-picker's destinations are independent org-scoped reads — run concurrently.
   const [result, destResult] = await Promise.all([

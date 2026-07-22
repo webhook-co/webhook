@@ -26,7 +26,9 @@ export default defineConfig({
     globals: true,
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    // `playwright/**/*.test.ts` are the PURE helpers the e2e harness uses (route-depth maths) — unit
+    // tests, not browser specs (those are `*.spec.ts`, driven by playwright.config.ts).
+    include: ["src/**/*.test.{ts,tsx}", "playwright/**/*.test.ts"],
     // `*.pg.test.ts` are real-Postgres integration tests (they spin an ephemeral cluster via the db
     // harness) — EXCLUDED here and run under `pnpm test:db` (vitest.pg.config.ts), like apps/api. Running
     // them in the jsdom `test` lane fails (no cluster / initdb ENOENT).
