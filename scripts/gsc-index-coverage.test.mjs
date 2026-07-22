@@ -6,6 +6,8 @@ import {
   bucketCounts,
   classifyCoverage,
   parseSitemapLocs,
+  selectSitemaps,
+  SITEMAP_URLS,
   summarizeSitemaps,
 } from "./gsc-index-coverage.mjs";
 
@@ -25,6 +27,24 @@ test("parseSitemapLocs: extracts every <loc> URL, trimming whitespace", () => {
 
 test("parseSitemapLocs: returns [] for a document with no <loc>", () => {
   assert.deepEqual(parseSitemapLocs("<urlset></urlset>"), []);
+});
+
+test("parseSitemapLocs: unwraps CDATA-wrapped URLs so inspection gets a clean URL", () => {
+  const xml = `<urlset><url><loc><![CDATA[https://www.webhook.co/pricing]]></loc></url></urlset>`;
+  assert.deepEqual(parseSitemapLocs(xml), ["https://www.webhook.co/pricing"]);
+});
+
+test("selectSitemaps: no filter returns every configured sitemap", () => {
+  assert.deepEqual(selectSitemaps(SITEMAP_URLS, []), SITEMAP_URLS);
+});
+
+test("selectSitemaps: a substring filter scopes to matching sitemaps (case-insensitive)", () => {
+  assert.deepEqual(selectSitemaps(SITEMAP_URLS, ["www"]), ["https://www.webhook.co/sitemap.xml"]);
+  assert.deepEqual(selectSitemaps(SITEMAP_URLS, ["DOCS"]), ["https://docs.webhook.co/sitemap.xml"]);
+});
+
+test("selectSitemaps: multiple filters union their matches", () => {
+  assert.deepEqual(selectSitemaps(SITEMAP_URLS, ["www", "docs"]).sort(), [...SITEMAP_URLS].sort());
 });
 
 test("classifyCoverage: maps the known GSC coverageState strings to buckets", () => {

@@ -50,16 +50,36 @@ const COVERAGE_MAP = new Map([
   ["Page with redirect", "redirect"],
 ]);
 
-/** Extract every `<loc>` URL from a sitemap XML document (pure; trims surrounding whitespace). */
+/**
+ * Extract every `<loc>` URL from a sitemap XML document (pure; trims surrounding whitespace, and
+ * unwraps a `<![CDATA[...]]>` payload so a URL that a generator wrapped in CDATA isn't passed to URL
+ * Inspection with the markers still attached). Our generated sitemaps don't use CDATA today, but a
+ * future generator switch shouldn't silently malform every URL.
+ */
 export function parseSitemapLocs(xml) {
   const locs = [];
   const re = /<loc>([\s\S]*?)<\/loc>/g;
   let m;
   while ((m = re.exec(xml)) !== null) {
-    const url = m[1].trim();
+    const url = m[1]
+      .replace(/^\s*<!\[CDATA\[/, "")
+      .replace(/\]\]>\s*$/, "")
+      .trim();
     if (url) locs.push(url);
   }
   return locs;
+}
+
+/**
+ * Choose which configured sitemaps to inspect (pure). With no filters, all of them. Otherwise, any
+ * sitemap whose URL contains a filter substring (case-insensitive) — so `gsc-coverage www` scopes to
+ * the 36-URL www estate (the actionable pages) rather than serially inspecting all ~186 URLs, which is
+ * slow because URL Inspection is per-URL and rate-limited.
+ */
+export function selectSitemaps(allUrls, filters) {
+  if (!filters || filters.length === 0) return allUrls;
+  const needles = filters.map((f) => f.toLowerCase());
+  return allUrls.filter((u) => needles.some((n) => u.toLowerCase().includes(n)));
 }
 
 /** Map a GSC coverageState string to one of BUCKETS (pure). Missing/unknown → "other". */
@@ -112,12 +132,14 @@ export async function fetchSitemapLocs(sitemapUrl, { fetchImpl = fetch } = {}) {
 export async function inspectUrl(
   token,
   inspectionUrl,
-  { fetchImpl = fetch, siteUrl = SITE_URL } = {},
+  { fetchImpl = fetch, siteUrl = SITE_URL, timeoutMs = 30_000 } = {},
 ) {
+  // A per-request timeout so a single hung inspection can't stall the whole serial sweep indefinitely.
   const res = await fetchImpl(INSPECT_URL, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ inspectionUrl, siteUrl }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const json = await res.json();
   if (json.error)
@@ -142,9 +164,11 @@ async function main() {
     );
   }
 
-  // 2. Enumerate live URLs.
+  // 2. Enumerate live URLs. CLI args scope which sitemaps to inspect (e.g. `gsc-coverage www` → just
+  //    the 36-URL www estate); no args → all of them.
+  const selected = selectSitemaps(SITEMAP_URLS, process.argv.slice(2));
   const urls = [];
-  for (const sm of SITEMAP_URLS) {
+  for (const sm of selected) {
     try {
       urls.push(...(await fetchSitemapLocs(sm)));
     } catch (e) {
@@ -152,32 +176,37 @@ async function main() {
     }
   }
   const unique = [...new Set(urls)];
-  console.log(`\n## Coverage over ${unique.length} live sitemap URLs`);
+  console.log(
+    `\n## Coverage over ${unique.length} live sitemap URLs${
+      selected.length < SITEMAP_URLS.length ? ` (scoped: ${process.argv.slice(2).join(",")})` : ""
+    }`,
+  );
 
-  // 3. Inspect each URL (serially — the URL Inspection API is per-URL and rate-limited).
+  // 3. Inspect each URL (serially — the URL Inspection API is per-URL and rate-limited). Print the
+  //    non-indexed tails as they're found so a long run isn't a black box.
+  console.log("   (inspecting — non-indexed URLs print as found)");
   const results = [];
   for (const u of unique) {
+    let r;
     try {
-      results.push(await inspectUrl(token, u));
+      r = await inspectUrl(token, u);
     } catch (e) {
       console.log(`  ! inspect ${u}: ${e.message}`);
-      results.push({ url: u, coverageState: undefined });
+      r = { url: u, coverageState: undefined };
+    }
+    results.push(r);
+    const bucket = classifyCoverage(r.coverageState);
+    if (!["indexed", "redirect"].includes(bucket)) {
+      console.log(`  · ${bucket.padEnd(24)} ${u}`);
     }
   }
 
-  const counts = bucketCounts(results.map((r) => classifyCoverage(r.coverageState)));
-  for (const b of BUCKETS) console.log(`  ${b.padEnd(24)} ${counts[b]}`);
-
-  // The URLs Google has crawled-but-declined or never seen — the actionable tails.
   const notIndexed = results.filter(
     (r) => !["indexed", "redirect"].includes(classifyCoverage(r.coverageState)),
-  );
-  if (notIndexed.length) {
-    console.log(`\n## Not indexed (${notIndexed.length}) — bucket ← url`);
-    for (const r of notIndexed) {
-      console.log(`  ${classifyCoverage(r.coverageState).padEnd(24)} ${r.url}`);
-    }
-  }
+  ).length;
+  console.log(`\n## Bucket distribution (${notIndexed} of ${results.length} not indexed)`);
+  const counts = bucketCounts(results.map((r) => classifyCoverage(r.coverageState)));
+  for (const b of BUCKETS) console.log(`  ${b.padEnd(24)} ${counts[b]}`);
   return 0;
 }
 
