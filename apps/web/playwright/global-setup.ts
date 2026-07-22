@@ -7,7 +7,7 @@ import { createOrgWithOwner } from "@webhook-co/db/orgs";
 import { testAuditKey } from "../../../packages/db/test/audit-key";
 import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
-import { deepestAppRoute, probeUrlFor } from "./deepest-route";
+import { deepestAppRoute, isRouteTableReady, probeUrlFor } from "./deepest-route";
 import { BASE_URL, PORT, writeFixture, type Fixture } from "./fixture";
 
 // The dashboard's first end-to-end harness.
@@ -157,7 +157,7 @@ const AUTH_ORIGIN = "http://127.0.0.1:3199";
  */
 async function routeTableIsComplete(probe: string): Promise<boolean> {
   const res = await fetch(`${BASE_URL}${probe}`, { redirect: "manual" });
-  return res.status === 307 && (res.headers.get("location") ?? "").startsWith(AUTH_ORIGIN);
+  return isRouteTableReady(res.status, res.headers.get("location"), AUTH_ORIGIN);
 }
 
 /** Boot `next dev` against the seeded database and resolve once it answers. */

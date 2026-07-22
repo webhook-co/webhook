@@ -80,3 +80,26 @@ export function probeUrlFor(route: readonly string[]): string {
     .join("/");
   return `/${path}`;
 }
+
+/**
+ * Does this response prove the probed route is IN `next dev`'s route table?
+ *
+ * A POSITIVE marker, deliberately, rather than the absence of one bad status. Unauthenticated and
+ * cookie-less, every gated route under `/org/{slug}` runs `requireOrgAccess` → `verifySession` →
+ * `redirect(LOGIN_URL)`, a 307 to the auth origin the harness itself chose. `(app)/[...legacy]` cannot
+ * produce that: it rejects a first segment of `org` and calls `notFound()` before it reads any session.
+ *
+ * `status !== 404` was the first cut and was too weak in both directions. A 500 — a broken binding, a throw
+ * in the gate — would have counted as ready, the very thing the `/dev-session` probe refuses. And it hung
+ * entirely on the catch-all continuing to answer 404: the day it redirects instead, the check would pass on
+ * the first poll forever and the fix would evaporate with every test still green.
+ *
+ * Pure and exported so that weakening IS a test failure — the whole flake fix rests on this one predicate.
+ */
+export function isRouteTableReady(
+  status: number,
+  location: string | null,
+  authOrigin: string,
+): boolean {
+  return status === 307 && (location ?? "").startsWith(authOrigin);
+}

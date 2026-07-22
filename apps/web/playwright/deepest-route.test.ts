@@ -3,7 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { appRoutes, byDepthDesc, deepestAppRoute, probeUrlFor, urlSegments } from "./deepest-route";
+import {
+  appRoutes,
+  byDepthDesc,
+  deepestAppRoute,
+  isRouteTableReady,
+  probeUrlFor,
+  urlSegments,
+} from "./deepest-route";
 
 /** Build a throwaway app tree. `dir|file` puts a specific route file in that directory. */
 function tree(spec: readonly string[]): string {
@@ -98,5 +105,42 @@ describe("the real app tree", () => {
     expect(urlSegments(deepestAppRoute()).join("/")).toBe(
       "org/[slug]/endpoints/[id]/events/[eventId]/payload",
     );
+  });
+});
+
+// THE PREDICATE THE WHOLE FLAKE FIX RESTS ON. Weakening it to `status !== 404`, to "any 307", or to
+// "ignore the Location" would silently restore the broken behaviour and leave every other test green — the
+// same shape as the bug this harness change exists to prevent. Each case below is one of those weakenings.
+describe("isRouteTableReady", () => {
+  const AUTH = "http://127.0.0.1:3199";
+
+  it("is ready ONLY for a 307 to the auth origin — the one response the real gated route emits", () => {
+    expect(isRouteTableReady(307, `${AUTH}/login`, AUTH)).toBe(true);
+  });
+
+  it("is not ready on 404 — the catch-all answered, the route is not in the table yet", () => {
+    expect(isRouteTableReady(404, null, AUTH)).toBe(false);
+  });
+
+  it("is not ready on 500 — a broken binding must never count as booted", () => {
+    expect(isRouteTableReady(500, null, AUTH)).toBe(false);
+  });
+
+  it("is not ready on 200 — a route that renders without the gate is not the route we asked for", () => {
+    expect(isRouteTableReady(200, null, AUTH)).toBe(false);
+  });
+
+  it("is not ready on a 307 somewhere ELSE — only the auth origin proves the gate ran", () => {
+    expect(isRouteTableReady(307, "http://example.test/login", AUTH)).toBe(false);
+    expect(isRouteTableReady(307, "/org/acme/suspended", AUTH)).toBe(false);
+  });
+
+  it("is not ready on a 307 with no Location at all", () => {
+    expect(isRouteTableReady(307, null, AUTH)).toBe(false);
+  });
+
+  it("is not ready on other redirect codes", () => {
+    expect(isRouteTableReady(308, `${AUTH}/login`, AUTH)).toBe(false);
+    expect(isRouteTableReady(302, `${AUTH}/login`, AUTH)).toBe(false);
   });
 });
