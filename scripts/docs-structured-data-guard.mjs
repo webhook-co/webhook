@@ -210,6 +210,28 @@ export function checkAnalyticsBeacon(jsSource) {
     );
   else if (!/^[0-9a-f]{32}$/.test(token))
     errors.push(`cf-analytics.js token "${token}" is not a 32-char hex Cloudflare beacon token.`);
+  // (3) Mintlify's platform injects its OWN Cloudflare beacon into <head>, and beacon.min.js is
+  // single-instance by default: it opens with `if (p && "single" === p.load) return;` and every
+  // instance stamps `load: "single"` on the way out. Theirs wins the race, so without resetting the
+  // global ours returns before it ever reads our token. Measured 2026-07-22: docs recorded 0 events
+  // for 7 days while the beacon looked perfectly healthy in DevTools.
+  if (!/__cfBeacon\s*=/.test(src) || !/load:\s*["']multi["']/.test(src))
+    errors.push(
+      'cf-analytics.js does not reset window.__cfBeacon with `load: "multi"` — Mintlify injects its ' +
+        "own Cloudflare beacon first and beacon.min.js aborts every later instance " +
+        '(`if (p && "single" === p.load) return;`), so ours would load and silently never report.',
+    );
+  // (4) Endpoint selection in beacon.min.js is
+  //   p.send && p.send.to ? p.send.to : (undefined === p.version ? "<cloudflareinsights>" : null)
+  // and a null endpoint means same-origin /cdn-cgi/rum. On docs.webhook.co that is MINTLIFY's
+  // Cloudflare zone, which answers 204 and drops a token it does not own. We now share the global
+  // with their config, so pin the documented manual-embed endpoint instead of inferring it.
+  if (!src.includes("https://cloudflareinsights.com/cdn-cgi/rum"))
+    errors.push(
+      "cf-analytics.js does not pin the upload endpoint to https://cloudflareinsights.com/cdn-cgi/rum " +
+        "— without `send.to` the beacon can fall back to same-origin /cdn-cgi/rum, which on " +
+        "docs.webhook.co is Mintlify's zone: it answers 204 and DROPS our events.",
+    );
   return errors;
 }
 

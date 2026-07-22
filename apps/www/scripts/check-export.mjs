@@ -124,8 +124,88 @@ try {
       failures.push("out/_headers /play CSP must allow play.wbhk.my in connect-src");
     }
   }
+
+  // ── The Cloudflare Web Analytics beacon needs a MATCHED PAIR of CSP entries, in EVERY block ──
+  // script-src loads beacon.min.js; connect-src is where it uploads. www.webhook.co is a Workers
+  // custom domain whose /cdn-cgi/rum 404s, so the beacon is embedded by hand and uploads CROSS-ORIGIN
+  // to cloudflareinsights.com — 'self' does not cover it. Drop either entry and the beacon dies
+  // silently: no user-visible breakage, no failing test, just a dashboard that reads zero forever
+  // (which is exactly how this shipped — measured 0 events over 7 days on 2026-07-22).
+  //
+  // Checked per-block, not once over the whole file, BECAUSE /play unsets the inherited CSP. A global
+  // grep would pass while /play — a real page rendering the same root layout — served a policy that
+  // blocks the beacon.
+  const cspBlocks = [
+    ["/*", headers.split(/^\/(?=\S)/m).find((b) => b.startsWith("*\n"))],
+    ["/play", playBlock],
+  ];
+  for (const [label, block] of cspBlocks) {
+    if (!block || !/Content-Security-Policy:/i.test(block)) continue;
+    if (
+      !/Content-Security-Policy:[^\n]*script-src[^;]*static\.cloudflareinsights\.com/i.test(block)
+    ) {
+      failures.push(
+        `out/_headers ${label} CSP must allow static.cloudflareinsights.com in script-src ` +
+          "(without it beacon.min.js is blocked and Web Analytics records nothing)",
+      );
+    }
+    if (
+      !/Content-Security-Policy:[^\n]*connect-src[^;]*(?<![.\w])cloudflareinsights\.com/i.test(
+        block,
+      )
+    ) {
+      failures.push(
+        `out/_headers ${label} CSP must allow cloudflareinsights.com in connect-src ` +
+          "(the manually-embedded beacon uploads cross-origin; 'self' does not cover it)",
+      );
+    }
+  }
 } catch {
   failures.push("could not read out/_headers");
+}
+
+// THE BEACON-SHAPE GUARD. Two shapes load fine and report NOTHING, and neither is visible from the
+// browser (the script 200s, the upload 204s), so the emitted HTML is the only place to catch them:
+//   1. `type="module"` — Cloudflare's beacon resolves its own element via document.currentScript,
+//      which is ALWAYS null for a module script, so it never finds its token.
+//   2. a missing/!32-hex data-cf-beacon token — nothing to report against.
+// Also asserted: the pinned upload endpoint, which must stay in lockstep with the connect-src entry
+// above. Mirrors scripts/docs-structured-data-guard.mjs, which pins the same shape for the docs site.
+try {
+  const html = await readFile(outDir + "index.html", "utf8");
+  const beaconTag = /<script[^>]*static\.cloudflareinsights\.com\/beacon\.min\.js[^>]*>/i.exec(
+    html,
+  )?.[0];
+  if (!beaconTag) {
+    failures.push(
+      "out/index.html has no Cloudflare Web Analytics beacon — the webhook.co zone's AUTOMATIC setup " +
+        "cannot inject one (www.webhook.co is a Workers custom domain: its /cdn-cgi/rum 404s), so the " +
+        "manual embed in src/components/marketing/web-analytics.tsx is the only thing that reports",
+    );
+  } else {
+    if (/type=["']module["']/i.test(beaconTag)) {
+      failures.push(
+        "out/index.html beacon is a MODULE script — document.currentScript is null for modules, so " +
+          "Cloudflare's beacon cannot resolve its token and silently never reports",
+      );
+    }
+    const token = /data-cf-beacon=["'][^"']*?&quot;token&quot;:\s*&quot;([0-9a-z]*)&quot;/i.exec(
+      beaconTag,
+    )?.[1];
+    if (!token || !/^[0-9a-f]{32}$/.test(token)) {
+      failures.push(
+        "out/index.html beacon has no valid 32-hex data-cf-beacon token — it would load and report nothing",
+      );
+    }
+    if (!/cloudflareinsights\.com\/cdn-cgi\/rum/i.test(beaconTag)) {
+      failures.push(
+        "out/index.html beacon does not pin send.to to cloudflareinsights.com/cdn-cgi/rum — it can " +
+          "fall back to same-origin /cdn-cgi/rum, which 404s on this Workers custom domain",
+      );
+    }
+  }
+} catch {
+  failures.push("could not read out/index.html to check the Web Analytics beacon");
 }
 
 // THE FLASH-OF-WRONG-THEME GUARD. The site is a static export: there is no server to read a cookie, so
