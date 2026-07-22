@@ -98,6 +98,7 @@ import { existingPayloadKeys } from "@webhook-co/db/orphan-sweep";
 import { runAnchorCron } from "./anchor-cron";
 import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
 import { parseOrphanSweepDelete, runOrphanSweep } from "./orphan-sweep-cron";
+import { parseRotationCursor, persistRotationCursor } from "./rotation-cursor";
 import { runOrgReaperCron } from "./org-reaper-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
@@ -1581,7 +1582,13 @@ async function runMeterTransportReconcileCron(env: Env): Promise<void> {
     // one stopped, so successive hourly ticks rotate through the whole paying base instead of re-checking
     // the same head. The cursor lives in KV beside the orphan sweep's; losing it only restarts the
     // rotation from the beginning, which is safe — reconciliation is a read-only comparison.
-    const cursor = await env.KV_CONFIG.get(TRANSPORT_RECONCILE_CURSOR_KEY);
+    // A stored cursor is parsed defensively: anything that is not a canonical uuid restarts the rotation
+    // instead of reaching SQL (org_id is a uuid column, so a bad value is a hard error every tick, not an
+    // empty filter). A restart is safe for a read-only pass, but never silent — a cursor that keeps
+    // arriving corrupted means the rotation is not advancing and coverage is not what the counters imply.
+    const stored = parseRotationCursor(await env.KV_CONFIG.get(TRANSPORT_RECONCILE_CURSOR_KEY));
+    if (stored.malformed) log("metering.stripe_reconcile.cursor_malformed");
+    const cursor = stored.cursor;
     const result = await reconcileStripeTransport({
       audit,
       reader,
@@ -1593,9 +1600,7 @@ async function runMeterTransportReconcileCron(env: Env): Promise<void> {
       cursor,
       log,
     });
-    await (result.nextCursor === null
-      ? env.KV_CONFIG.delete(TRANSPORT_RECONCILE_CURSOR_KEY)
-      : env.KV_CONFIG.put(TRANSPORT_RECONCILE_CURSOR_KEY, result.nextCursor));
+    await persistRotationCursor(env.KV_CONFIG, TRANSPORT_RECONCILE_CURSOR_KEY, result.nextCursor);
     log("metering.stripe_reconcile.done", {
       daysChecked: result.daysChecked,
       orgsChecked: result.orgsChecked,

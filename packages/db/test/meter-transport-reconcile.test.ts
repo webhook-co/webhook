@@ -346,6 +346,21 @@ describe("reconcileStripeTransport — the org fan-out is bounded and rotates", 
     expect(beyond.nextCursor).toBeNull();
   });
 
+  it("treats an EMPTY-STRING cursor as a clean start, not as a uuid", async () => {
+    // The regression this pins: `org_id` is a uuid column, so an empty-string cursor reaching SQL is
+    // `invalid input syntax for type uuid` — the cron would fail EVERY tick until the KV key was cleared
+    // by hand. The first version of this rotation did exactly that, and a mocked test suite passed anyway;
+    // only a real database says so. An empty cursor must behave identically to no cursor at all.
+    await seedOrgs(3);
+
+    const empty = await run(countingReader().reader, { orgLimit: 10, cursor: "" });
+    const absent = await run(countingReader().reader, { orgLimit: 10, cursor: null });
+
+    expect(empty.orgsChecked).toBe(3);
+    expect(empty.orgsChecked).toBe(absent.orgsChecked);
+    expect(empty.nextCursor).toBe(absent.nextCursor);
+  });
+
   it("reconciles nothing and wraps when there are no eligible orgs at all", async () => {
     const res = await run(countingReader().reader, { orgLimit: 5 });
 
