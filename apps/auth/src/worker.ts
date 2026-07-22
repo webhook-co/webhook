@@ -46,8 +46,7 @@ import {
 } from "./issuer/onboarding-deps";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
-import { runNotificationDrain } from "./runtime/notify-cron";
-import { runAuthExpirySweep } from "./runtime/sweep-cron";
+import { dispatchAuthScheduled } from "./runtime/scheduled";
 import { authReadinessChecks } from "./readiness";
 import { publicReadyz, readinessProvider } from "@webhook-co/shared/health";
 
@@ -85,17 +84,13 @@ export default {
     return augmentAsMetadataResponse(request, response);
   },
 
-  // Hourly cron (crons: "0 * * * *"). Two independent, non-throwing jobs (each logs + swallows its own
-  // errors); both are waitUntil'd so the isolate lives until they + their pool-close finish.
-  scheduled: (event, env, ctx) => {
-    // The notification drain runs EVERY hour, so an auto-disable owner email is at most ~1h late (S3 PR3c-3b).
-    ctx.waitUntil(runNotificationDrain(env));
-    // The cross-org expiry sweep (ADR-0055) is a DAILY job — gate it to the 04:00 UTC firing (a low-traffic
-    // window; the on-access per-org sweep handles active orgs, so this only mops up churned ones).
-    if (new Date(event.scheduledTime).getUTCHours() === 4) {
-      ctx.waitUntil(runAuthExpirySweep(env));
-    }
-  },
+  // Hourly cron (crons: "0 * * * *"). The whole dispatch — the every-hour notification drain, the DAILY
+  // cross-org expiry sweep (ADR-0055) and the UTC-hour gate that separates them — lives in the type-checked,
+  // unit-tested ./runtime/scheduled. THIS FILE IS EXCLUDED FROM tsconfig, so nothing written here is
+  // type-checked and no test can import it; keeping only the delegate means a mistake in the cron logic is
+  // caught by tsc and by scheduled.test.ts rather than failing silently in production.
+  scheduled: (event, env, ctx) =>
+    dispatchAuthScheduled(event, env, (promise) => ctx.waitUntil(promise)),
 };
 
 /**
