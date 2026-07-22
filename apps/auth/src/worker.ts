@@ -48,7 +48,7 @@ import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
 import { runNotificationDrain } from "./runtime/notify-cron";
 import { runAuthExpirySweep } from "./runtime/sweep-cron";
-import { pingDatabase } from "@webhook-co/db/health";
+import { authReadinessChecks } from "./readiness";
 import { publicReadyz, readinessProvider } from "@webhook-co/shared/health";
 
 // The OAuth issuer instance — @cloudflare/workers-oauth-provider wrapping the OpenNext handler (A2b-1). We
@@ -60,22 +60,7 @@ const provider = new OAuthProvider({
   defaultHandler: makeIssuerDefaultHandler(openNextHandler),
 });
 
-/**
- * auth readiness. webhook_auth backs the issuer's own global reads; webhook_app backs the
- * org-scoped reads the login flow performs under RLS. Checked separately so a single broken role is
- * visible rather than masked by the other.
- */
-const authReadiness = readinessProvider<Record<string, unknown>>((env) => ({
-  database: () => pingDatabase(hyperdriveDsn(env, "HYPERDRIVE_AUTH")),
-  tenant: () => pingDatabase(hyperdriveDsn(env, "HYPERDRIVE_TENANT")),
-}));
-
-/** Read a Hyperdrive binding's DSN, throwing (-> a `fail` check) when it is absent. */
-function hyperdriveDsn(env: Record<string, unknown>, binding: string): string {
-  const hd = env[binding] as { connectionString?: string } | undefined;
-  if (!hd?.connectionString) throw new Error(`${binding} binding is not configured`);
-  return hd.connectionString;
-}
+const authReadiness = readinessProvider<Record<string, unknown>>((env) => authReadinessChecks(env));
 
 export default {
   fetch: async (request, env, ctx) => {

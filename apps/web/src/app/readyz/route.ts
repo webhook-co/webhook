@@ -16,14 +16,26 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
-const readiness = readinessProvider<{ HYPERDRIVE_TENANT?: { connectionString?: string } }>(
-  (env) => ({
+/**
+ * Exported with an injectable ping so both the configured and the MISSING-binding paths are
+ * asserted. A missing binding throws, which `runChecks` turns into `fail` -> 503; returning a
+ * placeholder DSN would let a misconfigured deploy report healthy.
+ */
+export function webReadinessChecks(
+  env: { HYPERDRIVE_TENANT?: { connectionString?: string } },
+  ping: (dsn: string) => Promise<void> = pingDatabase,
+) {
+  return {
     database: () => {
       const dsn = env.HYPERDRIVE_TENANT?.connectionString;
       if (!dsn) throw new Error("HYPERDRIVE_TENANT binding is not configured");
-      return pingDatabase(dsn);
+      return ping(dsn);
     },
-  }),
+  };
+}
+
+const readiness = readinessProvider<{ HYPERDRIVE_TENANT?: { connectionString?: string } }>((env) =>
+  webReadinessChecks(env),
 );
 
 export async function GET(): Promise<Response> {

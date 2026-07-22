@@ -82,13 +82,7 @@ import {
   SecretStore,
   verifyListenTicket,
 } from "@webhook-co/shared";
-import {
-  healthDocument,
-  memoized,
-  publicReadyz,
-  runChecks,
-  type HealthDocument,
-} from "@webhook-co/shared/health";
+import { publicReadyz, readinessProvider, type HealthDocument } from "@webhook-co/shared/health";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { MAX_FREE_ORGS_PER_USER } from "@webhook-co/shared/plans";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -776,21 +770,18 @@ const READINESS_TIMEOUT_MS = 2_000;
  */
 const READINESS_CACHE_MS = 20_000;
 
-/** Per-isolate memo. Bindings are stable for an isolate's life, so capturing `env` once is safe. */
-let readinessProvider: (() => Promise<HealthDocument>) | undefined;
-
-/** Build (once per isolate) and evaluate the ingest readiness document. */
-export function ingestReadiness(env: ReadinessEnv): Promise<HealthDocument> {
-  readinessProvider ??= memoized(
-    async () =>
-      healthDocument(
-        await runChecks(ingestReadinessChecks(env), { timeoutMs: READINESS_TIMEOUT_MS }),
-        { time: new Date().toISOString() },
-      ),
-    READINESS_CACHE_MS,
-  );
-  return readinessProvider();
-}
+/**
+ * Ingest readiness, composed by the shared (and tested) `readinessProvider` rather than hand-wiring
+ * runChecks + healthDocument + memoized here. The hand-wired version duplicated logic that the
+ * router tests then bypassed with a fake, leaving the real caching path unexercised.
+ */
+export const ingestReadiness = readinessProvider<ReadinessEnv>(
+  (env) => ingestReadinessChecks(env),
+  {
+    timeoutMs: READINESS_TIMEOUT_MS,
+    cacheMs: READINESS_CACHE_MS,
+  },
+);
 
 /** Injectable so the router can be tested without a live Postgres or R2. */
 export type ReadinessProvider = (env: ReadinessEnv) => Promise<HealthDocument>;

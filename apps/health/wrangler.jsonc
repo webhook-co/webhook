@@ -14,6 +14,8 @@
   // internal/runbooks/status-health-activation.md for the provisioning order.
   "kv_namespaces": [{ "binding": "HEALTH_KV", "id": "<KV_HEALTH_ID>" }],
   "observability": { "enabled": true },
+  // The delivery canary tick. Correlates the previous nonce and arms a new one.
+  "triggers": { "crons": ["*/5 * * * *"] },
   // Every response is either a fixed string or a status verdict; no token or tenant identifier ever
   // reaches a URL here, so tracing is safe.
   "workers_dev": false,
