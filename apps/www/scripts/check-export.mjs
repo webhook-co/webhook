@@ -16,6 +16,11 @@ import { extractSitemapLocs, pageFileForUrl } from "./check-seo-html.mjs";
 const outDir = fileURLToPath(new URL("../out/", import.meta.url));
 const failures = [];
 
+// The one upload endpoint the beacon may post to, compared with `===` — never a substring scan.
+// Kept in lockstep with the connect-src entry in public/_headers and with
+// src/components/marketing/web-analytics.tsx.
+const CF_MANUAL_UPLOAD_ENDPOINT = "https://cloudflareinsights.com/cdn-cgi/rum";
+
 // Infra files the host needs regardless of page count: the homepage, the custom 404
 // (not_found_handling: "404-page"), the headers file, the SEO routes, and the social card.
 // index.html is listed UNCONDITIONALLY (not only when "/" appears in the sitemap) — a homepage that
@@ -189,17 +194,26 @@ try {
           "Cloudflare's beacon cannot resolve its token and silently never reports",
       );
     }
-    const token = /data-cf-beacon=["'][^"']*?&quot;token&quot;:\s*&quot;([0-9a-z]*)&quot;/i.exec(
-      beaconTag,
-    )?.[1];
-    if (!token || !/^[0-9a-f]{32}$/.test(token)) {
+    // PARSE the config rather than scanning the tag for substrings. Scanning was wrong twice over:
+    // it read a token out of whatever the regex happened to reach, and CodeQL correctly flagged the
+    // endpoint check (js/regex/missing-regexp-anchor) because an unanchored match accepts any host
+    // that merely CONTAINS the real one. Decode the HTML entities React emitted, JSON.parse, then
+    // compare exactly — this is the one guard whose whole job is pinning where our data goes.
+    let config;
+    try {
+      const raw = /data-cf-beacon="([^"]*)"/i.exec(beaconTag)?.[1] ?? "";
+      config = JSON.parse(raw.replaceAll("&quot;", '"').replaceAll("&amp;", "&"));
+    } catch {
+      config = null;
+    }
+    if (!config || typeof config.token !== "string" || !/^[0-9a-f]{32}$/.test(config.token)) {
       failures.push(
         "out/index.html beacon has no valid 32-hex data-cf-beacon token — it would load and report nothing",
       );
     }
-    if (!/cloudflareinsights\.com\/cdn-cgi\/rum/i.test(beaconTag)) {
+    if (config?.send?.to !== CF_MANUAL_UPLOAD_ENDPOINT) {
       failures.push(
-        "out/index.html beacon does not pin send.to to cloudflareinsights.com/cdn-cgi/rum — it can " +
+        `out/index.html beacon does not pin send.to to exactly ${CF_MANUAL_UPLOAD_ENDPOINT} — it can ` +
           "fall back to same-origin /cdn-cgi/rum, which 404s on this Workers custom domain",
       );
     }

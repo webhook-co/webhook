@@ -21,6 +21,7 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { isMain } from "./lib/docs-lib.mjs";
 
@@ -177,59 +178,134 @@ export function checkWwwDrift({ metadataSource, structuredDataSource }) {
  * no attribute for the querySelector fallback, so it depends on currentScript alone — require the
  * `data-cf-beacon` attribute token, which resolves through BOTH paths.
  */
+/** The one upload endpoint we accept, compared with `===` — never a substring scan. */
+const CF_MANUAL_UPLOAD_ENDPOINT = "https://cloudflareinsights.com/cdn-cgi/rum";
+const CF_BEACON_SRC = "https://static.cloudflareinsights.com/beacon.min.js";
+
+/**
+ * RUN the beacon file against a stub DOM and report what it actually did.
+ *
+ * Deliberately an execution, not a text scan. The previous text-scan version searched for
+ * `__cfBeacon =` and `load: "multi"` INDEPENDENTLY — and cf-analytics.js documents both in its header
+ * comment, so flipping the real assignment to `"single"` (which hands the page back to Mintlify's
+ * beacon and returns us to zero events) still satisfied the guard on the strength of the prose alone.
+ * Caught by ai-review on PR #749 and reproduced before fixing. Executing removes that whole class:
+ * comments cannot append a script, and every assertion below becomes exact equality on a real value
+ * (which is also what closes the CodeQL substring-sanitization findings the scan version raised).
+ *
+ * The sandbox is deliberately tiny — a document that only knows createElement/head.appendChild — so
+ * the file gets no ambient capability, and anything it touches beyond that surface throws and is
+ * reported rather than silently ignored. Input is a committed repo file, not user data.
+ */
+function runBeaconSource(jsSource) {
+  const appended = [];
+  const makeElement = () => {
+    const attrs = new Map();
+    return {
+      attrs,
+      setAttribute: (k, v) => attrs.set(k, v),
+      getAttribute: (k) => attrs.get(k),
+    };
+  };
+  const sandbox = {
+    window: {},
+    document: {
+      createElement: makeElement,
+      head: { appendChild: (el) => appended.push(el) },
+    },
+  };
+  sandbox.window.document = sandbox.document;
+  // `globalThis.window` must resolve inside the vm too — cf-analytics.js assigns window.__cfBeacon.
+  runInNewContext(jsSource, sandbox, { timeout: 1000 });
+  return { appended, cfBeacon: sandbox.window.__cfBeacon };
+}
+
 export function checkAnalyticsBeacon(jsSource) {
-  const src = jsSource ?? "";
   const errors = [];
-  if (!src.includes("static.cloudflareinsights.com/beacon.min.js"))
-    errors.push("cf-analytics.js does not reference static.cloudflareinsights.com/beacon.min.js.");
-  // (1) A runtime-injected beacon must be a CLASSIC <script>: `document.currentScript` is always null
-  // for a module script, so Cloudflare's beacon can't find its element (or token) and never reports.
-  if (/type\s*[:=]\s*["']module["']/.test(src))
+  let ran;
+  try {
+    ran = runBeaconSource(jsSource ?? "");
+  } catch (err) {
+    // FAIL-CLOSED FLOOR: a file that throws installs no beacon at all, so it can never be "fine".
+    return [`cf-analytics.js threw while installing the beacon: ${err.message}`];
+  }
+
+  // (1) It must actually append a beacon <script>. A file that appends nothing reports nothing.
+  // Matched on the PARSED origin+pathname (never a substring of the raw string, which would accept
+  // an attacker-shaped host like static.cloudflareinsights.com.evil.test), while still recognising a
+  // `?token=` query form so that shape is rejected below for its real reason, not for its URL.
+  const beacon = ran.appended.find((el) => {
+    try {
+      const u = new URL(el.src);
+      return u.origin + u.pathname === CF_BEACON_SRC;
+    } catch {
+      return false;
+    }
+  });
+  if (!beacon) {
+    errors.push(
+      `cf-analytics.js did not append a <script> with src ${CF_BEACON_SRC} — nothing will report.`,
+    );
+    return errors;
+  }
+
+  // (2) It must be a CLASSIC script: `document.currentScript` is always null for a module script, so
+  // Cloudflare's beacon can't find its element (or token) and never reports.
+  if (beacon.type === "module")
     errors.push(
       "cf-analytics.js injects a module script — document.currentScript is null for modules, so " +
         "Cloudflare's beacon can't resolve its token and silently never reports. Inject a classic " +
         "<script> instead (no module type).",
     );
-  // (2) The token must ride in the data-cf-beacon attribute (`token: "<hex>"`), the form that resolves
-  // via both document.currentScript AND the script[data-cf-beacon] querySelector fallback. A bare
-  // `?token=` src depends on currentScript alone (and is outright dead under a module script).
-  const m = /token:\s*["']([^"']*)["']/.exec(src);
-  const token = m?.[1];
-  if (!token)
+
+  // (3) The config must ride in the data-cf-beacon ATTRIBUTE — the form that resolves via both
+  // document.currentScript AND the script[data-cf-beacon] querySelector fallback. A bare `?token=`
+  // src depends on currentScript alone (and is outright dead under a module script).
+  let config;
+  try {
+    config = JSON.parse(beacon.getAttribute("data-cf-beacon") ?? "");
+  } catch {
     errors.push(
-      'cf-analytics.js has no data-cf-beacon token — set data-cf-beacon to JSON with `token: "<hex>"` ' +
-        "so Cloudflare's beacon resolves it through both currentScript and the querySelector fallback " +
-        "(a bare ?token= src is fragile and dead under a module script).",
+      "cf-analytics.js has no parseable data-cf-beacon attribute — set it to JSON carrying " +
+        "`token` so Cloudflare's beacon resolves it through both currentScript and the querySelector " +
+        "fallback (a bare ?token= src is fragile and dead under a module script).",
     );
-  // The CF beacon token is PUBLIC (rendered into every page's HTML); this is a build-time equality
-  // check against a placeholder, not a secret comparison, so constant-time matching is irrelevant.
+    return errors;
+  }
+
+  const token = config.token;
+  // The CF beacon token is PUBLIC (rendered into every page's HTML); these are build-time equality
+  // checks against a placeholder, not secret comparisons, so constant-time matching is irrelevant.
   // eslint-disable-next-line security/detect-possible-timing-attacks
-  else if (token === "<CF_BEACON_TOKEN>")
+  if (token === "<CF_BEACON_TOKEN>")
     errors.push(
       "cf-analytics.js still holds the <CF_BEACON_TOKEN> placeholder — supply the real token.",
     );
-  else if (!/^[0-9a-f]{32}$/.test(token))
+  else if (typeof token !== "string" || !/^[0-9a-f]{32}$/.test(token))
     errors.push(`cf-analytics.js token "${token}" is not a 32-char hex Cloudflare beacon token.`);
-  // (3) Mintlify's platform injects its OWN Cloudflare beacon into <head>, and beacon.min.js is
+
+  // (4) Mintlify's platform injects its OWN Cloudflare beacon into <head>, and beacon.min.js is
   // single-instance by default: it opens with `if (p && "single" === p.load) return;` and every
   // instance stamps `load: "single"` on the way out. Theirs wins the race, so without resetting the
   // global ours returns before it ever reads our token. Measured 2026-07-22: docs recorded 0 events
   // for 7 days while the beacon looked perfectly healthy in DevTools.
-  if (!/__cfBeacon\s*=/.test(src) || !/load:\s*["']multi["']/.test(src))
+  if (ran.cfBeacon?.load !== "multi")
     errors.push(
       'cf-analytics.js does not reset window.__cfBeacon with `load: "multi"` — Mintlify injects its ' +
         "own Cloudflare beacon first and beacon.min.js aborts every later instance " +
         '(`if (p && "single" === p.load) return;`), so ours would load and silently never report.',
     );
-  // (4) Endpoint selection in beacon.min.js is
+
+  // (5) Endpoint selection in beacon.min.js is
   //   p.send && p.send.to ? p.send.to : (undefined === p.version ? "<cloudflareinsights>" : null)
   // and a null endpoint means same-origin /cdn-cgi/rum. On docs.webhook.co that is MINTLIFY's
-  // Cloudflare zone, which answers 204 and drops a token it does not own. We now share the global
-  // with their config, so pin the documented manual-embed endpoint instead of inferring it.
-  if (!src.includes("https://cloudflareinsights.com/cdn-cgi/rum"))
+  // Cloudflare zone, which answers 204 and drops a token it does not own. We share the global with
+  // their config, so pin the documented manual-embed endpoint — by EXACT equality, since a substring
+  // match would accept any host merely containing it.
+  if (config.send?.to !== CF_MANUAL_UPLOAD_ENDPOINT)
     errors.push(
-      "cf-analytics.js does not pin the upload endpoint to https://cloudflareinsights.com/cdn-cgi/rum " +
-        "— without `send.to` the beacon can fall back to same-origin /cdn-cgi/rum, which on " +
+      `cf-analytics.js does not pin the upload endpoint to ${CF_MANUAL_UPLOAD_ENDPOINT} ` +
+        "— without an exact `send.to` the beacon can fall back to same-origin /cdn-cgi/rum, which on " +
         "docs.webhook.co is Mintlify's zone: it answers 204 and DROPS our events.",
     );
   return errors;
