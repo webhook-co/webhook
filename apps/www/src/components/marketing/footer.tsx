@@ -2,7 +2,6 @@ import { cn, Wordmark } from "@webhook-co/ui";
 
 import { GithubIcon, LinkedinIcon } from "@/components/ui/brand-icons";
 import { COMPARISONS, comparisonPath } from "@/lib/comparisons";
-import { LiveStatusIndicator } from "@/components/marketing/live-status-indicator";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
@@ -218,14 +217,15 @@ export function Footer() {
           ))}
         </div>
 
-        {/* The "All systems operational" indicator is BACK, and this time it is wired to something.
-            It was removed when it was a hardcoded string beside a green dot with nothing monitoring
-            anything — a health indicator that isn't wired to a health check is a lie told in the most
-            trustworthy-looking way available. StatusIndicator now reads the live status page, and
-            renders NOTHING if that read fails, so this row can never claim health it cannot see. */}
+        {/* Still no inline status indicator, and the reason is now a HARD constraint rather than a
+            missing status page. apps/www is `output: "export"` — a static export with no server — so
+            there is no route handler to proxy the vendor JSON through, and status.webhook.co sends no
+            Access-Control-Allow-Origin, so the browser cannot fetch it directly either. A
+            server-render fetch turns this footer into a suspense boundary and breaks every page test.
+            That leaves Phare's iframe embed as the only mechanism that actually works. The "Status"
+            link in the Developers column carries the same information and cannot fail. */}
         <div className="mt-[clamp(40px,5vw,64px)] flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6 text-sm text-fg-muted">
           <span>© 2026 webhook.co</span>
-          <LiveStatusIndicator />
         </div>
       </div>
     </footer>
