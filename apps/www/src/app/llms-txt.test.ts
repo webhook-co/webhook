@@ -45,8 +45,10 @@ describe("public/llms.txt", () => {
       }
     }
     // At least one link must actually be one of ours — otherwise the sitemap check above is vacuous.
+    // Compared on parsed hostname, never `startsWith`: `https://www.webhook.co.evil.com` satisfies a
+    // substring check but is a different host (incomplete-URL-substring-sanitization).
     expect(
-      urls.some((u) => u.startsWith("https://www.webhook.co")),
+      urls.some((u) => new URL(u).hostname === "www.webhook.co"),
       "llms.txt links none of our own pages",
     ).toBe(true);
   });
