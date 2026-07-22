@@ -131,6 +131,9 @@ const APPS = {
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
       "LISTEN_TICKET_KEY",
+      // The heartbeat credential the engine's crons present when reporting. Gated: `wrangler deploy`
+      // fails when it binds a secret that does not exist, and reporting is a no-op without it.
+      ...whenHeartbeat(["HEARTBEAT_TOKEN"]),
       // STRIPE_SECRET_KEY (S4.4c) — the outbound meter-reporter's Stripe key. Bound only when billing is on.
       ...whenBilling(["STRIPE_SECRET_KEY"]),
     ],
@@ -423,6 +426,8 @@ const APPS = {
       "RESEND_API_KEY",
       // Cloudflare Turnstile siteverify secret — keys the captcha gate on the magic-link send.
       "TURNSTILE_SECRET_KEY",
+      // The heartbeat credential auth's crons present when reporting (same gate as engine).
+      ...whenHeartbeat(["HEARTBEAT_TOKEN"]),
     ],
     placeholders: [
       "<AUTH_OAUTH_KV_ID>",

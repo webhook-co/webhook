@@ -22,6 +22,12 @@
   // churned/abandoned ones — once a day is ample. The cron is HOURLY: the notification drain (S3 PR3c-3b)
   // runs every hour so an auto-disable email is at most ~1h late, while worker.ts gates the daily sweep to
   // the 04:00 UTC firing.
+  "vars": {
+    // HEALTH_HEARTBEAT_URL — where this Worker's crons report a completed run (apps/health). NOT a
+    // secret: it is a public hostname, and the credential rides in the Authorization header. Reporting
+    // needs BOTH this and HEARTBEAT_TOKEN, so it stays a no-op until the secret is bound.
+    "HEALTH_HEARTBEAT_URL": "https://health.wbhk.my",
+  },
   "triggers": {
     "crons": ["0 * * * *"],
   },

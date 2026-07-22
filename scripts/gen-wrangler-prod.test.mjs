@@ -287,3 +287,23 @@ test("health READY (HEARTBEAT_TOKEN_READY set): the heartbeat secret is bound", 
   const names = readProd("health").secrets_store_secrets.map((s) => s.secret_name);
   assert.deepEqual(names, ["HEARTBEAT_TOKEN"]);
 });
+
+test("engine and auth carry the heartbeat credential only when the gate is set", () => {
+  // The receiver having the credential is useless if the REPORTERS do not: every job would report
+  // into a 404, which on the status page is indistinguishable from a real outage.
+  gen();
+  for (const app of ["engine", "auth"]) {
+    assert.equal(hasSecret(readProd(app), "HEARTBEAT_TOKEN"), false, `${app} dark`);
+  }
+  gen({ HEARTBEAT_TOKEN_READY: "1" });
+  for (const app of ["engine", "auth", "health"]) {
+    assert.equal(hasSecret(readProd(app), "HEARTBEAT_TOKEN"), true, `${app} ready`);
+  }
+});
+
+test("engine and auth know where to report, and it is not a secret", () => {
+  gen();
+  for (const app of ["engine", "auth"]) {
+    assert.equal(readProd(app).vars.HEALTH_HEARTBEAT_URL, "https://health.wbhk.my");
+  }
+});
