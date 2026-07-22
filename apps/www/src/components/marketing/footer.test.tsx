@@ -220,19 +220,46 @@ describe("Footer", () => {
     expect(link).toHaveAttribute("href", "https://status.webhook.co");
   });
 
-  it("embeds the live status badge lazily, named, and at a fixed size", () => {
+  it("embeds a status badge for each theme, lazily and at a fixed size", () => {
     const { container } = render(<Footer />);
-    const frame = container.querySelector("iframe");
-    expect(frame).not.toBeNull();
-    // An accessible name: the frame element is still axe-checked even though traversal is off.
-    expect(frame).toHaveAttribute("title", expect.stringMatching(/system status/i));
-    expect(frame?.getAttribute("src") ?? "").toMatch(
-      /^https:\/\/status\.webhook\.co\/embed-badges\//,
-    );
-    // Lazy + fixed dimensions: costs nothing above the fold, and reserves its space so the
-    // copyright row cannot shift when the vendor answers.
-    expect(frame).toHaveAttribute("loading", "lazy");
-    expect(frame).toHaveAttribute("width", "190");
-    expect(frame).toHaveAttribute("height", "30");
+    const frames = [...container.querySelectorAll("iframe")];
+    // Two, because the embed bakes its colours into the URL — an iframe cannot read our CSS
+    // custom properties, so the theme is switched by showing one and hiding the other.
+    expect(frames).toHaveLength(2);
+    for (const f of frames) {
+      expect(f).toHaveAttribute("title", expect.stringMatching(/system status/i));
+      expect(f.getAttribute("src") ?? "").toMatch(/^https:\/\/status\.webhook\.co\/embed-badges\//);
+      // Lazy + fixed dimensions: costs nothing above the fold, and reserves its space so the
+      // copyright row cannot shift when the vendor answers.
+      expect(f).toHaveAttribute("loading", "lazy");
+      expect(f).toHaveAttribute("width", "190");
+      expect(f).toHaveAttribute("height", "30");
+    }
+  });
+
+  // The badges are INVERTED against the site: white-ish on the dark theme, dark on the light one.
+  // Getting these the wrong way round renders a dark pill on a dark footer, which is invisible
+  // rather than broken — so it would not show up as a failure anywhere else.
+  it("shows the white badge on the dark theme and the dark badge on the light theme", () => {
+    const { container } = render(<Footer />);
+    const [light, dark] = [...container.querySelectorAll("iframe")];
+
+    // The light-coloured pill (background-light) is the DEFAULT — visible unless the site is light.
+    expect(light?.getAttribute("src")).toContain("background-light=f5f5f5");
+    expect(light?.className).toContain("[[data-theme=light]_&]:hidden");
+    expect(light?.className).not.toContain("hidden border");
+
+    // The dark pill is hidden by default and revealed only on the light theme.
+    expect(dark?.getAttribute("src")).toContain("background-dark=171717");
+    expect(dark?.className).toContain("hidden");
+    expect(dark?.className).toContain("[[data-theme=light]_&]:block");
+  });
+
+  // A visitor with JS disabled never gets `data-theme` stamped, so exactly one badge must still
+  // show — and it must be the one matching the site's dark default.
+  it("defaults to the dark-theme badge when no data-theme is stamped", () => {
+    const { container } = render(<Footer />);
+    const [light] = [...container.querySelectorAll("iframe")];
+    expect(light?.className.split(/\s+/)).not.toContain("hidden");
   });
 });
