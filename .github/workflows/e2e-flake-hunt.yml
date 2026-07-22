@@ -1,0 +1,76 @@
+name: e2e-flake-hunt
+
+# TEMPORARY diagnostic harness for the org-events.spec.ts:115 flake. Manual dispatch only — it is not a
+# gate and nothing depends on it. Runs the web-e2e suite many times in parallel shards so a ~4%-per-run
+# failure becomes reliably observable, and reports the per-shard failure count so the rate can be compared
+# before and after a candidate fix. Delete once the lane closes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: "suite runs per shard"
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    name: hunt ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Install dbmate
+        env:
+          DBMATE_SHA256: dfd4027141b6e4357158099bdfe6c02b286af70f8e49057937744cf80b38ea1c
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate \
+            https://github.com/amacneil/dbmate/releases/download/v2.33.0/dbmate-linux-amd64
+          echo "${DBMATE_SHA256}  /usr/local/bin/dbmate" | sha256sum -c -
+          chmod +x /usr/local/bin/dbmate
+      - run: pnpm --filter @webhook-co/web exec playwright install --with-deps chromium
+      - name: Run the suite repeatedly
+        run: |
+          fails=0
+          for i in $(seq 1 ${{ inputs.repeats }}); do
+            rm -rf apps/web/.next
+            if pnpm --filter @webhook-co/web test:e2e; then
+              echo "HUNT run $i: pass"
+            else
+              fails=$((fails+1))
+              echo "HUNT run $i: FAIL"
+              mkdir -p /tmp/hunt-traces/run-$i
+              cp -r apps/web/test-results/. /tmp/hunt-traces/run-$i/ 2>/dev/null || true
+            fi
+          done
+          echo "HUNT_SUMMARY shard=${{ matrix.shard }} fails=$fails of=${{ inputs.repeats }}"
+      - name: Upload traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hunt-trace-${{ matrix.shard }}
+          path: /tmp/hunt-traces/
+          retention-days: 3
+          if-no-files-found: ignore
