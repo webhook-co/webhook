@@ -7,7 +7,7 @@ import { createOrgWithOwner } from "@webhook-co/db/orgs";
 import { testAuditKey } from "../../../packages/db/test/audit-key";
 import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
-import { deepestAppPageRoute, probeUrlFor } from "./deepest-route";
+import { deepestAppRoute, probeUrlFor } from "./deepest-route";
 import { BASE_URL, PORT, writeFixture, type Fixture } from "./fixture";
 
 // The dashboard's first end-to-end harness.
@@ -115,44 +115,49 @@ async function seed(appUrl: string, ownerUrl: string): Promise<Fixture> {
   }
 }
 
+/** Where the gate sends an unauthenticated request — see `AUTH_BASE_URL` below. */
+const AUTH_ORIGIN = "http://127.0.0.1:3199";
+
 /**
- * Has `next dev` finished learning the route table?
+ * Is the route `probe` addresses actually IN `next dev`'s route table yet?
  *
  * ── Why "the server answers" is NOT the same as "the server is ready" ───────────────────────────────────
  *
- * `next dev` picks the page for a request from `fsChecker.dynamicRoutes`, a list it rebuilds from a
- * **watchpack filesystem snapshot** on every `aggregated` event — and watchpack debounces that at 5ms while
- * an asynchronous, recursive, per-directory scan is still walking `src/app`. The dev server starts serving
- * at the end of the FIRST aggregation, so for a moment it is live with a PARTIALLY-SCANNED route table.
+ * `next dev` resolves a request to a page from a route table it rebuilds from a watchpack filesystem
+ * snapshot, and it begins serving before that scan has necessarily finished walking `src/app`. A route the
+ * table does not yet hold is not a 404: the catch-all `(app)/[...legacy]` matches ANY path under `(app)`,
+ * so it claims the URL, rejects a first segment of `org`, and calls `notFound()`. The reader gets the app's
+ * own 404 — with an HTTP 200 RSC payload, no error, and a correct URL in the address bar. That is exactly
+ * how `org-events.spec.ts:115` went red on CI: proven by moving the route directory aside, which reproduces
+ * the failure's payload byte for byte (`pagePath "(app)/[...legacy]/page.tsx"`,
+ * `NEXT_HTTP_ERROR_FALLBACK;404` thrown from `LegacyDashboardRedirect`).
  *
- * The deepest route is the last thing that scan reaches. Ours is
- * `org/[slug]/endpoints/[id]/events/[eventId]` (depth 7). The catch-all `(app)/[...legacy]` is depth 1 and
- * is found almost immediately. While the deep one is missing, the catch-all is the only route that matches
- * its URLs — so the request is served by `LegacyDashboardRedirect`, `isLegacyDashboardPath(["org", …])` is
- * false, and the reader gets the app's own 404 with an HTTP 200 RSC payload. That is exactly the shape
- * `org-events.spec.ts:115` went red with on ~4% of CI runs: a correct href, a committed URL, and a 404.
+ * The old probe asked `/dev-session` — one route, one segment deep — so it could never fail for the reason
+ * that actually breaks the suite: a gate whose input is scoped cannot fail. This asks about the DEEPEST
+ * route, the last one a recursive scan reaches, and in doing so also issues that route's first-ever request
+ * itself rather than leaving it to a spec.
  *
- * The old probe asked `/dev-session` — ONE route, at depth 1. It could never fail for the reason that
- * actually breaks the suite: a gate whose input is scoped cannot fail. This asks about the route that is
- * genuinely last.
+ * ── The discriminator is a POSITIVE marker, not the absence of a 404 ───────────────────────────────────
  *
- * ── Why the status codes discriminate ──────────────────────────────────────────────────────────────────
+ * `status !== 404` would be too weak in both directions. A 500 (a broken binding, a throw in the gate)
+ * would count as ready — the very thing the `/dev-session` probe below refuses to do. And it would hang
+ * entirely on `[...legacy]` continuing to answer 404: the day someone makes the catch-all redirect instead,
+ * this returns true on the first poll forever and the fix silently evaporates with every test still green.
  *
- * Unauthenticated and with no session cookie:
- *   • the real `[eventId]` page runs its org-access gate first and REDIRECTS to sign-in  → 307
- *   • `(app)/[...legacy]` rejects a first segment of `org` and calls `notFound()`        → 404
- * So a 404 here means the deep route is not in the table yet, and a 307 means it is. Verified both ways by
- * booting `next dev` with the route directory present and moved aside.
+ * So demand the one response only the real route can produce. Unauthenticated and cookie-less, every gated
+ * route under `/org/{slug}` runs `requireOrgAccess` → `verifySession` → `redirect(LOGIN_URL)`, a 307 to
+ * `AUTH_BASE_URL` — an origin THIS function chose and nothing else in the app points at. `[...legacy]`
+ * cannot emit it: it rejects `org` before it reads any session. A 404, a 500, a 200 and a redirect anywhere
+ * else all correctly read as "not ready".
  *
- * This is NOT a wait papering over a product race. Production builds the candidate set at build time, sorts
- * it, freezes it into `routes-manifest.json` and reads it once before serving — `next build`/`next start`
- * and `@opennextjs/cloudflare` alike — so no such window exists there. The window is `next dev`'s alone,
- * and it is the harness's job not to start testing in the middle of it.
+ * This is NOT a wait papering over a product race. A production build computes the route table at build
+ * time, sorts it, freezes it into `routes-manifest.json` and reads it once before serving — `next build` /
+ * `next start` and `@opennextjs/cloudflare` alike — so the window does not exist there. It is `next dev`'s
+ * alone, and it is the harness's job not to start testing in the middle of it.
  */
-async function routeTableIsComplete(): Promise<boolean> {
-  const probe = probeUrlFor(deepestAppPageRoute());
+async function routeTableIsComplete(probe: string): Promise<boolean> {
   const res = await fetch(`${BASE_URL}${probe}`, { redirect: "manual" });
-  return res.status !== 404;
+  return res.status === 307 && (res.headers.get("location") ?? "").startsWith(AUTH_ORIGIN);
 }
 
 /** Boot `next dev` against the seeded database and resolve once it answers. */
@@ -181,9 +186,14 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
       // Where the gate sends an unauthenticated request. Nothing listens there, deliberately: the specs
       // assert on the redirect itself, and a dead origin makes an accidental follow fail loudly rather than
       // wander off into a real auth server.
-      AUTH_BASE_URL: "http://127.0.0.1:3199",
+      AUTH_BASE_URL: AUTH_ORIGIN,
     },
   });
+
+  // Resolve the probe target BEFORE the poll loop. Inside it, any throw is indistinguishable from "not
+  // listening yet" and would burn the full boot timeout reporting that `next dev` never answered — a
+  // diagnosis pointing at the wrong subsystem. This also stops re-walking src/app every 250ms.
+  const probe = probeUrlFor(deepestAppRoute());
 
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -201,7 +211,7 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
           `e2e: /dev-session answered ${res.status}, expected 307 — the dev server booted but is not healthy`,
         );
       }
-      if (await routeTableIsComplete()) return child;
+      if (await routeTableIsComplete(probe)) return child;
       /* serving, but the route table is still partial — keep polling */
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("e2e:")) {

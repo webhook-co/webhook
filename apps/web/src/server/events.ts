@@ -422,7 +422,9 @@ export async function loadEvent(
   // CANONICALIZE BEFORE COMPARING. `isUuid` is case-INsensitive and Postgres parses a uuid literal the same
   // way, but the endpoint check below is a JS `!==` on two strings — so an uppercase-hex `[id]` segment
   // passes the shape gate, reaches a row whose stored `endpoint_id` is canonical lowercase, and 404s an
-  // event the caller owns and the list just linked them to. That is the same false-404 the destinations
+  // event the caller owns. The list always emits canonical lowercase, so the reachable trigger is a
+  // hand-edited, copied-and-uppercased, or externally-rewritten URL — not a link we render. That is the
+  // same false-404 the destinations
   // detail page normalizes away (destinations/[id]/page.tsx); the two surfaces must not disagree about the
   // same URL. Canonicalizing does NOT widen scope: a different endpoint still fails the comparison.
   const endpointId = rawEndpointId.toLowerCase();

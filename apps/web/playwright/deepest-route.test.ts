@@ -3,25 +3,38 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { appPageRoutes, deepestAppPageRoute, probeUrlFor, urlSegments } from "./deepest-route";
+import { appRoutes, byDepthDesc, deepestAppRoute, probeUrlFor, urlSegments } from "./deepest-route";
 
+/** Build a throwaway app tree. `dir|file` puts a specific route file in that directory. */
 function tree(spec: readonly string[]): string {
   const root = mkdtempSync(join(tmpdir(), "approutes-"));
-  for (const dir of spec) {
-    const abs = join(root, dir);
+  for (const entry of spec) {
+    const [dir, file = "page.tsx"] = entry.split("|");
+    const abs = join(root, dir!);
     mkdirSync(abs, { recursive: true });
-    writeFileSync(join(abs, "page.tsx"), "export default function P() { return null }\n");
+    writeFileSync(join(abs, file), "export default function P() { return null }\n");
   }
   return root;
 }
 
-describe("appPageRoutes", () => {
-  it("finds every page.tsx, at every depth", () => {
+describe("appRoutes", () => {
+  it("finds every page, at every depth", () => {
     const root = tree(["(app)", "(app)/org/[slug]/events", "(app)/[...legacy]"]);
-    const found = appPageRoutes(root)
+    const found = appRoutes(root)
       .map((r) => r.join("/"))
       .sort();
     expect(found).toEqual(["(app)", "(app)/[...legacy]", "(app)/org/[slug]/events"]);
+  });
+
+  // Route HANDLERS resolve from the same route table as pages, so the deepest one is the last thing the
+  // scan reaches — and in this app it IS a route handler. Matching only `page.tsx` would silently exclude
+  // the true worst case.
+  it("counts route handlers and every page extension, not just page.tsx", () => {
+    const root = tree(["a|route.ts", "b|page.jsx", "c|page.mdx", "d|layout.tsx"]);
+    const found = appRoutes(root)
+      .map((r) => r.join("/"))
+      .sort();
+    expect(found).toEqual(["a", "b", "c"]); // layout.tsx is not routable
   });
 });
 
@@ -29,32 +42,42 @@ describe("urlSegments", () => {
   it("drops route groups — they contribute no URL segment", () => {
     expect(urlSegments(["(app)", "org", "[slug]", "events"])).toEqual(["org", "[slug]", "events"]);
   });
+
+  it("drops parallel route slots and strips interception markers", () => {
+    expect(urlSegments(["(app)", "@modal", "(.)photo", "[id]"])).toEqual(["photo", "[id]"]);
+  });
 });
 
-describe("deepestAppPageRoute", () => {
-  // The readiness probe exists because `next dev` begins serving at the end of its FIRST watchpack
-  // aggregation, which can be a partially-scanned tree. The deepest route is the last one a recursive scan
-  // reaches, so it is the one that goes missing — and while it is missing the catch-all claims its URLs.
+describe("byDepthDesc", () => {
+  // A DIRECT test of the comparator, against a deliberately reversed input — the previous version sorted a
+  // fixture tree and passed on readdir order alone (sorted on APFS), so deleting the tie-break would not
+  // have broken it. Sorting a pre-reversed array cannot pass without the tie-break.
+  it("breaks equal depths by code-unit order, whatever order the input arrived in", () => {
+    const routes = [
+      ["(app)", "b", "[x]"],
+      ["(app)", "a", "[x]"],
+    ];
+    expect([...routes].sort(byDepthDesc)[0]).toEqual(["(app)", "a", "[x]"]);
+    expect([...routes].reverse().sort(byDepthDesc)[0]).toEqual(["(app)", "a", "[x]"]);
+  });
+
+  it("puts the deeper route first regardless of name", () => {
+    const shallow = ["(app)", "z"];
+    const deep = ["(app)", "a", "b", "c"];
+    expect([shallow, deep].sort(byDepthDesc)[0]).toEqual(deep);
+  });
+});
+
+describe("deepestAppRoute", () => {
   it("returns the route with the most URL segments", () => {
     const root = tree([
       "(app)/[...legacy]",
       "(app)/org/[slug]/events",
       "(app)/org/[slug]/endpoints/[id]/events/[eventId]",
     ]);
-    expect(deepestAppPageRoute(root)).toEqual([
-      "(app)",
-      "org",
-      "[slug]",
-      "endpoints",
-      "[id]",
-      "events",
-      "[eventId]",
-    ]);
-  });
-
-  it("breaks ties deterministically rather than on readdir order", () => {
-    const root = tree(["(app)/b/[x]", "(app)/a/[x]"]);
-    expect(deepestAppPageRoute(root)).toEqual(["(app)", "a", "[x]"]);
+    expect(urlSegments(deepestAppRoute(root)).join("/")).toBe(
+      "org/[slug]/endpoints/[id]/events/[eventId]",
+    );
   });
 });
 
@@ -66,14 +89,14 @@ describe("probeUrlFor", () => {
   });
 });
 
-// THE DRIFT GUARD. The probe is only meaningful if it asks about the route that actually goes missing. If
-// someone adds a route deeper than the one global-setup probes, the probe silently stops covering the worst
-// case — the same "a gate whose input is scoped cannot fail" shape that let this bug ship in the first
-// place. Assert against the REAL app tree, not a fixture.
+// THE DRIFT GUARD. The probe is only meaningful if it asks about the route that actually goes missing last.
+// If someone adds a route deeper than the one global-setup probes, the probe silently stops covering the
+// worst case — the same "a gate whose input is scoped cannot fail" shape that let this bug ship. Assert
+// against the REAL app tree, not a fixture.
 describe("the real app tree", () => {
-  it("has the event-detail route as its deepest page — the route global-setup probes", () => {
-    expect(urlSegments(deepestAppPageRoute()).join("/")).toBe(
-      "org/[slug]/endpoints/[id]/events/[eventId]",
+  it("has the event-payload handler as its deepest route — the one global-setup probes", () => {
+    expect(urlSegments(deepestAppRoute()).join("/")).toBe(
+      "org/[slug]/endpoints/[id]/events/[eventId]/payload",
     );
   });
 });
