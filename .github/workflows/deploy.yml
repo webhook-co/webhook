@@ -23,6 +23,7 @@ on:
       - "apps/engine/**"
       - "apps/api/**"
       - "apps/mcp/**"
+      - "apps/health/**"
       - "packages/**"
       - "scripts/gen-wrangler-prod.mjs"
       - ".github/workflows/deploy.yml"
@@ -33,6 +34,7 @@ on:
       - "apps/engine/**"
       - "apps/api/**"
       - "apps/mcp/**"
+      - "apps/health/**"
       - "packages/**"
       - "scripts/gen-wrangler-prod.mjs"
       - ".github/workflows/deploy.yml"
@@ -87,6 +89,11 @@ jobs:
       HYPERDRIVE_AUTHN_ID: ${{ vars.HYPERDRIVE_AUTHN_ID }}
       HYPERDRIVE_INGEST_ID: ${{ vars.HYPERDRIVE_INGEST_ID }}
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
+      # apps/health's beat + canary store.
+      KV_HEALTH_ID: ${{ vars.KV_HEALTH_ID }}
+      # Gates the HEARTBEAT_TOKEN secret binding. Unset until the secret is minted, because
+      # `wrangler deploy` FAILS when it binds a secret that does not exist in the store.
+      HEARTBEAT_TOKEN_READY: ${{ vars.HEARTBEAT_TOKEN_READY }}
       KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
       OAUTH_KV_ID: ${{ vars.OAUTH_KV_ID }}
       # gen-wrangler-prod.mjs emits every app (incl. auth) each run + reqEnv()s its ids — provide auth's too,
@@ -118,14 +125,14 @@ jobs:
       - name: Hyperdrive cache posture (tenant pools must not cache)
         if: github.event_name != 'pull_request'
         run: node scripts/hyperdrive-cache-posture.mjs
-      - name: Deploy production (engine / api / mcp)
+      - name: Deploy production (engine / api / mcp / health)
         # main-only: a push to main, or a workflow_dispatch with main selected. Without the ref guard a
         # dispatch from a feature branch would ship unreviewed code straight to prod — keep the gate real.
         # The migration guard blocks a PUSH that changed a migration (workflow_dispatch bypasses it, since
         # the operator runs that explicitly after applying the migration).
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.migguard.outputs.blocked != 'true'
         run: |
-          for app in engine api mcp; do
+          for app in engine api mcp health; do
             echo "::group::deploy $app"
             pnpm exec wrangler deploy -c "apps/$app/wrangler.prod.jsonc"
             echo "::endgroup::"
@@ -133,7 +140,7 @@ jobs:
       - name: Validate deploy (dry-run)
         if: github.event_name == 'pull_request'
         run: |
-          for app in engine api mcp; do
+          for app in engine api mcp health; do
             echo "::group::dry-run $app"
             pnpm exec wrangler deploy --dry-run -c "apps/$app/wrangler.prod.jsonc"
             echo "::endgroup::"
