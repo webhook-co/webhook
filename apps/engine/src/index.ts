@@ -82,6 +82,13 @@ import {
   SecretStore,
   verifyListenTicket,
 } from "@webhook-co/shared";
+import {
+  healthDocument,
+  memoized,
+  publicReadyz,
+  runChecks,
+  type HealthDocument,
+} from "@webhook-co/shared/health";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { MAX_FREE_ORGS_PER_USER } from "@webhook-co/shared/plans";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -120,6 +127,7 @@ import {
   type VerifyIngestInput,
 } from "./ingest";
 import { makeKeyFetcher } from "./key-fetch";
+import { ingestReadinessChecks, type ReadinessEnv } from "./readiness";
 import { readBoundedBodiesCore, type PayloadEventRow } from "./payload-reader";
 import { makeVerifyIngest } from "./verify";
 
@@ -758,9 +766,39 @@ export async function handleListenUpgrade(
 // Root-only: /{token} ingest and /listen are matched below.
 const ROOT_REDIRECT_TARGET = "https://www.webhook.co/";
 
+/** How long a single dependency probe may take before readiness calls it failed. */
+const READINESS_TIMEOUT_MS = 2_000;
 /**
- * The wbhk.my router. GET / 302-redirects to the marketing homepage and GET /healthz is the SERVICE
- * liveness probe (both the bare apex, no token); the /listen WebSocket upgrade is the CLI tunnel; every
+ * How long a readiness verdict is reused. `/readyz` is UNAUTHENTICATED and touches Postgres and R2,
+ * so without this a flood of requests becomes a flood of database connections. At 20s the endpoint
+ * stays far fresher than the 5-minute interval any external prober uses, while the dependency load
+ * it can generate is bounded by the clock rather than by request rate.
+ */
+const READINESS_CACHE_MS = 20_000;
+
+/** Per-isolate memo. Bindings are stable for an isolate's life, so capturing `env` once is safe. */
+let readinessProvider: (() => Promise<HealthDocument>) | undefined;
+
+/** Build (once per isolate) and evaluate the ingest readiness document. */
+export function ingestReadiness(env: ReadinessEnv): Promise<HealthDocument> {
+  readinessProvider ??= memoized(
+    async () =>
+      healthDocument(
+        await runChecks(ingestReadinessChecks(env), { timeoutMs: READINESS_TIMEOUT_MS }),
+        { time: new Date().toISOString() },
+      ),
+    READINESS_CACHE_MS,
+  );
+  return readinessProvider();
+}
+
+/** Injectable so the router can be tested without a live Postgres or R2. */
+export type ReadinessProvider = (env: ReadinessEnv) => Promise<HealthDocument>;
+
+/**
+ * The wbhk.my router. GET / 302-redirects to the marketing homepage, GET /healthz is the SERVICE
+ * liveness probe and GET /readyz the readiness probe (all three the bare apex, no token); the
+ * /listen WebSocket upgrade is the CLI tunnel; every
  * other request is the ingest write path. handleIngest now accepts ALL standard verbs (accept-all-verbs,
  * ADR-0085) — it captures each (recording the method) and answers a per-token GET/HEAD/OPTIONS with its
  * own browser liveness response, distinct from this bare-apex GET /. Owns per-request DB-client lifecycle:
@@ -771,6 +809,7 @@ export async function handleFetch(
   env: Env,
   ctx: ExecutionContext,
   makeDeps: MakeIngestDeps = buildIngestDeps,
+  readiness: ReadinessProvider = ingestReadiness,
 ): Promise<Response> {
   const url = new URL(request.url);
   // Cleartext refusal (S6a). The ingest token rides in the URL PATH, so a plaintext request has already
@@ -791,6 +830,12 @@ export async function handleFetch(
       status: 200,
       headers: { "content-type": "text/plain; charset=utf-8", ...LIVENESS_HEADERS },
     });
+  }
+  // Readiness, unlike the liveness probe above, DOES touch the ingest dependencies — 200 only when
+  // this apex could actually capture an event. Routed here, before token resolution, for the same
+  // reason /healthz is: ingest tokens are `whep_`-prefixed, so no token can be shadowed by it.
+  if (request.method === "GET" && url.pathname === "/readyz") {
+    return publicReadyz(await readiness(env), LIVENESS_HEADERS);
   }
   if (request.method === "GET" && url.pathname === "/") {
     return new Response(null, {

@@ -12,6 +12,8 @@ import {
   MCP_RESOURCE,
 } from "@webhook-co/db";
 import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
+import { pingDatabase } from "@webhook-co/db/health";
+import { publicReadyz, readinessProvider } from "@webhook-co/shared/health";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { makeIntrospectVerifyBearer } from "./introspect-client";
@@ -41,6 +43,12 @@ import type { McpEnv } from "./env";
 
 const PRM_PATH = "/.well-known/oauth-protected-resource";
 const HEALTH_PATH = "/healthz";
+const READY_PATH = "/readyz";
+
+/** mcp resolves every bearer through webhook_authn, so that binding is its readiness. */
+const mcpReadiness = readinessProvider<McpEnv>((env) => ({
+  authn: () => pingDatabase(env.HYPERDRIVE_AUTHN.connectionString),
+}));
 /** The OAuth issuer for this resource — now auth.webhook.co (the Lane C issuer), NOT the old co-located one. */
 const AUTH_ISSUER = "https://auth.webhook.co";
 
@@ -148,6 +156,10 @@ export default {
     // them the per-request credential deps. Everything else routes through the resource handler.
     if (request.method === "GET" && url.pathname === PRM_PATH) {
       return Response.json(RESOURCE_METADATA);
+    }
+    // Readiness: HEALTH_PATH above is liveness only and touches nothing.
+    if (request.method === "GET" && url.pathname === READY_PATH) {
+      return publicReadyz(await mcpReadiness(env));
     }
     if (request.method === "GET" && url.pathname === HEALTH_PATH) {
       return new Response("mcp ok", {

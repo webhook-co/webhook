@@ -32,6 +32,8 @@ import {
   type SecretSealer,
   SERVICE_NAME,
 } from "@webhook-co/shared";
+import { pingDatabase } from "@webhook-co/db/health";
+import { publicReadyz, readinessProvider } from "@webhook-co/shared/health";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { createRemoteReplayHandler } from "./remote-replay.js";
@@ -304,12 +306,27 @@ async function buildDeps(
   };
 }
 
+/**
+ * api readiness. Both bindings are on the critical path for an authenticated request: webhook_authn
+ * resolves the caller's credential, webhook_app serves the tenant read under RLS. They are checked
+ * SEPARATELY because a rotated password breaks one role while the cluster stays up — a single ping
+ * would report healthy through that.
+ */
+const apiReadiness = readinessProvider<Env>((env) => ({
+  database: () => pingDatabase(env.HYPERDRIVE_TENANT.connectionString),
+  authn: () => pingDatabase(env.HYPERDRIVE_AUTHN.connectionString),
+}));
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     // Public, DB-free routes: served before any tenant deps are built.
     if (request.method === "GET" && url.pathname === PRM_PATH) {
       return Response.json(RESOURCE_METADATA);
+    }
+    // Readiness: unlike GET / above, this proves the api can actually reach its dependencies.
+    if (request.method === "GET" && url.pathname === "/readyz") {
+      return publicReadyz(await apiReadiness(env));
     }
     if (request.method === "GET" && url.pathname === "/") {
       return new Response(`${SERVICE_NAME}:api ok`, {
