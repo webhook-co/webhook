@@ -8,11 +8,18 @@
  *
  * Use this for EVERY dashboard link. A bare `/endpoints` no longer exists — the hard cutover deleted it — so
  * a link that forgets the prefix is a 404, and neither the type checker nor a unit test that only asserts
- * "there is an anchor here" will notice. `slug === ""` (a component rendered outside an org route) yields the
- * bare path, which 404s LOUDLY rather than linking into the wrong org — a broken link beats a wrong one.
+ * "there is an anchor here" will notice.
+ *
+ * `slug === ""` (a component rendered outside an org route) must still never link into a DIFFERENT org — a
+ * broken link beats a wrong one. Returning the BARE path did not honour that, and the comment here used to
+ * claim it did: `(app)/[...legacy]` claims any path whose first segment is in `MOVED_SEGMENTS`, so a bare
+ * `/endpoints/{id}/events/{eventId}` 307s the reader into their DEFAULT org rather than 404ing. Prefixing
+ * `/org` unconditionally puts the path back where only the org routes and the 404 can see it: `org` is not a
+ * moved segment, so the catch-all rejects it, and `/org/endpoints/…` resolves `endpoints` as a slug that is
+ * in nobody's directory — `notFound()`. Pinned by org-url.test.ts against the real MOVED_SEGMENTS set.
  */
 export function orgHref(slug: string, path: string): string {
-  return slug ? `/org/${slug}${path}` : path;
+  return slug ? `/org/${slug}${path}` : `/org${path}`;
 }
 
 /**
