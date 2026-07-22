@@ -9,13 +9,14 @@ GitHub signs each webhook with an HMAC-SHA256 over the raw request body, sent as
 
 ## Get the signing secret
 
-The secret is whatever you typed into **Secret** when you created the webhook — on a repository or org under **Settings → Webhooks**, or via the API. GitHub doesn't show it again after creation, so register the same value you set there.
+The secret is whatever you typed into **Secret** when you created the webhook — on a repository or org under **Settings → Webhooks**, or via the API. GitHub doesn't show it again after creation, so register the same value you set there. Its documented guidance is only that the secret be a random string with high entropy; no length or character set is specified.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$GITHUB_WEBHOOK_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider github
 ```
@@ -37,12 +38,33 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
-## The ping event
+## How the signature is checked
 
-GitHub's first delivery is a `ping` (see the `X-GitHub-Event` header). It's signed exactly like every other event, so once the secret is registered the ping verifies too — a quick way to confirm the secret is right. GitHub signs the body verbatim, so there's no timestamp and no replay window here.
+- **Signed message** — the raw request body, with nothing prepended or appended.
+- **Algorithm** — HMAC-SHA256, hex-encoded.
+- **Key** — the webhook secret used verbatim, as its UTF-8 bytes.
+- **Signature format** — the hex digest behind a required `sha256=` prefix. A value that arrives without the prefix is reported as malformed rather than as a mismatch.
+
+webhook.co checks the SHA-256 header. GitHub also still sends an older `X-Hub-Signature`, an HMAC-SHA1 its documentation describes as retained only for compatibility; that header is not used here.
+
+## The content type changes what is signed
+
+GitHub offers two content types per webhook, and the choice moves the bytes. Under `application/json` the body is the JSON document. Under `application/x-www-form-urlencoded` the same JSON is wrapped as a `payload=` form field, so the signed bytes are the form-encoded string, not the JSON inside it. Its REST API defaults to the form encoding when `content_type` is omitted, so a webhook created programmatically lands there without anyone choosing it. GitHub's own guidance is to use JSON where you have the choice.
+
+## No replay window
+
+GitHub signs the body and nothing else — no timestamp, no nonce, no expiry. A captured body and its signature stay valid until the secret changes, so webhook.co applies no time tolerance to GitHub events; there is no signed timestamp to apply one against. GitHub suggests the `X-GitHub-Delivery` identifier for spotting repeats, noting that a redelivery you request yourself reuses the original value.
+
+<Note>
+  GitHub does not deliver payloads over 25 MB at all, and an ingest URL rejects anything over 1 MiB
+  with `413 payload too large` before it is captured — so a very large delivery is not an event you
+  will find recorded as unverified; it is one that never arrives.
+</Note>
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [GitHub's webhook documentation](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries), checked 2026-07-22.

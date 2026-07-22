@@ -81,6 +81,9 @@ gotchas, which are genuinely per-provider.
 
 ### 4. The dup-guard manifest holds only generated pages
 
+> **Superseded 2026-07-22.** See "Amendment" below. Retained as written because the reasoning was
+> sound for the state it was written in, and the amendment turns on that state having changed.
+
 `scripts/generated/programmatic-pages.json` lists exactly what the generator emits. The guard's
 substance floor applies to every entry, unmodified.
 
@@ -98,6 +101,54 @@ generated too, Calendly collides with it there.
 **A similarity number is evidence only for the comparison it was measured on.** That is the general
 lesson, and it is why this ADR quotes both figures.
 
+### 4a. Amendment (2026-07-22): the manifest holds the whole shipped estate
+
+The exclusion above rested on one condition: the hand-authored pages were below the floor, so carrying
+them would have meant exempting them. That condition is gone. The ten hand-authored provider pages were
+rewritten with provider-specific substance sourced from each provider's own current documentation and
+now clear the floor on their own content, 384–559 words. The exclusion goes with the condition, and no
+threshold moved.
+
+Two things the original decision did not account for:
+
+**The floor applied to exactly the pages that could not fail it.** Scoping the manifest to the
+generator's own output made the gap self-concealing — a guard reporting "all above the substance floor"
+over a set chosen to contain no failures. Seven pages sat below it for the entire life of the guard,
+and §3's own closing consequence recorded them as a known state. The manifest is now enumerated from
+`apps/docs/providers/` on disk, so a page cannot ship without entering it.
+
+**The cross-host check this ADR calls "the only backstop" was never wired.** §1 says there is no
+cross-domain `rel=canonical`, so the duplicate guard is the only thing standing between a docs
+`/providers/{slug}` reference and its www `/test/{slug}` tutorial. The manifest contained zero www
+pages; nine slugs ship on both hosts and not one pair had ever been compared. www now emits its own
+fragment and the guard merges every fragment into one analysis set.
+
+The measured conclusion in §4 stands and is worth keeping straight: hand-vs-generated really is ~0.037
+and really could never fail. That was measured on *generated-vs-hand* and does not transfer to
+*www-vs-docs*, which had never been measured because it had never been run. It is 0.005 today — also
+too low to fire. The honest statement is that the cross-host check is prospective: `tutorials.ts`
+records that templated tutorial prose measures **0.91**, over the reject line, and that number was a
+one-off measurement enforced by nothing. It is now a standing check.
+
+Guard mechanics that follow from the above:
+
+- Fragments are **discovered** as `scripts/generated/*-pages.json` with a floor of two, not declared in
+  a list. A hardcoded list would reproduce this ADR's own defect one level up.
+- Coverage is verified **inside the guard**, in `pnpm lint`, against the shipped estate on disk — the
+  generators' own completeness assertions run in a different gate, and "the builder enumerated
+  correctly" is precisely the assumption that failed.
+- A missing fragment, a fragment below the discovery floor, or a shipped page absent from the manifest
+  all exit 1. Nothing is idle.
+- Hand-authored pages are not drift-pinned to the engine, so their stated algorithm, encoding and
+  signature header are asserted against the registry — the §2 `credentialKind` rule, applied to
+  hand-authored content. The assertion is anchored to the page's `**Algorithm**` bullet and to a
+  word-boundary header match, because these pages legitimately discuss a second encoding in prose and
+  a substring scan would be satisfied by it. It catches registry drift, not prose errors.
+
+Scope remains the provider estate: `apps/docs/providers/` and the www `/test/{slug}` tutorials.
+`docs/recipes/*`, `apps/www/src/app/product/*` and `/verify` are outside it. Adding one later costs a
+fragment emitter and no guard change.
+
 ## Consequences
 
 - Pages cannot lie about cryptography, and cannot silently rot: drift is a test failure.
@@ -107,5 +158,6 @@ lesson, and it is why this ADR quotes both figures.
 - Editing a generated page by hand is a build failure; edit the recipe or the curated block instead.
 - The 150-word floor is a real constraint on what may be generated. If a provider cannot clear it with
   true content, it does not get a page — that is the intended outcome.
-- Seven pre-existing hand-authored provider pages sit below the floor (110–147 words). They are outside
-  this pipeline and unchanged by it; recording the fact here so it is a known state, not a discovery.
+- Seven pre-existing hand-authored provider pages sat below the floor (110–147 words), outside this
+  pipeline and unchanged by it. **Resolved 2026-07-22** (see §4a): rewritten with provider-specific
+  substance, now 384–559 words, and inside the manifest — so the floor applies to them.
