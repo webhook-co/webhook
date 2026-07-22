@@ -117,6 +117,56 @@ export function breadcrumbList(
   };
 }
 
+export interface HowToStepNode {
+  "@type": "HowToStep";
+  position: number;
+  name: string;
+  text: string;
+}
+
+export interface HowToNode {
+  "@type": "HowTo";
+  name: string;
+  description?: string;
+  step: HowToStepNode[];
+}
+
+/**
+ * A HowTo for a genuinely step-structured page — the /test/<provider> tutorials, whose visible content
+ * is a create → point → trigger → replay procedure. Marked up ONLY where the page really is a how-to
+ * (never sitewide): the hub and the verifier tool are not procedures and carry none of this.
+ *
+ * Deliberately shaped as a PROCESS, not a product: no `offers`, no `aggregateRating`, no app-store
+ * fields. That is what keeps it clear of the fabricated-rating trap that keeps `SoftwareApplication`
+ * off this site (see the header note). Google retired the HowTo *rich result* in 2023, so this earns
+ * no SERP feature; it is emitted for answer-engine/LLM readability, and its steps mirror the visible
+ * prose so the markup can never say something the page does not.
+ */
+export function howToNode({
+  name,
+  description,
+  steps,
+}: {
+  name: string;
+  description?: string;
+  steps: ReadonlyArray<{ name: string; text: string }>;
+}): HowToNode {
+  if (steps.length === 0) {
+    throw new Error("howToNode: a HowTo with no steps is not a HowTo");
+  }
+  return {
+    "@type": "HowTo",
+    name,
+    ...(description ? { description } : {}),
+    step: steps.map((s, index) => ({
+      "@type": "HowToStep",
+      position: index + 1,
+      name: s.name,
+      text: s.text,
+    })),
+  };
+}
+
 function jsonLdScript(payload: object) {
   // Escape `<` as its JSON unicode form so a `</script>` sequence can never appear in the emitted
   // text — the one way a JSON-LD `dangerouslySetInnerHTML` block can break out of its <script>.
@@ -145,4 +195,16 @@ export function BreadcrumbJsonLd({
   crumbs: ReadonlyArray<{ name: string; path: string }>;
 }) {
   return jsonLdScript({ "@context": "https://schema.org", ...breadcrumbList(crumbs) });
+}
+
+/**
+ * A standalone HowTo script for a tutorial page. Emitted as its own `<script>`, alongside (not merged
+ * with) the breadcrumb, so each machine-readable claim stands on its own.
+ */
+export function HowToJsonLd(props: {
+  name: string;
+  description?: string;
+  steps: ReadonlyArray<{ name: string; text: string }>;
+}) {
+  return jsonLdScript({ "@context": "https://schema.org", ...howToNode(props) });
 }
