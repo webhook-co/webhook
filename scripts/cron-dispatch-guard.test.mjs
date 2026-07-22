@@ -114,3 +114,21 @@ test("MUTATION: an unregistered NEW cron is reported (cron #16 nobody added to t
     `expected an unexpected-cron violation, got: ${JSON.stringify(violations)}`,
   );
 });
+
+test("an UNRELATED early return above the crons is not mistaken for the cadence gate", () => {
+  // The gate is specifically `if (!plan.runsHourly) return;`. A guard that matched ANY bare `if (x)
+  // return;` would treat a new unrelated early return as the boundary and classify every cron below it
+  // as hourly-only — including the cap producer, which would then be reported as misplaced. That is a
+  // FALSE FAILURE, and a guard that cries wolf gets deleted.
+  const src = realSource();
+  const anchor = "    const plan = scheduledCronPlan(controller.cron);";
+  assert.ok(src.includes(anchor), "plan statement not found");
+  const mutated = src.replace(anchor, `${anchor}\n    if (!env.KV_CONFIG) return;`);
+
+  const found = analyseScheduledDispatch(mutated);
+  assert.notEqual(found, null);
+  // The cap producer must STILL be classified as cap-tick, not swept below the boundary.
+  assert.deepEqual([...found.capTick].sort(), [...CAP_TICK_CRONS].sort());
+  assert.deepEqual([...found.hourlyOnly].sort(), [...HOURLY_ONLY_CRONS].sort());
+  assert.deepEqual(dispatchViolations(found), []);
+});

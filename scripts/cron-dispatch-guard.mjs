@@ -60,7 +60,31 @@ function isWaitUntilCall(node) {
   );
 }
 
-/** `if (!plan.runsHourly) return;` — an if whose then-branch is a bare `return;`. */
+/** The CronPlan flag whose early return separates the every-tick crons from the hourly-only ones. */
+const CADENCE_GATE_FLAG = "runsHourly";
+
+/** Whether an expression mentions `…runsHourly` anywhere within it. */
+function mentionsCadenceFlag(node) {
+  if (ts.isPropertyAccessExpression(node) && node.name.text === CADENCE_GATE_FLAG) return true;
+  if (ts.isIdentifier(node) && node.text === CADENCE_GATE_FLAG) return true;
+  let found = false;
+  ts.forEachChild(node, (child) => {
+    if (!found && mentionsCadenceFlag(child)) found = true;
+  });
+  return found;
+}
+
+/**
+ * `if (!plan.runsHourly) return;` — an if whose then-branch is a bare `return;` AND whose condition
+ * actually tests the cadence flag.
+ *
+ * The condition check is load-bearing, not belt-and-braces. Matching ANY bare `if (x) return;` would
+ * mean an unrelated early return added above the fan-out (a new binding guard, say) became the boundary,
+ * sweeping the cap producer below it and reporting a misplacement that isn't real. A guard that raises
+ * false failures gets ignored and then deleted, so it must key on the specific gate it cares about.
+ * If the flag is ever renamed no gate is found, `analyseScheduledDispatch` returns null, and the guard
+ * fails CLOSED — which is the right outcome: renaming the cadence flag should require a look here.
+ */
 function isEarlyReturn(stmt) {
   if (!ts.isIfStatement(stmt) || stmt.elseStatement) return false;
   const then = stmt.thenStatement;
@@ -69,7 +93,9 @@ function isEarlyReturn(stmt) {
       ? then.statements[0]
       : null
     : then;
-  return inner !== null && ts.isReturnStatement(inner) && inner.expression === undefined;
+  if (inner === null || !ts.isReturnStatement(inner) || inner.expression !== undefined)
+    return false;
+  return mentionsCadenceFlag(stmt.expression);
 }
 
 /** Descend a `runX(env).catch(...)` chain and report the cron identifier plus whether a catch is attached. */
