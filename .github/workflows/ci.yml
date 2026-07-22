@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
 
   go-sdk-spec-sync:
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The Go SDK lives in a separate repo, so its route-coverage ratchet validates against a VENDORED copy
       # of this spec (webhook-go testdata/openapi.json). A derived artifact whose guard is not triggered by
       # its SOURCE rots silently — exactly how the Python SDK's generated models fell 12 schemas behind
@@ -58,7 +58,7 @@ jobs:
     timeout-minutes: 20
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       # The unit suite imports from src/. That proves the CODE works and NOTHING about what users install:
       # a broken `exports` map, a file missing from `files:`, or a bad `types` path all ship green because no
@@ -73,7 +73,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       # CLIENT_LATEST (packages/shared/src/client-advisory.ts) is what the API compares a client's
       # User-Agent against to decide whether to advise an update. It is a DERIVED fact — the truth lives in
@@ -90,7 +90,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       # `wbhk` ships via npm AND Homebrew, and they can silently diverge: release-cli publishes npm
       # immediately but leaves the GitHub release as a DRAFT (a deliberate human gate), while homebrew-bump
@@ -105,7 +105,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm lint
 
@@ -115,7 +115,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm format:check
 
@@ -125,7 +125,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm typecheck
 
@@ -135,7 +135,7 @@ jobs:
     timeout-minutes: 30
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       # Coverage thresholds are enforced inside the Vitest config (see packages/shared).
       - run: pnpm test
@@ -166,7 +166,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Install dbmate
         env:
@@ -200,7 +200,7 @@ jobs:
     timeout-minutes: 20
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm build
 
@@ -216,7 +216,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       # Version-pinned, NOT SHA-pinned (unlike the dbmate install above): bun's official installer
       # fetches the version-tagged release, and we don't carry a per-platform archive hash. Deliberate
@@ -278,7 +278,7 @@ jobs:
     timeout-minutes: 20
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm exec turbo run build --filter=@webhook-co/auth
       - run: pnpm -C apps/auth deploy:dry
@@ -293,7 +293,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       # Unit-test the pure gate helpers (dead-link regex, SEO head rules, sitemap parsing) against
       # fixtures BEFORE the build — a fast fail if the gate logic itself regressed. These node:test
@@ -349,7 +349,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - name: Install dbmate
         env:
@@ -373,7 +373,7 @@ jobs:
     timeout-minutes: 30
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm --filter @webhook-co/www build
       - run: pnpm --filter @webhook-co/www exec playwright install --with-deps chromium
@@ -389,7 +389,7 @@ jobs:
     timeout-minutes: 30
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm --filter @webhook-co/www build
       - run: pnpm --filter @webhook-co/www test:lighthouse
@@ -400,7 +400,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm run no-skipped-tests
 
@@ -413,7 +413,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm run tsconfig-boundary
 
@@ -427,7 +427,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: pnpm run dal-gate-guard
 
@@ -440,7 +440,7 @@ jobs:
     timeout-minutes: 15
     needs: install
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       # npm RETIRED the legacy quick-audit endpoint `pnpm audit` posts to
       # (`/-/npm/v1/security/audits` → HTTP 410), so `pnpm audit` fails every run regardless of
