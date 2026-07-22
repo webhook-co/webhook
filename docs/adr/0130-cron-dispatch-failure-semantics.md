@@ -8,11 +8,15 @@
 
 ## Context
 
-Three Workers declare `triggers.crons`: `apps/engine` (15 crons across two triggers), `apps/api` (2) and
-`apps/auth` (2). Each fans its jobs out from `scheduled()` via `ctx.waitUntil`. Repo-wide, **no test
-invoked any worker's `scheduled()` handler** — only the engine's pure routing helper `scheduledCronPlan`
-was covered. Deleting a `ctx.waitUntil(...)` block failed no test: the cron would simply stop running in
-production, permanently, with no error to alert on.
+Four Workers declare `triggers.crons`: `apps/engine` (15 crons across two triggers), `apps/api` (2),
+`apps/auth` (2) and `apps/health` (1). Each fans its jobs out from `scheduled()` via `ctx.waitUntil`.
+Repo-wide, **no test invoked any worker's `scheduled()` handler** — only the engine's pure routing helper
+`scheduledCronPlan` was covered. Deleting a `ctx.waitUntil(...)` block failed no test: the cron would simply
+stop running in production, permanently, with no error to alert on.
+
+`apps/health` is worth calling out: it landed mid-lane, with the same gap. That is the argument for a guard
+rather than a one-off fix — the defect class reappears on its own, and this Worker exists to notice when
+other things stop, so a silently dead canary reports nothing wrong forever, which reads exactly like health.
 
 While closing that gap we had to settle what the dispatch code actually guarantees. Two claims were
 embedded in comments across all three apps, and only one of them turned out to be true.

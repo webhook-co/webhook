@@ -447,6 +447,9 @@ export function dispatchViolations(analysis, expected = ENGINE_CRONS, label = "a
 export const EXPECTED_TRIGGERS = {
   "apps/api/wrangler.jsonc": ["0 * * * *"],
   "apps/auth/wrangler.jsonc": ["0 * * * *"],
+  // apps/health's canary correlates the PREVIOUS tick's nonce, so the interval is the canary's
+  // detection latency. Retuning it silently changes how long a broken pipeline goes unnoticed.
+  "apps/health/wrangler.jsonc": ["*/5 * * * *"],
 };
 
 /**
