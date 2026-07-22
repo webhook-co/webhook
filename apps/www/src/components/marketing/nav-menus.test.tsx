@@ -69,13 +69,19 @@ describe("NavMenus", () => {
   // The Resources menu is the fix for a measured problem: the sixteen /test/<slug> tutorials shipped
   // with ZERO inbound internal links, and /play had exactly one (the homepage hero). Pinning the exact
   // hrefs means a rename that quietly drops one turns this red.
-  it("puts the three usable tools behind Resources, on www", () => {
+  //
+  // The comparison hub joined the same menu rather than taking a third top-level dropdown. Resources
+  // is already "what you can use to evaluate us without an account", which is precisely what a
+  // comparison page is for; a top-level "Compare" would announce to every first-time visitor that we
+  // define ourselves against other products, on every page view, to serve readers who arrive from a
+  // search engine already mid-evaluation. It links the HUB — `/vs`, never `/vs/<slug>`.
+  it("puts the four evaluation surfaces behind Resources, on www", () => {
     render(<NavMenus />);
     const panel = document.getElementById("navmenu-resources") as HTMLElement;
     const hrefs = within(panel)
       .getAllByRole("link", { hidden: true })
       .map((a) => a.getAttribute("href"));
-    expect(hrefs).toEqual(["/verify", "/test", "/play"]);
+    expect(hrefs).toEqual(["/verify", "/test", "/play", "/vs"]);
   });
 
   it("opens Resources on click and reveals the tutorial hub", async () => {

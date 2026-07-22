@@ -6,7 +6,8 @@
       "url": [
         "http://127.0.0.1:4321/",
         "http://127.0.0.1:4321/verify",
-        "http://127.0.0.1:4321/test/stripe"
+        "http://127.0.0.1:4321/test/stripe",
+        "http://127.0.0.1:4321/vs/ngrok"
       ],
       "numberOfRuns": 5
     },
