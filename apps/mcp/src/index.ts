@@ -45,10 +45,18 @@ const PRM_PATH = "/.well-known/oauth-protected-resource";
 const HEALTH_PATH = "/healthz";
 const READY_PATH = "/readyz";
 
-/** mcp resolves every bearer through webhook_authn, so that binding is its readiness. */
-const mcpReadiness = readinessProvider<McpEnv>((env) => ({
-  authn: () => pingDatabase(env.HYPERDRIVE_AUTHN.connectionString),
-}));
+/**
+ * mcp resolves every bearer through webhook_authn, so that binding is its readiness.
+ * Exported with an injectable ping so the binding selection is asserted, not assumed.
+ */
+export function mcpReadinessChecks(
+  env: Pick<McpEnv, "HYPERDRIVE_AUTHN">,
+  ping: (dsn: string) => Promise<void> = pingDatabase,
+) {
+  return { authn: () => ping(env.HYPERDRIVE_AUTHN.connectionString) };
+}
+
+const mcpReadiness = readinessProvider<McpEnv>((env) => mcpReadinessChecks(env));
 /** The OAuth issuer for this resource — now auth.webhook.co (the Lane C issuer), NOT the old co-located one. */
 const AUTH_ISSUER = "https://auth.webhook.co";
 

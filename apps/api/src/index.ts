@@ -311,11 +311,20 @@ async function buildDeps(
  * resolves the caller's credential, webhook_app serves the tenant read under RLS. They are checked
  * SEPARATELY because a rotated password breaks one role while the cluster stays up — a single ping
  * would report healthy through that.
+ *
+ * Exported (with injectable ping) so the binding SELECTION is asserted by tests rather than assumed.
  */
-const apiReadiness = readinessProvider<Env>((env) => ({
-  database: () => pingDatabase(env.HYPERDRIVE_TENANT.connectionString),
-  authn: () => pingDatabase(env.HYPERDRIVE_AUTHN.connectionString),
-}));
+export function apiReadinessChecks(
+  env: Pick<Env, "HYPERDRIVE_TENANT" | "HYPERDRIVE_AUTHN">,
+  ping: (dsn: string) => Promise<void> = pingDatabase,
+) {
+  return {
+    database: () => ping(env.HYPERDRIVE_TENANT.connectionString),
+    authn: () => ping(env.HYPERDRIVE_AUTHN.connectionString),
+  };
+}
+
+const apiReadiness = readinessProvider<Env>((env) => apiReadinessChecks(env));
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
