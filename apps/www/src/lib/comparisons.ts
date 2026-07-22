@@ -10,10 +10,10 @@
 // ── Why every page is shaped differently ─────────────────────────────────────────────────────────
 // A comparison page has a more rigid rhetorical skeleton than a tutorial (positioning → concessions →
 // differences → migration), so structural overlap is HIGHER by default and the templated-estate
-// failure mode is closer, not further away. The measured reference points: an estate written to one
-// template scores ~0.5 pairwise 6-gram Jaccard between siblings; a genuinely per-competitor estate
-// scores ~0.2. `comparisons.test.ts` holds this estate to a threshold far below the shared guard's
-// 0.8 reject line, because 0.8 would wave a template straight through.
+// failure mode is closer, not further away. `comparisons.test.ts` therefore holds this estate to a
+// threshold far below the shared guard's 0.8 reject line, because 0.8 would wave a template straight
+// through — see that file for the reuse measurements the threshold is derived from. (The guard
+// shingles on 5-grams, `SHINGLE_K` in `scripts/content-dup-guard.mjs`.)
 //
 // The mechanism that produces the distinctness is NOT prose variation. It is that each page has a
 // different `sections` list, derived from what THAT comparison actually turns on:
@@ -21,6 +21,7 @@
 //   • webhook.site — it is a bin, not a system of record. The page turns on the clock and on who can read it.
 //   • Hookdeck     — the closest competitor, and more mature than us. The page turns on how many
 //                    numbers are in the bill, and concedes more than it claims.
+//   • RequestBin   — the tool people remember does not exist any more. The page turns on its history.
 // If two pages ever share a section list, they are one page with the noun swapped and should not ship.
 //
 // ── The accuracy bar ─────────────────────────────────────────────────────────────────────────────
@@ -57,7 +58,17 @@ export interface ComparisonRow {
 }
 
 export interface ComparisonSection {
-  /** Unique within the page — it becomes an `id`, and `check-anchors.mjs` makes ids a contract. */
+  /** Unique within the page — it becomes a DOM `id`, and `check-anchors.mjs` makes ids a contract. */
+  readonly id: string;
+  readonly heading: string;
+  readonly body: string;
+}
+
+/**
+ * A migration step. Structurally identical to a section, but its `id` is a React key ONLY — it never
+ * reaches the DOM, so it carries none of the anchor-contract weight `ComparisonSection.id` does.
+ */
+export interface MigrationStep {
   readonly id: string;
   readonly heading: string;
   readonly body: string;
@@ -88,10 +99,24 @@ export interface Comparison {
   readonly chooseThem: { readonly heading: string; readonly body: string };
   readonly chooseUs: { readonly heading: string; readonly body: string };
   readonly table: readonly ComparisonRow[];
-  readonly migration: readonly ComparisonSection[];
+  readonly migration: readonly MigrationStep[];
   readonly faq: readonly FaqItem[];
   readonly sources: readonly ComparisonSource[];
 }
+
+/**
+ * Marketing claims this estate may never publish, about anyone.
+ *
+ * DELIBERATELY PARTIAL. The certification, identity, SLA and guarantee claims are NOT listed here —
+ * they live in `scripts/no-unverified-claims.mjs`'s `CLAIM_RULES`, which is the real gate, runs over
+ * this whole directory in `pnpm lint`, and which the tests import directly rather than paraphrase.
+ * Restating those terms here would be worse than duplication: the guard scans this file, so writing
+ * "SOC 2" or "SAML" into it — even inside a regex that exists to forbid them — fails the build. It
+ * did, which is how this comment came to be written.
+ *
+ * What remains are the estate-specific ones the guard has no opinion about, all of them safe to name.
+ */
+export const FORBIDDEN_CLAIMS = /trusted by|free, permanent|zero-knowledge|\bunlimited\b/i;
 
 const CHECKED = "2026-07-22";
 
@@ -107,7 +132,7 @@ export const COMPARISONS: readonly Comparison[] = [
     lede: "ngrok is a gateway. We are a queue with an inspector attached. That one sentence decides almost every case, and most of the internet's advice about ngrok is several years out of date.",
     verifiedOn: CHECKED,
     whyLeave:
-      "Almost nobody arrives here because ngrok is bad at its job. They arrive because a provider retried a webhook at 03:00, the laptop was shut, and the event is simply gone — there is no queue behind the tunnel to have caught it. The second most common reason is quieter: someone went looking for the payload of a request from last Tuesday and found that the inspector only keeps a day of traffic on the free plan, and only metadata unless somebody had already turned on full capture.",
+      "If you are here, it is probably not because ngrok is bad at its job. The failure that sends people looking is the one where a provider retries a webhook at 03:00, the laptop is shut, and the event is simply gone — there is no queue behind the tunnel to have caught it. There is a quieter version too: going back for the payload of a request from last Tuesday and finding that the free plan keeps a day of traffic, and only metadata unless somebody had already turned on full capture.",
     distinctive:
       "The question that separates these two tools is not speed, price, or URL stability. It is what happens to an event when the thing meant to receive it is not there. ngrok answers that question honestly and in its own error catalogue: when the agent serving an endpoint is not running, the request fails with ERR_NGROK_3200 and the provider sees a failed delivery. There is no buffer to drain when you come back. That is not an oversight — a gateway's job is to route what is happening now, and ngrok's entire traffic-policy action catalogue is built for inspection, authentication and transformation at the edge, with nothing in it that stores an event for later. We do the other job: accept the request, store it, and let you replay it into a handler you are still writing, days later.",
     sections: [
@@ -119,17 +144,17 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         id: "when-you-are-offline",
         heading: "What each tool does when your service is down",
-        body: "Point a provider at an ngrok endpoint and stop the agent. The next delivery gets an endpoint-offline error, the provider marks it failed, and whether you ever see that event again depends entirely on that provider's own retry policy — some retry for days, some retry three times, some never. ngrok's documented remedies for downtime are a maintenance page or endpoint pooling: serve something else, rather than hold the event. Point a provider at us and stop your handler. The request is still accepted and stored, and you replay it when you are ready. Our outbound side retries eight times over roughly twenty-eight hours with jitter before dead-lettering, so a destination that is down for an afternoon does not lose anything.",
+        body: "Point a provider at an ngrok endpoint and stop the agent. The next delivery gets an endpoint-offline error, the provider marks it failed, and whether you ever see that event again depends entirely on that provider's own retry policy — some retry for days, some retry three times, some never. ngrok's documented remedies are to start the agent, pin a URL, enable endpoint pooling or check the dashboard — recover the connection, rather than recover the traffic that arrived without one. Point a provider at us and stop your handler. The request is still accepted and stored, and you replay it when you are ready. Our outbound side retries eight times over roughly twenty-eight hours with jitter before dead-lettering, so a destination that is down for an afternoon does not lose anything.",
       },
       {
         id: "the-inspector",
         heading: "Inspection, retention, and the 10 KB line",
-        body: "Both tools let you look at a request and send it again, and the differences are in the defaults. ngrok's cloud inspector keeps traffic for 24 hours on Free and 72 hours on its paid self-serve plans, and by default stores only metadata about each request — headers and bodies require turning on Full Capture for the whole account, which their own docs warn also exposes that data to everyone on your team. Once on, capture truncates at 10 KB, and a truncated request cannot be replayed at all. That last detail matters more than it sounds: a Shopify order payload or a fat Stripe invoice can cross 10 KB without trying. We store the whole body by default and keep it for the retention window on your plan, because inspecting the payload is the product rather than a mode you switch on.",
+        body: "Both tools let you look at a request and send it again, and the differences are in the defaults. ngrok's cloud inspector keeps traffic for 24 hours on Free and 72 hours on its paid self-serve plans, and pay-as-you-go customers can buy an add-on extending that to 90 days — which matches our longest published window, so the ceiling is a tie rather than the gap the free tiers suggest. By default it stores only metadata about each request — headers and bodies require turning on Full Capture for the whole account, which their own docs warn also exposes that data to everyone on your team. Once on, capture truncates at 10 KB, and a truncated request cannot be replayed at all. That last detail matters more than it sounds: a Shopify order payload or a fat Stripe invoice can cross 10 KB without trying. We store the whole body by default and keep it for the retention window on your plan, because inspecting the payload is the product rather than a mode you switch on. Our limit is a different shape and worth stating plainly: we accept bodies up to 1 MiB and reject anything larger with a 413, so where ngrok would truncate a very large payload and still deliver it, we refuse it outright. Above 1 MiB their behaviour is better than ours.",
       },
       {
         id: "verification-coverage",
         heading: "Signature verification, and how far the lists go",
-        body: "This is a real comparison rather than a walkover. ngrok verifies at its edge, which is genuinely better placement than verifying in your own process — bad signatures never reach your compute. Their supported-provider table listed 69 entries when we counted it, and their docs describe it as 70-plus. Our registry covers 141 providers and is Apache-2.0, so you can read exactly how each one is verified rather than trusting that it is. The gap is the long tail: PayPal, Adyen, Salesforce, Discord, Vercel and Notion were all absent from ngrok's list on the date we checked. If your provider is on both lists, this row is a tie and you should decide on something else.",
+        body: "This is a real comparison rather than a walkover. ngrok verifies at its edge, which is genuinely better placement than verifying in your own process — bad signatures never reach your compute. Their supported-provider table listed 69 entries when we counted it on the date below. Our registry covers 141 providers and is Apache-2.0, so you can read exactly how each one is verified rather than trusting that it is. The gap is the long tail: PayPal, Adyen, Salesforce, Discord, Vercel and Notion were all absent from ngrok's list on the date we checked. If your provider is on both lists, this row is a tie and you should decide on something else.",
       },
     ],
     chooseThem: {
@@ -155,13 +180,13 @@ export const COMPARISONS: readonly Comparison[] = [
       },
       {
         label: "Capture size limit",
-        them: "10 KB, and a truncated request cannot be replayed",
-        us: "No 10 KB truncation",
+        them: "10 KB stored, and a truncated request cannot be replayed",
+        us: "1 MiB, and a larger request is rejected with a 413",
         sourceId: "ngrok-inspect",
       },
       {
         label: "Inspection retention",
-        them: "24 hours free, 72 hours on paid self-serve",
+        them: "24 hours free, 72 hours paid; up to 90 days purchasable on pay-as-you-go",
         us: "7 days Free, 30 Pro, 90 Scale",
         sourceId: "ngrok-inspect",
       },
@@ -176,6 +201,12 @@ export const COMPARISONS: readonly Comparison[] = [
         them: "20,000 HTTP requests/month, 500 webhook verifications/month",
         us: "5,000 captured events, once, then capture pauses",
         sourceId: "ngrok-limits",
+      },
+      {
+        label: "Stable URL on the free plan",
+        them: "Yes — an assigned dev domain that cannot be changed",
+        us: "Yes — a permanent ingest URL",
+        sourceId: "ngrok-domains",
       },
       {
         label: "Licence of the receiving path",
@@ -216,7 +247,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         question: "Can ngrok verify a Stripe or GitHub webhook signature?",
         answer:
-          "Yes. ngrok has a verify-webhook traffic-policy action that validates signatures at its edge, with timestamp tolerance for replay protection, and returns 403 when verification fails. Their supported-provider table listed 69 entries when we checked it on 22 July 2026.",
+          "Yes. ngrok has a verify-webhook traffic-policy action that validates signatures at its edge, with timestamp tolerance for replay protection, and returns 403 when verification fails. Their supported-provider table listed 69 entries when we counted its rows on 22 July 2026.",
       },
       {
         question: "What happens to a webhook if ngrok is running but my app is not?",
@@ -226,7 +257,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         question: "Is the ngrok free plan enough for webhook development?",
         answer:
-          "For occasional debugging, comfortably. Its published free limits are 20,000 HTTP requests and 500 webhook verifications a month, one user, and 24 hours of traffic retention. The constraint people hit first is usually the retention rather than the request count.",
+          "For occasional debugging, comfortably. Its published free-plan limits include 20,000 HTTP requests and 500 webhook verifications a month, one user, 1 GB of data transfer and 10,000 logged events. Traffic retention on that plan is 24 hours, which is documented separately on their traffic-inspection page.",
       },
     ],
     sources: [
@@ -281,12 +312,12 @@ export const COMPARISONS: readonly Comparison[] = [
     name: "webhook.site",
     title: "webhook.site alternative",
     description:
-      "webhook.site is the fastest way to see a request. Its free captures are deleted after seven days, and readable by anyone with the link. Checked July 2026.",
+      "webhook.site is the fastest way to see a request. Free captures last seven days and anyone with the link can read them. Checked July 2026.",
     h1: "webhook.co vs webhook.site",
     lede: "webhook.site gives you a URL before you have finished deciding you need one. That is a genuinely excellent property, and it is bought by treating captures as disposable — which is fine right up until the moment they are not.",
     verifiedOn: CHECKED,
     whyLeave:
-      "The usual trigger is a Monday. Something broke over the weekend, you go back to the URL you were debugging with, and the free tier has already deleted it — the data and the URL both, on a seven-day clock that starts whether or not you are watching. The second trigger is a security review, when someone notices that a free capture has no login in front of it and that anything a provider sent, including whatever was in those payloads, has been readable by anyone holding the URL's id.",
+      "The version of this that stings is a Monday. Something broke over the weekend, you go back to the URL you were debugging with, and the free tier has already deleted it — the data and the URL both, on a seven-day clock that runs whether or not you are watching. The other one is a security review, where someone notices that a free capture has no login in front of it, and that anything a provider sent — including whatever was in those payloads — has been readable by anyone holding the URL's id.",
     distinctive:
       "These two tools disagree about what a captured request is. webhook.site treats it as something you are looking at right now — a bin, brilliantly executed, with an automation engine bolted on that is genuinely more capable than ours. We treat it as a record: something with an owner, a retention window, an audit trail, and an expectation that you will come back to it. Neither view is wrong, and the free tiers make the difference concrete rather than philosophical. Theirs deletes the URL and its data after seven days and puts no login in front of it. Ours is private by default, keeps captures for seven days on the free tier and longer on paid plans, and never hands the endpoint to whoever guesses the id.",
     sections: [
@@ -333,8 +364,8 @@ export const COMPARISONS: readonly Comparison[] = [
         sourceId: "whs-faq",
       },
       {
-        label: "Longest retention on a published plan",
-        them: "365 days maximum, latest 10,000 requests on Pro",
+        label: "Longest retention on a paid plan",
+        them: "365 days maximum, and the latest 10,000 requests on Pro (100,000 on Enterprise)",
         us: "90 days on Scale; longer is negotiated",
         sourceId: "whs-plans",
       },
@@ -447,7 +478,7 @@ export const COMPARISONS: readonly Comparison[] = [
     lede: "This is the comparison where we concede the most, because Hookdeck is doing the same job, has been doing it for years, and does several parts of it better than we do today.",
     verifiedOn: CHECKED,
     whyLeave:
-      "The reason people go looking is almost always the invoice, and specifically its shape rather than its size. Hookdeck's Event Gateway meters delivered events, but it also meters throughput as a separate purchase — the default ceiling is five events per second per destination — and it meters discarded requests, which are the requests your own filters threw away. Both paid tiers are advertised as starting at a price rather than being one. The second reason is quieter and only affects some teams: the read-only role and the directory-sync features start at the four-hundred-and-ninety-nine-dollar tier.",
+      "When people go looking, it tends to be the invoice — and specifically its shape rather than its size. Hookdeck's Event Gateway meters delivered events, but it also meters throughput as a separate purchase — the default ceiling is five events per second per destination — and it meters discarded requests, which are the requests your own filters threw away. Both paid tiers are advertised as starting at a price rather than being one. The second reason is quieter and only affects some teams: the read-only role and the directory-sync features start at the four-hundred-and-ninety-nine-dollar tier.",
     distinctive:
       "The interesting difference here is not a feature, it is how many numbers you need to predict a bill. Hookdeck's Event Gateway prices on a plan fee, a tiered rate for delivered events, a separately purchased throughput ceiling in events per second per destination, a metered charge for discarded requests beyond an included allowance, a retention window fixed by tier, and a static-IP add-on. Every one of those is a defensible engineering decision and several are genuinely fairer than a flat rate at scale. But six dials is six things to model before you know what next month costs. We meter one thing — captured events — and when a free organization runs out, capture pauses rather than billing you. That is a deliberate constraint on us as much as a feature for you: it means we cannot invent a second meter later without breaking our own rule.",
     sections: [
@@ -469,7 +500,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         id: "agents",
         heading: "What an agent is allowed to do",
-        body: "Both of us have shipped MCP servers, and they are scoped very differently. Hookdeck's runs locally over stdio through their CLI and is read-only by design: their documentation is explicit that it exposes no tools to create or update sources, destinations, connections or transformations, and that retrying an event is not available through it. Ours is a remote server with OAuth, and agents can act — create endpoints, read events, wait on triggers. We deliberately withhold some of that too: delivery destinations and payload bodies are not exposed over MCP, because an agent that can redirect where your events go is a confused-deputy problem. The difference is a genuine philosophical split about how much authority an agent should hold, not a feature gap, and reasonable people land on their side of it.",
+        body: "Both of us have shipped MCP servers, and they are scoped very differently. Hookdeck's runs locally over stdio through their CLI, and the MCP server itself is read-only by design: their documentation is explicit that it exposes no tools to create or update sources, destinations, connections or transformations, and that retrying an event is not available through it. That is not the whole picture, and their own page says so — writes are routed through their published Agent Skills instead, so a Hookdeck agent can create and change things, just not through the MCP surface. Ours is a remote server with OAuth where the writes live in the MCP itself, and that includes destructive ones: an agent holding our token can delete an endpoint, delete captured events and rotate an ingest URL. We withhold delivery destinations and payload bodies deliberately, because an agent that can redirect where your events go is a confused-deputy problem — but we should be straight that our surface is the more powerful and therefore the more dangerous of the two, and that theirs is a defensible way to draw the line.",
       },
     ],
     chooseThem: {
@@ -519,8 +550,8 @@ export const COMPARISONS: readonly Comparison[] = [
       },
       {
         label: "MCP server scope",
-        them: "Local stdio, read-only — no create, update or retry",
-        us: "Remote with OAuth; agents can act",
+        them: "Local stdio; the MCP itself is read-only, writes go through their Agent Skills",
+        us: "Remote with OAuth; the MCP itself writes, including destructive tools",
         sourceId: "hd-mcp",
       },
       {
@@ -534,6 +565,24 @@ export const COMPARISONS: readonly Comparison[] = [
         them: "Yes",
         us: "No",
         sourceId: "hd-status",
+      },
+      {
+        label: "Payload transformations and filtering",
+        them: "JavaScript transformations and filters, on every tier",
+        us: "Neither",
+        sourceId: "hd-sources",
+      },
+      {
+        label: "Maximum inbound payload",
+        them: "10 MiB",
+        us: "1 MiB",
+        sourceId: "hd-sources",
+      },
+      {
+        label: "Delivery to queues and brokers",
+        them: "Yes, through their outbound product",
+        us: "HTTP destinations only",
+        sourceId: "hd-outpost",
       },
     ],
     migration: [
@@ -584,7 +633,13 @@ export const COMPARISONS: readonly Comparison[] = [
       },
       {
         id: "hd-openapi",
-        label: "Hookdeck docs — sources and verification",
+        label: "Hookdeck public OpenAPI specification (verification configs)",
+        url: "https://api.hookdeck.com/2025-07-01/openapi",
+        checked: CHECKED,
+      },
+      {
+        id: "hd-sources",
+        label: "Hookdeck docs — source types",
         url: "https://hookdeck.com/docs/sources",
         checked: CHECKED,
       },
@@ -625,7 +680,7 @@ export const COMPARISONS: readonly Comparison[] = [
     lede: "RequestBin is the tool a lot of us learned webhooks on. The thing at that name today is a different product with a different deal, and the difference is worth knowing before you send it anything.",
     verifiedOn: CHECKED,
     whyLeave:
-      "Most people land here after typing a URL from memory. You go to requestb.in, expect a bin, and get a signup form instead. Nothing is broken — the redirect works exactly as intended — but the property that made RequestBin worth remembering, that you could get a URL without an account or a decision, is not part of the deal any more.",
+      "There is a good chance you got here by typing a URL from memory. You go to requestb.in, expect a bin, and get a signup form instead. Nothing is broken — the redirect works exactly as intended — but the property that made RequestBin worth remembering, that you could get a URL without an account or a decision, is not part of the deal any more.",
     distinctive:
       "This comparison is mostly a history lesson, because the honest answer to which is better depends on which RequestBin you mean. The original was Jeff Lindsay's HTTP inspector; Runscope took over the project and the hosted instance in August 2013, promising then to keep it free and to continue offering it without any registration requirements. That hosted instance was discontinued in March 2018 — Runscope said publicly it was because of ongoing abuse that made the site hard to keep up reliably — and the open-source repository is no longer on GitHub. Today both requestbin.com and the original requestb.in redirect to Pipedream, where RequestBin is the front door to a workflow platform and creating a bin requires an account. That is a perfectly reasonable product. It is not the one the muscle memory is for.",
     sections: [
@@ -795,8 +850,11 @@ export function comparisonPath(slug: string): string {
  */
 export function relatedComparisons(slug: string): readonly Comparison[] {
   const start = COMPARISONS.findIndex((c) => c.slug === slug);
-  const candidates = start === -1 ? COMPARISONS.length : COMPARISONS.length - 1;
-  const count = Math.min(RELATED_COUNT, Math.max(candidates, 0));
+  // Callers always pass a published slug (the pages are generated from COMPARISONS), so an unknown
+  // slug is a programming error rather than a runtime case to paper over with a plausible-looking
+  // list of siblings.
+  if (start === -1) throw new Error(`relatedComparisons: unknown comparison slug "${slug}"`);
+  const count = Math.min(RELATED_COUNT, Math.max(COMPARISONS.length - 1, 0));
   return Array.from(
     { length: count },
     (_, i) => COMPARISONS[(start + 1 + i) % COMPARISONS.length]!,

@@ -25,7 +25,10 @@ describe("nav-links: the comparison estate", () => {
     expect(LINKS.comparisons).toBe("/vs");
   });
 
-  it("never enumerates an individual comparison in the navigation", () => {
+  // Scoped to the NAV, and the name says so. The footer is a different surface with a different,
+  // deliberate rule (hub + a capped, derived top three — see `LINKS.comparisons`), and `footer.test.tsx`
+  // is what holds that one. A test named for the navigation must not be read as covering the footer.
+  it("never enumerates an individual comparison in the nav menus", () => {
     const deeper = ALL_NAV_DESTINATIONS.filter((l) => l.href.startsWith("/vs/"));
     expect(deeper, "the nav must link the /vs hub, never its members").toEqual([]);
   });

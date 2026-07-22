@@ -1,8 +1,12 @@
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// @ts-expect-error -- plain-JS guard module; the tests use the SAME rules `pnpm lint` runs, rather
+// than a paraphrase of them that drifts the moment the real list moves.
+import { CLAIM_RULES } from "../../../../../scripts/no-unverified-claims.mjs";
+
 import { axeComponent } from "@/test/axe";
-import { COMPARISONS, comparisonPath } from "@/lib/comparisons";
+import { COMPARISONS, comparisonPath, FORBIDDEN_CLAIMS } from "@/lib/comparisons";
 import { MARKETING_ROUTES } from "@/lib/routes";
 import { installIntersectionObserverMock, mockMatchMedia } from "@/lib/test-utils";
 
@@ -53,8 +57,13 @@ describe("/vs hub", () => {
     const { container } = renderHub();
     const section = container.querySelector("#not-for-you")?.closest("section");
     expect(section, "the hub must carry a disqualification section").not.toBeNull();
-    // Non-vacuous: it has to name real alternatives, not gesture at the idea of them.
-    expect(section!.textContent!.length).toBeGreaterThan(400);
+    // Non-vacuous, and specific: it has to NAME the tools that are a better answer, not gesture at
+    // the idea of them. 400 characters of anything would have passed the length check alone.
+    for (const rival of [/Hookdeck/, /ngrok/, /webhook\.site/, /Svix/]) {
+      expect(section!.textContent, `the disqualification section must name ${rival}`).toMatch(
+        rival,
+      );
+    }
   });
 
   it("is registered in the route manifest as an indexable, axe-scanned page", () => {
@@ -73,10 +82,12 @@ describe("/vs hub", () => {
 
   it("publishes no claim the repo cannot back", () => {
     const { container } = renderHub();
-    const FORBIDDEN =
-      /SOC 2|ISO 27001|HIPAA|PCI|SAML|\bSSO\b|guaranteed delivery|never lose an event|100% (uptime|delivery)|trusted by|free, permanent|\bunlimited\b/i;
-    expect(container.textContent).not.toMatch(FORBIDDEN);
-    expect(String(metadata.description)).not.toMatch(FORBIDDEN);
+    for (const text of [container.textContent ?? "", String(metadata.description)]) {
+      expect(text).not.toMatch(FORBIDDEN_CLAIMS);
+      for (const rule of CLAIM_RULES as { id: string; re: RegExp }[]) {
+        expect(text, `the hub trips the ${rule.id} claim rule`).not.toMatch(rule.re);
+      }
+    }
   });
 
   it("ships no link that goes nowhere, and resolves every anchor", () => {

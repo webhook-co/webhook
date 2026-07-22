@@ -18,6 +18,54 @@ function renderPage(c = fixture) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ComparisonPage", () => {
+  // Every behavioural assertion below used to run against COMPARISONS[0] and generalise. It doesn't:
+  // a page with a section id colliding with a shell id, or an empty migration list rendering a bare
+  // heading, would have shipped green. These run over the whole estate now.
+  describe.each(COMPARISONS.map((c) => [c.slug, c] as const))("%s", (_slug, c) => {
+    it("renders exactly one h1, naming both products", () => {
+      renderPage(c);
+      const h1s = screen.getAllByRole("heading", { level: 1 });
+      expect(h1s).toHaveLength(1);
+      expect(h1s[0]).toHaveTextContent(c.h1);
+    });
+
+    it("renders every authored section, the concession, and every migration step", () => {
+      const { container } = renderPage(c);
+      for (const section of c.sections) {
+        expect(container.querySelector(`#${section.id}`), section.id).not.toBeNull();
+        expect(container.textContent).toContain(section.body);
+      }
+      expect(container.textContent).toContain(c.chooseThem.body);
+      expect(c.migration.length, `${c.slug} has no migration path`).toBeGreaterThan(0);
+      for (const step of c.migration) expect(container.textContent).toContain(step.heading);
+    });
+
+    it("renders every table row with both sides filled in", () => {
+      renderPage(c);
+      const table = screen.getByRole("table");
+      for (const row of c.table) {
+        const header = within(table).getByRole("rowheader", { name: row.label });
+        const cells = within(header.closest("tr") as HTMLElement).getAllByRole("cell");
+        expect(cells.map((x) => x.textContent)).toEqual([row.them, row.us]);
+      }
+    });
+
+    // B2: the most decision-relevant fact about us. It lives in the shell so it cannot be forgotten
+    // on a new page — this is the assertion that makes that guarantee real.
+    it("discloses that webhook.co is pre-launch", () => {
+      const { container } = renderPage(c);
+      expect(container.textContent).toMatch(/pre-launch/i);
+      expect(container.textContent).toMatch(/published, not yet purchasable/i);
+    });
+
+    it("emits no duplicate DOM id", () => {
+      const { container } = renderPage(c);
+      const ids = [...container.querySelectorAll("[id]")].map((el) => el.id);
+      const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+      expect(dupes, `${c.slug} emits duplicate ids: ${dupes.join(", ")}`).toEqual([]);
+    });
+  });
+
   it("renders exactly one h1, naming both products", () => {
     renderPage();
     const h1s = screen.getAllByRole("heading", { level: 1 });
@@ -99,11 +147,14 @@ describe("ComparisonPage", () => {
 
   it("emits FAQPage structured data built from the questions it renders", () => {
     const { container } = renderPage();
-    const script = container.querySelector('script[type="application/ld+json"]');
-    expect(script).not.toBeNull();
-    const parsed = JSON.parse(script!.textContent!) as {
+    // Selected by @type, not by document position: this page emits BreadcrumbJsonLd too, and a
+    // first-match-wins query would pass today only because the FAQ script happens to render first.
+    const parsed = [...container.querySelectorAll('script[type="application/ld+json"]')]
+      .map((s) => JSON.parse(s.textContent!) as { "@type"?: string })
+      .find((node) => node["@type"] === "FAQPage") as unknown as {
       mainEntity: { name: string; acceptedAnswer: { text: string } }[];
     };
+    expect(parsed, "no FAQPage node emitted").toBeDefined();
     expect(parsed.mainEntity.map((e) => e.name)).toEqual(fixture.faq.map((f) => f.question));
     expect(parsed.mainEntity[0]!.acceptedAnswer.text).toBe(fixture.faq[0]!.answer);
   });

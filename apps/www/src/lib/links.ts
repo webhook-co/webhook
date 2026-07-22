@@ -94,10 +94,17 @@ export const LINKS = {
    */
   tutorials: "/test",
   /**
-   * The comparison hub, and the parent of every `/vs/<slug>` page. Same rule as `tutorials`: the site
-   * chrome links HERE, never an individual competitor slug. A footer or nav that enumerated
-   * competitors would read as link-stuffing, would need editing for every new comparison, and would
-   * orphan the next one anyway.
+   * The comparison hub, and the parent of every `/vs/<slug>` page.
+   *
+   * The chrome rule here is deliberately WEAKER than the tutorials' one, and the difference is a
+   * founder decision (2026-07-22) rather than an oversight. The NAV links only this hub. The footer's
+   * Compare column links the hub PLUS the top three comparisons — enough for a reader to see what the
+   * estate contains, few enough that it stays scannable and the next one still has to go through the
+   * hub. Sixteen tutorial slugs would have been link-stuffing; four comparison links are not.
+   *
+   * What is absolute: the footer column is DERIVED from `COMPARISONS` and capped by a test, so the
+   * list cannot be hand-edited into a wall of competitor names, and comparison five is reachable the
+   * moment it exists whether or not anyone touches the chrome.
    *
    * Competitor names are allowed in `apps/www` MARKETING CONTENT and nowhere else in the repo — never
    * in the engine, CLI, SDKs, API, contracts, the provider registry, migrations, ADRs or docs. A

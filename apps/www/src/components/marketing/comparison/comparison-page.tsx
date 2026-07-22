@@ -91,10 +91,19 @@ export function ComparisonPage({ comparison: c }: { comparison: Comparison }) {
             </a>
             .
           </p>
+          {/* The most decision-relevant fact about us, on EVERY page rather than on the one where it
+              happened to get written. It lives in the shell, not in the per-page data, precisely so a
+              fifth comparison cannot ship without it — `comparison-page.test.tsx` asserts it renders
+              for every published comparison. It also carries the caveat the price and retention rows
+              need: those figures are the published ladder, and billing is not live yet. */}
+          <p className="mt-3 text-sm text-fg-muted">
+            webhook.co is pre-launch. Our prices and retention windows below are published, not yet
+            purchasable.
+          </p>
         </div>
       </section>
 
-      <Section id="why" heading={`Why people compare these two`}>
+      <Section id="why" heading="Why people compare these two">
         <p className={cn(body, "mb-4")}>{c.whyLeave}</p>
         <p className={body}>{c.distinctive}</p>
       </Section>
@@ -109,16 +118,16 @@ export function ComparisonPage({ comparison: c }: { comparison: Comparison }) {
             dragging the document sideways on a phone (playwright/mobile.spec.ts checks exactly that).
             A scroll container is a region a keyboard user must be able to reach and a screen reader
             must be able to name — hence tabindex and the label, without which axe is right to object. */}
-        {/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- a scrollable region MUST be
-            keyboard-focusable, or a keyboard-only reader cannot scroll it at all; that is precisely
-            what axe's `scrollable-region-focusable` rule fails a build for, and this page is scanned
-            by axe in a real browser in both themes. The two gates genuinely disagree here and the
-            accessibility one wins: dropping `tabIndex` to satisfy the linter would convert a lint
-            error into a reported WCAG failure. `role="region"` + `aria-label` is what makes the focus
-            stop meaningful rather than a bare tab target. Scoped to this element only. */}
         <div
           role="region"
           aria-label={`webhook.co and ${c.name} comparison table`}
+          // A scrollable region MUST be keyboard-focusable, or a keyboard-only reader cannot scroll
+          // it at all — which is exactly what axe's `scrollable-region-focusable` rule fails a build
+          // for, and this page is axe-scanned in a real browser in both themes. The two gates
+          // genuinely disagree and the accessibility one wins: dropping `tabIndex` to satisfy the
+          // linter would convert a lint error into a reported WCAG failure. `role="region"` plus
+          // `aria-label` is what makes the focus stop meaningful rather than a bare tab target.
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- see above
           tabIndex={0}
           className={cn(prose, focusRing, "overflow-x-auto rounded-card border border-hairline")}
         >
@@ -158,7 +167,6 @@ export function ComparisonPage({ comparison: c }: { comparison: Comparison }) {
             </tbody>
           </table>
         </div>
-        {/* eslint-enable jsx-a11y/no-noninteractive-tabindex */}
       </section>
 
       {c.sections.map((section) => (

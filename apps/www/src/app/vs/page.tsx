@@ -20,11 +20,16 @@ import { container, focusRing, proseLink, sectionPad } from "@/lib/styles";
 // turns away is an advert, and everything else in the estate is believable only because this is here.
 // It lives on the hub rather than as a fifth route so it cannot drift out of sync with the set.
 
+// Derived, so a fifth comparison cannot leave the page saying "four" above a list of five, or
+// naming a set it no longer describes. `page.test.tsx` pins the description's length budget, which
+// is the one thing a derived string can quietly break.
+const NAMES = COMPARISONS.map((c) => c.name);
+const NAME_LIST = `${NAMES.slice(0, -1).join(", ")} and ${NAMES.at(-1)}`;
+
 export const metadata = pageMetadata({
   path: "/vs",
   title: "How webhook.co compares",
-  description:
-    "Honest, sourced comparisons against ngrok, webhook.site, Hookdeck and RequestBin — including where each of them is the better choice, and who should not use us.",
+  description: `Honest, sourced comparisons against ${NAME_LIST} — including where each of them is the better choice, and who should not use us.`,
 });
 
 const h2 = "text-2xl font-semibold tracking-heading text-fg sm:text-[1.75rem]";
@@ -54,8 +59,9 @@ export default function VsHubPage() {
             How webhook.co compares
           </h1>
           <p className="mx-auto max-w-[54ch] text-lg text-pretty text-fg-secondary">
-            Four comparisons, each written from the other product&apos;s own documentation and dated
-            so you can tell how stale it is. Every one of them says where the other tool wins.
+            {COMPARISONS.length} comparisons, each written from the other product&apos;s own
+            documentation and dated so you can tell how stale it is. Every one of them says where
+            the other tool wins.
           </p>
         </div>
       </section>

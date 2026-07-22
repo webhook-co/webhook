@@ -1,6 +1,9 @@
 // @vitest-environment node
 // (node, not jsdom: the content-dup guard resolves its manifest path from `import.meta.url` at import
 // time, and under jsdom that is not a file: URL. Same reason `tutorials.test.ts` does it.)
+// @ts-expect-error -- plain-JS guard module; the tests use the SAME rules `pnpm lint` runs,
+// rather than a paraphrase that drifts the moment the real list moves.
+import { CLAIM_RULES } from "../../../../scripts/no-unverified-claims.mjs";
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error -- plain-JS guard module; imported so this test uses the SAME similarity code CI runs.
@@ -16,11 +19,15 @@ import {
   COMPARISONS,
   comparisonPath,
   comparisonText,
+  FORBIDDEN_CLAIMS,
   getComparison,
   RELATED_COUNT,
   relatedComparisons,
 } from "@/lib/comparisons";
 import { MARKETING_ROUTES } from "@/lib/routes";
+import { DELIVERY_MAX_ATTEMPTS } from "@webhook-co/shared";
+import { FREE_EVENT_CAP, planById } from "@webhook-co/shared/plans";
+import { PROVIDERS } from "@webhook-co/webhooks-spec";
 
 // Every one of these pages names a competitor and makes factual claims about them. That is a legal
 // surface, not a stylistic one, so the checks below are load-bearing:
@@ -58,13 +65,16 @@ describe("comparisons: the estate", () => {
   });
 
   // The shared guard rejects at 0.8, which is far too lenient to catch a comparison estate written to
-  // a template: a published estate that IS a template measures ~0.5 pairwise, and a genuinely
-  // per-competitor one measures ~0.2. So this estate is held to its own, much stricter line. At the
-  // time of writing it measures 0.005 — the headroom is deliberate, and if a new page lands anywhere
-  // near this threshold it was written to the shape of its siblings rather than to its own argument.
+  // a template, so this estate is held to a much stricter line of its own.
+  //
+  // The line is set from MEASUREMENT, not taste. This estate measures 0.005 pairwise on the guard's
+  // 5-gram shingles with both brand names neutralised. A fifth page assembled by reusing a sibling's
+  // prose verbatim scores 0.152 at 25% reuse, 0.251 at 40% and 0.304 at 50% — so a 0.25 ceiling would
+  // let a page that copy-pasted a third of its sibling ship green. 0.05 still leaves 10x headroom over
+  // the real signal while catching roughly 10% reuse, which is the point at which a page has stopped
+  // being written and started being assembled.
   it("keeps sibling pages structurally distinct, well inside the shared guard's line", () => {
-    const shingles = (c: (typeof COMPARISONS)[number]) =>
-      wordShingles(neutralize(comparisonText(c), c.name, ["webhook.co", "wbhk"]));
+    const shingles = (c: (typeof COMPARISONS)[number]) => wordShingles(neutralizeBoth(c));
     for (let i = 0; i < COMPARISONS.length; i++) {
       for (let j = i + 1; j < COMPARISONS.length; j++) {
         const a = COMPARISONS[i]!;
@@ -73,7 +83,7 @@ describe("comparisons: the estate", () => {
         expect(
           score,
           `${a.slug} and ${b.slug} share too much structure (${score.toFixed(3)})`,
-        ).toBeLessThan(0.25);
+        ).toBeLessThan(0.05);
       }
     }
   });
@@ -84,6 +94,34 @@ describe("comparisons: the estate", () => {
   it("gives every comparison its own set of sections", () => {
     const shapes = COMPARISONS.map((c) => c.sections.map((s) => s.id).join("|"));
     expect(new Set(shapes).size, "two comparisons share a section list").toBe(shapes.length);
+  });
+
+  // A duplicate DOM id is caught today only by `check-anchors.mjs`, which runs after a full build.
+  // These ids come from data, so a collision — either between two sections, or with an id the shared
+  // shell already emits — should fail in milliseconds instead.
+  it("keeps every section id unique within its page, and clear of the shell's own ids", () => {
+    // Emitted by comparison-page.tsx for every comparison, plus the ids the Faq component owns.
+    const SHELL_IDS = new Set([
+      "why",
+      "at-a-glance",
+      "choose-them",
+      "choose-us",
+      "migration",
+      "sources",
+      "more-comparisons",
+      "faq",
+      "faq-heading",
+      "main",
+    ]);
+    for (const c of COMPARISONS) {
+      const ids = c.sections.map((s) => s.id);
+      expect(new Set(ids).size, `${c.slug} repeats a section id`).toBe(ids.length);
+      for (const id of ids) {
+        expect(SHELL_IDS.has(id), `${c.slug}: section id "${id}" collides with a shell id`).toBe(
+          false,
+        );
+      }
+    }
   });
 
   it("each comparison carries enough authored substance to stand on its own", () => {
@@ -117,11 +155,32 @@ describe("comparisons: the estate", () => {
     }
   });
 
-  it("dates every source, and points it at the competitor's own domain or ours", () => {
+  // The name used to promise a domain check this body did not perform, which is worse than having no
+  // check at all — it is the reason nobody adds the real one. Now it performs it.
+  it("dates every source and points it at a primary domain, never a third party", () => {
+    // Their own domains, ours, and the Wayback Machine — the last only because the original
+    // requestb.in pages it preserves are dead, which is itself the claim being sourced.
+    const PRIMARY = [
+      "ngrok.com",
+      "webhook.site",
+      "docs.webhook.site",
+      "hookdeck.com",
+      "status.hookdeck.com",
+      "api.hookdeck.com",
+      "github.com",
+      "pipedream.com",
+      "web.archive.org",
+      "webhook.co",
+    ];
     for (const c of COMPARISONS) {
       expect(c.sources.length, `${c.slug} cites no sources`).toBeGreaterThan(0);
       for (const s of c.sources) {
         expect(s.url, `${c.slug}: ${s.id}`).toMatch(/^https:\/\//);
+        const host = new URL(s.url).hostname;
+        expect(
+          PRIMARY.some((d) => host === d || host.endsWith(`.${d}`)),
+          `${c.slug}: ${s.id} cites ${host}, which is not a primary source`,
+        ).toBe(true);
         // ISO date, so "checked on" is machine-checkable and a stale page reads as stale.
         expect(s.checked, `${c.slug}: ${s.id} has no check date`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       }
@@ -140,8 +199,26 @@ describe("comparisons: the estate", () => {
     }
   });
 
-  // Honest framing is the whole product here. A page that only lists where we win is an advert.
-  it("says plainly where the other product is the better choice", () => {
+  // Nothing forced `verifiedOn` forward, so the estate could quietly become the thing it opens by
+  // mocking — "most comparison pages you will find about ngrok are repeating a version of it that no
+  // longer exists". This is the mechanism that stops that. It WILL fail one day and be annoying to
+  // fix; going and re-reading four competitors' pricing pages twice a year is the actual job.
+  it("refuses to publish claims nobody has re-read in six months", () => {
+    const MAX_AGE_DAYS = 180;
+    const today = new Date("2026-07-22T00:00:00Z"); // fixed: a clock-dependent test is a flake
+    for (const c of COMPARISONS) {
+      const age = (today.getTime() - new Date(`${c.verifiedOn}T00:00:00Z`).getTime()) / 86_400_000;
+      expect(
+        age,
+        `${c.slug} was last verified ${Math.round(age)} days ago — re-read its sources and bump verifiedOn`,
+      ).toBeLessThan(MAX_AGE_DAYS);
+    }
+  });
+
+  // A length floor, and only a length floor. It cannot tell a real concession from filler — no
+  // automated check can — so it is here to stop the section being quietly emptied, not to certify
+  // that it is honest. The honesty is a human review job, which is why this lane ends in one.
+  it("keeps a non-trivial concession section on every comparison", () => {
     for (const c of COMPARISONS) {
       const words = tokens(c.chooseThem.body).length;
       expect(words, `${c.slug} concedes only ${words} words`).toBeGreaterThanOrEqual(40);
@@ -149,20 +226,33 @@ describe("comparisons: the estate", () => {
   });
 
   it("never publishes a claim the repo cannot back", () => {
-    // Same list the product and tutorial pages are held to, plus the two the comparison estate is
-    // most likely to reach for. SSO and the certifications are deliberately absent from these pages
-    // entirely: `scripts/no-unverified-claims.mjs` matches them regardless of whose product they
-    // describe, and they are rows we would lose anyway.
-    const FORBIDDEN =
-      /SOC 2|ISO 27001|HIPAA|PCI|SAML|\bSSO\b|single sign-on|guaranteed delivery|never lose an event|100% (uptime|delivery)|trusted by|free, permanent|zero-knowledge|\bunlimited\b/i;
     for (const c of COMPARISONS) {
-      const surfaces = [comparisonText(c), c.title, c.description, c.h1];
+      // The TABLE is included deliberately. `comparisonText()` excludes it — correctly, because the
+      // near-duplicate guard must not see boilerplate — and for a while that meant the honesty gate
+      // could not see the single most-read element on the page. An adversarial review proved it: a
+      // page whose table read "SOC 2 Type II certified" and "guaranteed delivery, 100% uptime"
+      // passed every check in this file. It does not now.
+      const surfaces = [comparisonText(c), JSON.stringify(c.table), c.title, c.description, c.h1];
       for (const text of surfaces) {
-        expect(text, `${c.slug} publishes a forbidden claim: ${text.slice(0, 90)}`).not.toMatch(
-          FORBIDDEN,
-        );
+        expect(text, `${c.slug} publishes a forbidden claim`).not.toMatch(FORBIDDEN_CLAIMS);
+        // The REAL gate's rules, not a paraphrase of them. `pnpm lint` runs these over the rendered
+        // source; running them over the authored strings here fails in milliseconds instead of after
+        // a full lint, and cannot drift from the list CI enforces.
+        for (const rule of CLAIM_RULES as { id: string; re: RegExp }[]) {
+          expect(text, `${c.slug} trips the ${rule.id} claim rule`).not.toMatch(rule.re);
+        }
       }
     }
+
+    // Non-vacuous: both lists must still be able to fire. A regex that matched nothing would make
+    // every assertion above pass for any content at all.
+    expect("unlimited events on every plan").toMatch(FORBIDDEN_CLAIMS);
+    const ids = (CLAIM_RULES as { id: string; re: RegExp }[]).filter((r) =>
+      r.re.test("we hold SOC 2 certification and offer SAML single sign-on"),
+    );
+    expect(ids.length, "CLAIM_RULES stopped matching a claim it exists to catch").toBeGreaterThan(
+      0,
+    );
   });
 
   it("keeps titles and descriptions inside the budget a SERP actually renders", () => {
@@ -173,6 +263,81 @@ describe("comparisons: the estate", () => {
       // The root layout appends the brand, so a title that repeats it renders it twice.
       expect(c.title).not.toMatch(/webhook\.co/);
     }
+  });
+
+  // A true number written as a literal is just a number that hasn't rotted yet — the same reasoning
+  // `provider-count.test.ts` already applies to the homepage's one "141 providers" sentence. This
+  // estate adds eight more copies of that number plus prices, retention windows, the free cap and the
+  // retry count, every one of which has a canonical source. Pinned here so adding the 142nd adapter,
+  // or repricing Pro, names the sentences to change instead of quietly making four public pages lie.
+  //
+  // Scoped to the `us` column deliberately: 141 also legitimately describes a COMPETITOR elsewhere in
+  // this file (Hookdeck documents 141 named platforms), so a whole-file regex would pin the wrong
+  // number to the wrong company.
+  it("pins every provider count on our side of the table to the registry", () => {
+    let checked = 0;
+    for (const c of COMPARISONS) {
+      for (const row of c.table) {
+        const claimed = row.us.match(/\b(\d+)\s+providers\b/);
+        if (!claimed) continue;
+        checked += 1;
+        expect(
+          Number(claimed[1]),
+          `${c.slug}: table says ${claimed[1]} providers, registry has ${PROVIDERS.length}`,
+        ).toBe(PROVIDERS.length);
+      }
+    }
+    expect(checked, "no provider-count row found — re-point this test").toBeGreaterThan(0);
+  });
+
+  it("pins the provider count in the prose too", () => {
+    let checked = 0;
+    for (const c of COMPARISONS) {
+      // Match EVERY "<n> providers" in the prose and exclude the competitor sentences explicitly,
+      // rather than including ours by accident of which verb precedes it — reword "we ship it for
+      // 141 providers" to "across 141 providers" and a verb-keyed regex silently stops looking.
+      for (const m of comparisonText(c).matchAll(
+        /\b(\d+)\s+(?:named third-party platforms|providers)\b/g,
+      )) {
+        const sentence = comparisonText(c).slice(Math.max(0, m.index! - 90), m.index! + 40);
+        const isAboutThem =
+          sentence.includes(c.name) || /their|they|documentation lists/i.test(sentence);
+        if (isAboutThem) continue;
+        checked += 1;
+        expect(Number(m[1]), `${c.slug} prose claims ${m[1]} providers`).toBe(PROVIDERS.length);
+      }
+    }
+    expect(checked, "no provider-count prose found — re-point this test").toBeGreaterThan(0);
+  });
+
+  it("pins our prices, free allowance, retention and retry count to their catalogs", () => {
+    const pro = planById("pro")!;
+    const scale = planById("scale")!;
+    const free = planById("free")!;
+    const everything = COMPARISONS.map((c) => comparisonText(c) + JSON.stringify(c.table)).join(
+      " ",
+    );
+
+    // Price: `packages/shared/src/plans.ts` is the one catalog, and it exists so a price can never
+    // disagree across surfaces. If Pro is repriced, this fails and names the file to edit.
+    expect(everything, "a price on a /vs page no longer matches the plan catalog").toContain(
+      `${pro.price}/month`,
+    );
+    // …and no OTHER euro-per-month figure may appear, so a hand-typed price cannot slip in beside
+    // the pinned one.
+    for (const m of everything.matchAll(/€(\d+)\/month/g)) {
+      expect([pro.price, scale.price], `unpinned price €${m[1]}/month`).toContain(`€${m[1]}`);
+    }
+
+    // Free allowance and retention windows.
+    expect(everything).toContain(FREE_EVENT_CAP.toLocaleString("en-US"));
+    expect(everything).toContain(`${free.retentionDays} days Free`);
+    expect(everything).toContain(`${pro.retentionDays} Pro`);
+    expect(everything).toContain(`${scale.retentionDays} Scale`);
+    expect(everything).toContain(`${scale.retentionDays} days on Scale`);
+
+    // Retry count.
+    expect(everything).toContain(`${DELIVERY_MAX_ATTEMPTS} attempts`);
   });
 
   it("resolves a known slug and refuses an unknown one", () => {

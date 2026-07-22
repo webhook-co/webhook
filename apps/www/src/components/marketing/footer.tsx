@@ -1,6 +1,7 @@
 import { cn, Wordmark } from "@webhook-co/ui";
 
 import { GithubIcon, LinkedinIcon } from "@/components/ui/brand-icons";
+import { COMPARISONS, comparisonPath } from "@/lib/comparisons";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
@@ -89,11 +90,17 @@ const rowTwoColumns: { title: string; links: FooterLink[] }[] = [
     // opened up on 2026-07-22. They must never reach logic code — the engine, CLI, SDKs, API,
     // contracts, the provider registry, migrations, ADRs or docs.
     title: "Compare",
+    // Derived, never hand-listed. Hand-pairing a display name with a slug is how a typo ships and
+    // waits for a post-build dead-link check to find it — and the hub page makes exactly this
+    // argument about its own index, so the footer should not do the opposite two files away. The
+    // slice is the cap: growth goes through the hub, which is what keeps the next comparison from
+    // being orphaned AND keeps this column scannable.
     links: [
       { label: "All comparisons", href: LINKS.comparisons },
-      { label: "vs ngrok", href: `${LINKS.comparisons}/ngrok` },
-      { label: "vs webhook.site", href: `${LINKS.comparisons}/webhook-site` },
-      { label: "vs Hookdeck", href: `${LINKS.comparisons}/hookdeck` },
+      ...COMPARISONS.slice(0, 3).map((c) => ({
+        label: `vs ${c.name}`,
+        href: comparisonPath(c.slug),
+      })),
     ],
   },
 ];
