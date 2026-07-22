@@ -211,4 +211,28 @@ describe("Footer", () => {
     const { container } = render(<Footer />);
     expect(await axeComponent(container)).toHaveNoViolations();
   }, 20000);
+  // The Status link is the half that CANNOT fail — unlike the badge, it needs no vendor to be up.
+  // Without this, dropping it or miswiring the href goes unnoticed.
+  it("links Status to the status page from the Developers column", () => {
+    render(<Footer />);
+    const nav = screen.getByRole("navigation", { name: "Developers" });
+    const link = within(nav).getByRole("link", { name: "Status" });
+    expect(link).toHaveAttribute("href", "https://status.webhook.co");
+  });
+
+  it("embeds the live status badge lazily, named, and at a fixed size", () => {
+    const { container } = render(<Footer />);
+    const frame = container.querySelector("iframe");
+    expect(frame).not.toBeNull();
+    // An accessible name: the frame element is still axe-checked even though traversal is off.
+    expect(frame).toHaveAttribute("title", expect.stringMatching(/system status/i));
+    expect(frame?.getAttribute("src") ?? "").toMatch(
+      /^https:\/\/status\.webhook\.co\/embed-badges\//,
+    );
+    // Lazy + fixed dimensions: costs nothing above the fold, and reserves its space so the
+    // copyright row cannot shift when the vendor answers.
+    expect(frame).toHaveAttribute("loading", "lazy");
+    expect(frame).toHaveAttribute("width", "190");
+    expect(frame).toHaveAttribute("height", "30");
+  });
 });

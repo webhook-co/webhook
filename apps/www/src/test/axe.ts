@@ -12,9 +12,14 @@ import { axe } from "vitest-axe";
  * - **Document-scope rules** — a component renders as a detached fragment with no `<html lang>`,
  *   `<title>`, or page landmarks, so those rules can't pass here. They're verified by the
  *   real-browser scan and the built-HTML SEO check. We disable them so they don't false-fail.
+ * - **Anything INSIDE an iframe** — jsdom does not load frame content, so axe throws
+ *   "Respondable target must be a frame in the current window" rather than reporting a violation.
+ *   The frame ELEMENT is still checked here (its `title`, for instance); only traversal into it is
+ *   off. Frame contents belong to whoever serves them, and the real-browser scan sees them.
  */
 export function axeComponent(container: Element): Promise<AxeResults> {
   return axe(container, {
+    iframes: false,
     rules: {
       region: { enabled: false },
       "landmark-one-main": { enabled: false },

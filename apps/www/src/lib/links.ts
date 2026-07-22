@@ -39,6 +39,7 @@ export const LINKS = {
 
   // ── docs ─────────────────────────────────────────────────────────────────
   docs: DOCS,
+  status: "https://status.webhook.co",
   quickstart: `${DOCS}/quickstart`,
   apiReference: `${DOCS}/api-reference/introduction`,
   cli: `${DOCS}/cli/overview`,
