@@ -247,6 +247,16 @@ describe("planUpgrade", () => {
     });
   });
 
+  it("carries the release on the install plan — the handler must not re-derive it", () => {
+    // The install plan is the ONLY variant reachable with a non-null release, and the handler needs that
+    // release to resolve the asset URLs. Carrying it here is what lets the handler drop a `release === null`
+    // check it could never satisfy: an unrepresentable state can't be silently returned out of.
+    const rel = release("cli-v0.4.0", ["wbhk-linux-x64", "checksums.txt"]);
+    const plan = planUpgrade({ ...base, release: rel });
+    expect(plan.action).toBe("install");
+    expect(plan).toMatchObject({ release: rel });
+  });
+
   it("check-only takes precedence over the install kind (never installs)", () => {
     const plan = planUpgrade({
       ...base,
