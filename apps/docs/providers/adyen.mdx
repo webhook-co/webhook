@@ -9,13 +9,16 @@ Adyen signs each notification with an HMAC-SHA256 over a fixed, colon-joined set
 
 ## Get the HMAC key
 
-In the Adyen Customer Area, open **Developers → Webhooks**, select your webhook (Standard notification), and under **Security** generate or reveal the **HMAC Key**. It's a hex string.
+In the Adyen Customer Area, open **Developers → Webhooks**, select your webhook, and under **Security** generate or reveal the **HMAC Key**. The field is labelled as hex-encoded, and that matters — see below.
+
+Test and live are separate Customer Areas with separate keys, and Adyen provides no way to copy a webhook configuration between them. Adyen also warns that a newly generated key takes time to propagate, so keep accepting the previous one for a while: register the new key alongside the old and webhook.co tries both.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$ADYEN_HMAC_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider adyen
 ```
@@ -37,15 +40,38 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
+## How the signature is checked
+
+- **Signed message** — the eight fields above, in that order, joined by a single colon. There is no escaping and no sorting; a field that is absent contributes an empty string but still its colon, so the message always carries seven separators.
+- **Algorithm** — HMAC-SHA256, base64-encoded.
+- **Key** — the Customer Area key **hex-decoded to raw bytes**, not used as its ASCII characters.
+- **Signature location** — inside the request body, not in a header.
+
 <Note>
-  Register the HMAC key exactly as the Customer Area shows it (the hex string). webhook.co
-  hex-decodes it to the key bytes, matching Adyen's own SDKs — don't decode or reformat it first.
+  Register the key exactly as the Customer Area shows it — the hex string. webhook.co hex-decodes it
+  the way Adyen's own libraries do. Using the characters of that string as the key is the classic
+  Adyen bug, and Adyen's own wording invites it by mentioning UTF-8 in the same sentence as the hex
+  conversion. Do not decode or reformat the value before registering it.
 </Note>
 
-webhook.co verifies one notification item per request. There's no signed timestamp, so no replay window applies.
+## Only eight fields are signed
+
+The MAC covers those eight values and nothing else. The rest of the notification — `eventDate`, `live`, and everything under `additionalData` such as the payment method and risk data — is outside it. A valid signature therefore attests to the amount, the references, the event code and the outcome; it says nothing about the remaining fields. Treat them as unauthenticated.
+
+Note also that `amount.value` is in minor units and is signed as its integer, so `1130`, never `11.30`, and `success` is signed as the lowercase string.
+
+## One item per request
+
+webhook.co verifies the first `NotificationRequestItem` in the array. Adyen documents JSON and HTTP POST webhooks as carrying exactly one item per request, which is what a webhook.co ingest URL receives; its legacy SOAP transport is the one that batches several.
+
+## No replay window
+
+Nothing in the signed field set is a timestamp, so there is no window to enforce and webhook.co applies none. A captured notification stays verifiable until the key changes. Adyen sends duplicates by design and advises identifying them by `eventCode` and `pspReference` — the two are among the signed fields, so that check rests on authenticated values.
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [Adyen's HMAC verification documentation](https://docs.adyen.com/development-resources/webhooks/secure-webhooks/verify-hmac-signatures), checked 2026-07-22.

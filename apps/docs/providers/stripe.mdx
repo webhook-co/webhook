@@ -9,14 +9,16 @@ Stripe signs each webhook with an HMAC-SHA256 over `{timestamp}.{body}`, carried
 
 ## Get the signing secret
 
-In the Stripe Dashboard, open **Developers → Webhooks**, select (or add) the endpoint pointing at your webhook.co ingest URL, and reveal its **Signing secret**. It starts with `whsec_`.
+In the Stripe Dashboard, open the webhook endpoint pointing at your webhook.co ingest URL and reveal its **Signing secret**. It starts with `whsec_`.
+
+Two secrets that look identical are easy to confuse, and Stripe calls this out directly. An endpoint created in the Dashboard and a session forwarded by the Stripe CLI each have their own `whsec_` value, and they are not interchangeable. Test mode and live mode differ too, even for the same endpoint URL. Over the API the secret is returned only when the endpoint is created.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
-# the secret is read from a no-echo prompt (or piped stdin) — never an argv flag
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$STRIPE_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider stripe
 ```
@@ -25,22 +27,38 @@ printf %s "$STRIPE_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoin
 curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
   -H "Authorization: Bearer $WEBHOOK_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"provider":"stripe","secret":"whsec_your_signing_secret"}'
+  -d '{"provider":"stripe","secret":"whsec_..."}'
 ```
 
 ```ts TypeScript
 await webhook.endpoints.providerSecrets.add({
   endpointId,
   provider: "stripe",
-  secret: process.env.STRIPE_SIGNING_SECRET!, // whsec_...
+  secret: process.env.STRIPE_SIGNING_SECRET!,
 });
 ```
 
 </CodeGroup>
 
+## How the signature is checked
+
+- **Signed message** — the timestamp exactly as the header carried it, a single `.`, then the raw body.
+- **Algorithm** — HMAC-SHA256, hex-encoded.
+- **Key** — the signing secret used verbatim, as its UTF-8 bytes, `whsec_` prefix included.
+- **Signature format** — the `v1` fields of a comma-separated list. Only `v1` is read.
+- **Timestamp** — the `t` field of the same header, in seconds.
+
+That last point is a security property, not a detail. Stripe also sends a `v0` signature on test events and instructs receivers to ignore every scheme that is not `v1`, precisely so a lower scheme cannot be substituted for the real one.
+
+## Rotation
+
+A `Stripe-Signature` may carry several `v1` values at once. That is what a secret roll looks like: Stripe keeps the previous secret valid for up to a day and signs once per active secret. webhook.co treats every `v1` field as a candidate, so a delivery verifies if any of them matches — and because it also tries every secret registered for that provider on the endpoint, you can register the new secret before the roll and remove the old one afterwards without a gap.
+
 ## Replay window
 
-Because Stripe signs the timestamp, webhook.co enforces a 5-minute tolerance — a request whose `t` is older than that fails verification rather than being accepted as a possible replay. One signing secret per endpoint is enough; a `Stripe-Signature` may carry several `v1=` values during a secret roll, and any match verifies.
+Because the timestamp is inside the signed message it cannot be moved without invalidating the signature. webhook.co rejects a request whose `t` is more than 5 minutes from now in either direction, rather than accepting it as a possible replay.
+
+Stripe generates a fresh timestamp and signature for every delivery attempt, so a retry never arrives stale — a rejection on this check is a real clock or replay problem, not a retry artefact. It also means a signature is not a delivery identifier; deduplicate on the event `id`.
 
 ## Confirm
 
@@ -48,4 +66,6 @@ Because Stripe signs the timestamp, webhook.co enforces a 5-minute tolerance —
 wbhk events list <endpoint-id> --status verified
 ```
 
-Verified Stripe events show `verified`; a bad signature or an expired timestamp shows `failed`.
+Verified Stripe events show `verified`; a bad signature or an expired timestamp shows `failed`, with the reason named.
+
+Provider behaviour above is from [Stripe's webhook documentation](https://docs.stripe.com/webhooks), checked 2026-07-22.

@@ -19,6 +19,7 @@ Register the app secret as the signing secret:
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$META_APP_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider meta
 ```
@@ -47,12 +48,39 @@ printf %s "$META_VERIFY_TOKEN" | wbhk endpoints add-provider-secret <endpoint-id
   --provider meta --kind verify_token
 ```
 
+## How the signature is checked
+
+- **Signed message** — the raw request body, with nothing prepended or appended.
+- **Algorithm** — HMAC-SHA256, hex-encoded.
+- **Key** — the app secret used verbatim, as its UTF-8 bytes.
+- **Signature format** — the hex digest behind a required `sha256=` prefix.
+
+Meta's current documentation describes only this SHA-256 header. An older SHA-1 `X-Hub-Signature` appeared in its docs historically and no longer does; webhook.co does not accept it, and no signature scheme weaker than the documented one is ever substituted.
+
+## One secret covers every product
+
+A Meta app has one app secret, and it signs webhooks for every surface attached to that app — WhatsApp, Messenger, Instagram, Page events alike. A valid signature therefore proves the delivery came from your app, not which account it concerns. Authorising on the WhatsApp business account or Page id inside the payload is a separate check, and one Meta does not perform for you.
+
+## The escaped-unicode subtlety
+
+Meta's Messenger documentation states that it generates the signature from an escaped-unicode form of the payload, using lowercase hex digits — its worked example escapes `äöå` to the literal text `\u00e4\u00f6\u00e5`. That note appears on no other Meta webhook page, including WhatsApp's and Instagram's, whose payloads are the likeliest to carry accented text and emoji.
+
+It is worth knowing because of how it presents: verification that works throughout testing, then fails the first time a real message contains a non-ASCII character. Meta does not document whether it transmits the escaped form or escapes at signing time, so if you hit this, that note is the documented explanation rather than a full specification.
+
 ## The subscription handshake
 
 When you save the callback URL in the App Dashboard, Meta sends a `hub.mode=subscribe` GET carrying `hub.challenge` and `hub.verify_token`. webhook.co echoes the challenge only if the presented verify token matches the one you registered (constant-time compared), and returns 403 otherwise — so a wrong token fails setup instead of leaking the challenge.
+
+Answering it is not optional: until Meta gets the challenge back, it treats the endpoint as unverified and sends no events at all. The verify token is used only here and never as a signing key.
+
+## No replay window
+
+Meta signs the body alone — no timestamp, no nonce — so webhook.co enforces no time tolerance. The `time` field inside the payload is authenticated but says nothing about when the request arrived. Note too that Meta batches events, so one signature can cover many events in a single envelope; the signed unit is the delivery, not the event.
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [Meta's Graph API webhooks documentation](https://developers.facebook.com/docs/graph-api/webhooks/getting-started/), checked 2026-07-22.
