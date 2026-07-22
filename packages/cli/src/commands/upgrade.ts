@@ -401,7 +401,7 @@ export const upgradeCommand = buildCommand<UpgradeFlags, [], AppContext>({
         kind: "boolean",
         optional: true,
         brief:
-          "verify the binary's sigstore/SLSA build provenance before installing (--no-verify-provenance to skip)",
+          "verify the binary's sigstore/SLSA build provenance before installing (default: on; use --no-verify-provenance to skip)",
       },
     },
   },
