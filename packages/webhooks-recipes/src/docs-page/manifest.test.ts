@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mdxToText, manifestEntry } from "./manifest";
+import { mdxToText, manifestEntry, sidebarTitle } from "./manifest";
 
 describe("mdxToText — what the dup-guard actually compares", () => {
   it("drops frontmatter, so titles and descriptions don't pad the word count", () => {
@@ -67,5 +67,29 @@ describe("manifestEntry — the shape the guard requires", () => {
       mdx: "Body.",
     });
     expect(e.header).toBe("");
+  });
+});
+
+describe("sidebarTitle", () => {
+  it("reads the sidebarTitle out of the frontmatter", () => {
+    const mdx = [
+      "---",
+      'title: "Verify Acme webhooks"',
+      'sidebarTitle: "Acme"',
+      "---",
+      "",
+      "Body.",
+    ].join("\n");
+    expect(sidebarTitle(mdx)).toBe("Acme");
+  });
+
+  it("returns null when there is no frontmatter or no sidebarTitle", () => {
+    expect(sidebarTitle("# Just a heading\n")).toBeNull();
+    expect(sidebarTitle('---\ntitle: "Only a title"\n---\n')).toBeNull();
+  });
+
+  it("does not read a sidebarTitle that appears in the BODY rather than the frontmatter", () => {
+    const mdx = ["---", 'title: "T"', "---", "", 'sidebarTitle: "NotThis"'].join("\n");
+    expect(sidebarTitle(mdx)).toBeNull();
   });
 });

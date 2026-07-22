@@ -29,6 +29,21 @@
         "TEST_PG_BINDIR",
         "DATABASE_URL"
       ]
+    },
+    "@webhook-co/webhooks-recipes#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/docs/providers/**",
+        "$TURBO_ROOT$/apps/docs/docs.json",
+        "$TURBO_ROOT$/scripts/generated/**"
+      ]
+    },
+    "@webhook-co/www#test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/generated/**"]
     }
   }
 }

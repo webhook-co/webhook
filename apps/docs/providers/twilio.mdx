@@ -5,17 +5,20 @@ description: "Register your Twilio auth token and webhook.co verifies X-Twilio-S
 icon: "shield-halved"
 ---
 
-Twilio signs each request with an HMAC-SHA1 keyed by your **Auth Token**, base64-encoded in `X-Twilio-Signature`. For form-encoded webhooks it signs the request URL followed by the sorted form fields; for JSON bodies it signs the URL (carrying a `bodySHA256`) and the body hash. Register the auth token and webhook.co handles both modes.
+Twilio signs each request with an HMAC-SHA1 keyed by your **Auth Token**, base64-encoded in `X-Twilio-Signature`. For form-encoded webhooks it signs the request URL followed by the sorted form fields; for JSON bodies it signs the URL, which carries a hash of that body. Register the auth token and webhook.co handles both modes.
 
 ## Get the auth token
 
-In the Twilio Console home, copy your account's **Auth Token** (under Account Info). If you use a subaccount, use that subaccount's token.
+In the Twilio Console, open **Settings → Account settings → API keys & auth tokens** and copy the **Auth Token**. It must be the _primary_ token: Twilio lets you create a secondary token ahead of a rotation, but webhooks keep being signed with the primary until you promote it. If you use a subaccount, use that subaccount's token.
+
+An API key is not a substitute — Twilio names the auth token as the signing key everywhere it describes this scheme.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$TWILIO_AUTH_TOKEN" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider twilio
 ```
@@ -37,14 +40,35 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
-<Warning>
-  Twilio signs the request URL. The webhook URL configured in Twilio must be your endpoint's ingest
-  URL exactly — a mismatched host, path, or query changes the signed string. webhook.co tries the
-  default-port variants the way Twilio's SDKs do.
-</Warning>
+## How the signature is checked
+
+Twilio has two constructions, and which one applies is decided by whether a `bodySHA256` query parameter is present.
+
+- **Form requests** — the full request URL, then every form field sorted by name, each appended as name immediately followed by value with no delimiter anywhere. Sorting is byte order, so `CallSid` precedes `Caller`.
+- **JSON requests** — the signature covers the URL alone. The body is bound in indirectly: Twilio appends `bodySHA256`, a hex SHA-256 of the raw body, to the URL it signs. webhook.co checks both halves — the signature over the URL, and that the hash of the captured body equals the `bodySHA256` in it.
+- **Algorithm** — HMAC-SHA1, base64-encoded. The auth token is the key, used verbatim and case-sensitively.
+
+## The URL is the hard part
+
+Everything difficult about Twilio verification is URL reconstruction. The signed string starts with the URL Twilio dialled, not the one your server sees behind a proxy, and a single byte of difference fails the check.
+
+Twilio's own SDKs concede the ambiguity: they compute the signature against several candidate URLs because the default port is not consistently present in what the backend signed. For JSON deliveries webhook.co mirrors that, trying the URL as captured and again with the default port toggled; form deliveries are checked against the URL exactly as captured. Either way it cannot repair a genuine mismatch, so the webhook URL configured in Twilio must be the endpoint's ingest URL exactly — same host, same path, same query, with percent-escapes left encoded.
+
+Two more from Twilio's documentation worth knowing: any username and password embedded in the URL are stripped before signing, and voice callbacks over HTTPS drop the port while SMS callbacks keep it.
+
+<Note>
+  Form field names are sorted and folded to one value each before the signed string is built, so a
+  body repeating a name is checked against that name's first value.
+</Note>
+
+## No replay window
+
+Twilio's signed material is the URL and the parameters — no timestamp, no nonce, no expiry. A captured request and signature stay valid until the auth token is rotated, so webhook.co enforces no time tolerance here. Deduplicate on the identifier in the payload, such as `MessageSid` or `CallSid`.
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [Twilio's webhook security documentation](https://www.twilio.com/docs/usage/webhooks/webhooks-security), checked 2026-07-22.

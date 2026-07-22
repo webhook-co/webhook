@@ -9,13 +9,14 @@ Square signs each webhook with an HMAC-SHA256 over `{notificationURL}{body}` —
 
 ## Get the signature key
 
-In the Square Developer Dashboard, open your application's **Webhooks → Subscriptions**, select the subscription pointing at your ingest URL, and copy its **Signature Key**.
+In the Square Developer Console, open your application's **Webhooks → Subscriptions**, select the subscription pointing at your ingest URL, and reveal its **Signature Key** on the endpoint details page. Sandbox and production are separate subscriptions behind the console's environment toggle, so each has its own notification URL and its own signature key.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$SQUARE_SIGNATURE_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider square
 ```
@@ -37,14 +38,32 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
+## How the signature is checked
+
+- **Signed message** — the notification URL immediately followed by the raw body, with no separator between them.
+- **Algorithm** — HMAC-SHA256, base64-encoded.
+- **Key** — the signature key used verbatim, as its UTF-8 bytes. It looks like a short base64 value but is never decoded first.
+- **Signature format** — the bare encoded MAC, with no scheme or version prefix.
+
+## The URL is part of the signature
+
+This is what makes Square unusual, and it is where verification actually fails. Because the notification URL is inside the signed message, the subscription URL configured in Square must be your endpoint's ingest URL byte for byte. A trailing slash, an added query string, a different host, or `http` where the subscription says `https` all change the signed string and produce a mismatch that looks identical to a wrong key.
+
+The useful side of the same property: a Square signature is bound to one registered endpoint, so a captured delivery cannot be replayed against a different URL.
+
 <Warning>
-  Square signs the notification URL. The subscription URL in Square must be your endpoint's ingest
-  URL exactly — a trailing slash or an added query string changes the signed string and fails
-  verification.
+  Pointing two Square subscriptions at one ingest URL does not work. Each subscription has its own
+  signature key, and Square's guidance is a separate listener per subscription.
 </Warning>
+
+## No replay window
+
+Square signs the URL and the body — no timestamp is included, so webhook.co enforces no time tolerance here. Square does send a `square-initial-delivery-timestamp` header, but it sits outside the signature and can be altered freely, so it is not a freshness signal. Square retries a failed delivery for up to 24 hours and treats the body's `event_id` as the idempotency key.
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [Square's webhook validation documentation](https://developer.squareup.com/docs/webhooks/step3validate), checked 2026-07-22.
