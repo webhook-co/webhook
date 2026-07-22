@@ -100,6 +100,36 @@ test.describe("the surfaces tablist stays one row on a phone", () => {
   }
 });
 
+test.describe("the /verify tool stays above the fold on a phone", () => {
+  // Every result that ranks for "webhook tester" / signature-verification terms is an instant tool,
+  // so the one thing this page must not do is make a phone visitor scroll past prose to reach the
+  // verifier. The FAQ added beneath it must never push it below the fold. jsdom cannot see this — it
+  // is pure layout at a real viewport — so it is pinned here, in a real browser, not with a className.
+  test("the verifier is reachable without scrolling, and the FAQ sits below it", async ({
+    page,
+  }) => {
+    const FOLD = 851; // Pixel 5 height
+    await page.setViewportSize({ width: 393, height: FOLD });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/verify");
+    await page.getByRole("heading", { level: 1 }).waitFor();
+
+    const tool = page.getByRole("form", { name: /webhook signature verifier/i });
+    await expect(tool).toBeVisible();
+    const toolBox = await tool.boundingBox();
+    expect(toolBox, "the verifier has no box").not.toBeNull();
+    expect(
+      toolBox!.y,
+      `the verifier starts at ${Math.round(toolBox!.y)}px, at or below the ${FOLD}px fold`,
+    ).toBeLessThan(FOLD);
+
+    // …and the FAQ is strictly beneath the tool — never an article above it.
+    const faqBox = await page.locator("#faq").boundingBox();
+    expect(faqBox, "the FAQ has no box").not.toBeNull();
+    expect(faqBox!.y, "the FAQ sits above the tool").toBeGreaterThan(toolBox!.y);
+  });
+});
+
 test.describe("no page scrolls sideways on a phone", () => {
   // A horizontally-scrolling BODY is the classic mobile defect: one wide element (a terminal, a table,
   // a long unbroken string) pushes the whole layout out and every line of text goes off-screen. Wide

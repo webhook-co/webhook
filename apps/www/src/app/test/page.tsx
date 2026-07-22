@@ -1,6 +1,7 @@
 import { cn } from "@webhook-co/ui";
 
 import { pageMetadata } from "@/app/metadata";
+import { Faq } from "@/components/marketing/faq";
 import { PageShell } from "@/components/marketing/page-shell";
 import { PROVIDER_ENTRIES } from "@/components/marketing/provider-entries";
 import { ProviderMark } from "@/components/marketing/provider-mark";
@@ -9,6 +10,8 @@ import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 import { LINKS } from "@/lib/links";
 import { container, focusRing, proseLink, sectionPad } from "@/lib/styles";
 import { TUTORIALS, tutorialPath } from "@/lib/tutorials";
+
+import { TEST_FAQ } from "./test-faq";
 
 // The parent every /test/<slug> page already claimed to have. Until this shipped, `/test` was a 404
 // while sixteen children sat in the sitemap with ZERO inbound internal links from anywhere on the
@@ -26,6 +29,9 @@ export const metadata = pageMetadata({
 });
 
 const bySlug = new Map(PROVIDER_ENTRIES.map((e) => [e.slug, e]));
+
+const h2 = "text-2xl font-semibold tracking-heading text-fg sm:text-[1.75rem]";
+const body = "text-md text-pretty text-fg-secondary";
 
 export default function TestHubPage() {
   return (
@@ -93,6 +99,29 @@ export default function TestHubPage() {
           .
         </p>
       </section>
+
+      <section aria-labelledby="how-it-works" className={cn(container, sectionPad, "pt-0")}>
+        <div className="mx-auto max-w-[62ch]">
+          <h2 id="how-it-works" className={cn(h2, "mb-4")}>
+            How testing a webhook locally works
+          </h2>
+          <p className={cn(body, "mb-4")}>
+            A provider delivers a webhook from its own servers, over the public internet — so it
+            can&apos;t reach localhost, and most providers have no &quot;send test&quot; button to
+            prove otherwise. Testing one locally means giving it a public URL it will actually call,
+            and getting whatever lands there down onto the machine where your handler runs.
+          </p>
+          <p className={body}>
+            The loop is the same for every provider above. Create an endpoint and it prints a
+            permanent ingest URL; point the provider at it and every request is captured whole —
+            headers, body, the exact bytes. Stream those captures to a port on your machine, and
+            replay any one of them as often as you need while you fix the handler, without
+            re-triggering anything upstream.
+          </p>
+        </div>
+      </section>
+
+      <Faq items={TEST_FAQ} heading="Webhook testing: common questions" />
     </PageShell>
   );
 }

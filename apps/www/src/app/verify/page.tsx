@@ -1,11 +1,14 @@
 import { cn } from "@webhook-co/ui";
 
 import { pageMetadata } from "@/app/metadata";
+import { Faq } from "@/components/marketing/faq";
 import { BreadcrumbJsonLd } from "@/components/marketing/structured-data";
 import { PageShell } from "@/components/marketing/page-shell";
 import { VerifyTool } from "@/components/marketing/verify/verify-tool";
 import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 import { container, sectionPad } from "@/lib/styles";
+
+import { VERIFY_FAQ } from "./verify-faq";
 
 export const metadata = pageMetadata({
   path: "/verify",
@@ -53,6 +56,8 @@ export default function VerifyPage() {
           own servers can&apos;t be checked in a browser and are left out.
         </p>
       </section>
+
+      <Faq items={VERIFY_FAQ} heading="Webhook signature verification: common questions" />
     </PageShell>
   );
 }

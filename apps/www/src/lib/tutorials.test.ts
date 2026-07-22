@@ -10,6 +10,8 @@ import {
   neutralize,
   tokens,
 } from "../../../../scripts/content-dup-guard.mjs";
+import { TEST_FAQ } from "@/app/test/test-faq";
+import { VERIFY_FAQ } from "@/app/verify/verify-faq";
 import { FAQ_ITEMS } from "@/components/marketing/faq";
 import { HOME_FAQ_ITEMS } from "@/components/marketing/home-faq";
 import { MARKETING_ROUTES } from "@/lib/routes";
@@ -67,17 +69,25 @@ describe("provider tutorials", () => {
 
   it("no FAQ question is asked twice anywhere on the site", () => {
     // Duplicate FAQPage entities across URLs is the failure mode; every question must be unique
-    // against the pricing FAQ, the homepage FAQ, and every other tutorial.
+    // against the pricing FAQ, the homepage FAQ, the /verify and /test-hub FAQs, and every tutorial.
+    // The two page-level FAQs live in data-only modules precisely so this guard can enforce the
+    // "distinct from every other FAQ on the site" claim their comments make, rather than trust it.
     const seen = new Map<string, string>();
-    for (const item of FAQ_ITEMS) seen.set(item.question, "/pricing");
-    for (const item of HOME_FAQ_ITEMS) seen.set(item.question, "/");
-    for (const t of TUTORIALS) {
-      for (const item of t.faq) {
-        const where = seen.get(item.question);
-        expect(where, `"${item.question}" is already answered on ${where}`).toBeUndefined();
-        seen.set(item.question, tutorialPath(t.slug));
+    const seed = (items: readonly { question: string }[], where: string) => {
+      for (const item of items) {
+        const prior = seen.get(item.question);
+        expect(
+          prior,
+          `"${item.question}" is answered on both ${prior} and ${where}`,
+        ).toBeUndefined();
+        seen.set(item.question, where);
       }
-    }
+    };
+    seed(FAQ_ITEMS, "/pricing");
+    seed(HOME_FAQ_ITEMS, "/");
+    seed(VERIFY_FAQ, "/verify");
+    seed(TEST_FAQ, "/test");
+    for (const t of TUTORIALS) seed(t.faq, tutorialPath(t.slug));
   });
 
   it("FAQ questions name their provider, which is what keeps them distinct", () => {
@@ -163,6 +173,22 @@ describe("provider tutorials", () => {
         ).toBeLessThanOrEqual(48);
       }
     }
+  });
+
+  // `stripe webhook signature verification` is the best intent-per-visit term in the keyword set: a
+  // developer with a failing 401 and a signing secret in hand. The winning pages answer that as a
+  // troubleshooting checklist, not the HMAC algorithm — the two acute causes are the wrong signing
+  // secret (a `stripe listen` CLI secret used against a dashboard-registered endpoint, or vice versa)
+  // and a framework that parsed the body before verification, so the raw bytes no longer match.
+  it("gives /test/stripe the failing-401 signature-verification depth", () => {
+    const stripe = TUTORIALS.find((t) => t.slug === "stripe");
+    expect(stripe, "the stripe tutorial is missing").toBeDefined();
+    const text = tutorialText(stripe!).toLowerCase();
+    expect(text, "no failing-401 signal").toMatch(/\b401\b|signature verification (fail|error)/);
+    expect(text, "the CLI-vs-dashboard secret pitfall is not covered").toMatch(
+      /stripe listen|cli.{0,40}secret|dashboard.{0,40}secret/,
+    );
+    expect(text, "the raw-body pitfall is not covered").toMatch(/raw (request )?body/);
   });
 });
 

@@ -55,6 +55,36 @@ describe("/test hub", () => {
     expect(hrefs).toContain("/play");
   });
 
+  // The winners for "webhook testing" / "webhook tester" are hybrids: an index/tool first, substance
+  // beneath. The grid is the index and it must stay the top of the page — the added how-to and FAQ go
+  // strictly BELOW it, so the hub reads as a hub, not an article with links buried at the bottom.
+  it("keeps the provider grid ABOVE every added substance block", () => {
+    const { container } = render(<TestHubPage />);
+    const grid = screen.getByRole("navigation", { name: /all providers/i });
+    // Both blocks the refit adds — the how-to section AND the FAQ — must sit after the grid, so the
+    // page stays a hub. Pinning only one would let the other drift above the grid unnoticed.
+    for (const selector of ["#how-it-works", "#faq"]) {
+      const block = container.querySelector(selector);
+      expect(block, `the hub must carry ${selector} beneath the grid`).not.toBeNull();
+      expect(
+        grid.compareDocumentPosition(block!) & Node.DOCUMENT_POSITION_FOLLOWING,
+        `${selector} must come AFTER the provider grid, never above it`,
+      ).toBeTruthy();
+    }
+  });
+
+  it("emits FAQPage JSON-LD built from the questions it renders", () => {
+    const { container } = render(<TestHubPage />);
+    const faqLd = [...container.querySelectorAll('script[type="application/ld+json"]')]
+      .map((s) => JSON.parse(s.textContent!.replace(/\\u003c/g, "<")))
+      .find((j) => j["@type"] === "FAQPage");
+    expect(faqLd, "the hub must publish FAQPage JSON-LD").toBeDefined();
+    const questions = faqLd.mainEntity.map((q: { name: string }) => q.name).join(" | ");
+    expect(questions, "the FAQ must answer the localhost-reachability question").toMatch(
+      /localhost|without deploying|reach my (machine|laptop)/i,
+    );
+  });
+
   it("is registered in the route manifest as an indexable page", () => {
     const row = MARKETING_ROUTES.find((r) => r.path === "/test");
     expect(row).toBeDefined();
