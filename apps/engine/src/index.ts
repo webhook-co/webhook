@@ -13,6 +13,7 @@ import {
   DEFAULT_CAP_PRODUCER_LIMIT,
   DEFAULT_METER_RECONCILE_LIMIT,
   DEFAULT_TRANSPORT_LIMIT,
+  DEFAULT_TRANSPORT_ORG_LIMIT,
   DEFAULT_TRANSPORT_LOOKBACK_DAYS,
   DEFAULT_TRANSPORT_SETTLE_LAG_MS,
   DEFAULT_METER_REPORTER_LIMIT,
@@ -1540,6 +1541,9 @@ async function runMeteringReconcileCron(env: Env): Promise<void> {
  * alarms only, never auto-adjusts. Dark unless billing is on AND the meter id + key + transport Hyperdrive
  * are all provisioned. Mode-checked so we never compare against the wrong Stripe environment.
  */
+/** KV key holding the transport reconciler's org-rotation resume point. */
+const TRANSPORT_RECONCILE_CURSOR_KEY = "meter-transport-reconcile:org-cursor";
+
 async function runMeterTransportReconcileCron(env: Env): Promise<void> {
   const mode = parseBillingMode(env.BILLING_MODE ?? null);
   if (!billingEnabled(mode)) return; // dark: BILLING_MODE off/unset
@@ -1573,6 +1577,11 @@ async function runMeterTransportReconcileCron(env: Env): Promise<void> {
   };
   const audit = createClient(env.HYPERDRIVE_METER_TRANSPORT_AUDIT.connectionString);
   try {
+    // The pass reconciles a BOUNDED page of orgs (one Stripe call each) and resumes from where the last
+    // one stopped, so successive hourly ticks rotate through the whole paying base instead of re-checking
+    // the same head. The cursor lives in KV beside the orphan sweep's; losing it only restarts the
+    // rotation from the beginning, which is safe — reconciliation is a read-only comparison.
+    const cursor = await env.KV_CONFIG.get(TRANSPORT_RECONCILE_CURSOR_KEY);
     const result = await reconcileStripeTransport({
       audit,
       reader,
@@ -1580,8 +1589,13 @@ async function runMeterTransportReconcileCron(env: Env): Promise<void> {
       settleLagMs: DEFAULT_TRANSPORT_SETTLE_LAG_MS,
       lookbackDays: DEFAULT_TRANSPORT_LOOKBACK_DAYS,
       limit: DEFAULT_TRANSPORT_LIMIT,
+      orgLimit: DEFAULT_TRANSPORT_ORG_LIMIT,
+      cursor,
       log,
     });
+    await (result.nextCursor === null
+      ? env.KV_CONFIG.delete(TRANSPORT_RECONCILE_CURSOR_KEY)
+      : env.KV_CONFIG.put(TRANSPORT_RECONCILE_CURSOR_KEY, result.nextCursor));
     log("metering.stripe_reconcile.done", {
       daysChecked: result.daysChecked,
       orgsChecked: result.orgsChecked,
@@ -1589,6 +1603,8 @@ async function runMeterTransportReconcileCron(env: Env): Promise<void> {
       skippedNoCustomer: result.skippedNoCustomer,
       erroredOrgs: result.erroredOrgs, // > 0 is an alarm: an org's transport check did not run
       capped: result.capped,
+      // null = the rotation wrapped this tick (the whole paying base has now been covered).
+      wrapped: result.nextCursor === null,
     });
   } finally {
     await audit.end();

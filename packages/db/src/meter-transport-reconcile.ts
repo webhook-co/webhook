@@ -42,6 +42,14 @@ export interface MeterTransportDeps {
   readonly lookbackDays: number;
   /** Max drifts surfaced per pass (`capped` flags truncation). */
   readonly limit: number;
+  /** Max ORGS reconciled per pass — bounds the one-Stripe-call-per-org fan-out. */
+  readonly orgLimit: number;
+  /**
+   * Resume point: only orgs ordered AFTER this id are considered. A plain LIMIT without this would
+   * reconcile the same head of the org list every tick and never reach the tail, while every counter
+   * still read clean. Null/empty starts from the beginning.
+   */
+  readonly cursor?: string | null;
   /** Optional structured logger; only non-PII fields (org id, day, counts) are passed. */
   readonly log?: (message: string, fields?: Record<string, unknown>) => void;
 }
@@ -70,14 +78,30 @@ export interface MeterTransportResult {
   readonly erroredOrgs: number;
   /** True when the drift list hit `limit` (truncated) — widen the pass. */
   readonly capped: boolean;
+  /**
+   * Where the next pass should resume. The last org id of a FULL page (more may remain), or null when the
+   * page was short — meaning the end of the list was reached and the next pass must wrap to the start.
+   * Returning the last id on a short page would pin the cursor past the end and silently reconcile nothing.
+   */
+  readonly nextCursor: string | null;
 }
 
 export const DEFAULT_TRANSPORT_LOOKBACK_DAYS = 35;
 export const DEFAULT_TRANSPORT_LIMIT = 1000;
+/**
+ * Max ORGS reconciled per pass. This is the real fan-out bound: the loop issues one Stripe
+ * `listMeterEventSummaries` call per org, so without it the external call count scales with the paying
+ * customer base — inside an invocation whose subrequest budget is shared with fourteen other crons.
+ * `DEFAULT_TRANSPORT_LIMIT` bounds only the surfaced DRIFT list and never bounded the calls.
+ */
+export const DEFAULT_TRANSPORT_ORG_LIMIT = 200;
 /** Default Stripe-aggregation settle lag before a day is reconciled (24h — summaries are eventually consistent). */
 export const DEFAULT_TRANSPORT_SETTLE_LAG_MS = 86_400_000;
 
 const DAY_MS = 86_400_000;
+
+/** Sorts below every generated uuid; used as the "start from the beginning" cursor sentinel. */
+const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 
 /** UTC-midnight `YYYY-MM-DD` of the instant `ms`. */
 function utcDay(ms: number): string {
@@ -96,6 +120,49 @@ export async function reconcileStripeTransport(
   const horizon = utcDay(deps.now - deps.lookbackDays * DAY_MS);
   const settledBefore = utcDay(deps.now - deps.settleLagMs);
 
+  // PHASE 1 — take a BOUNDED page of orgs. The fan-out below is one Stripe call per org, so the bound has
+  // to reach SQL: filtering after the fact would still pull every eligible row across the wire and, worse,
+  // would tempt a later edit into dropping it. Ordered by org id and resumed from `cursor`, so successive
+  // passes rotate through the whole list instead of re-checking the same head forever.
+  // `org_id` is a uuid column, so the start sentinel must itself be a valid uuid — an empty string is a
+  // `invalid input syntax for type uuid` error, not an empty filter. The all-zero uuid sorts below every
+  // generated one and can never be a real org, so `> ZERO_UUID` means "from the beginning".
+  const after = deps.cursor && deps.cursor.length > 0 ? deps.cursor : ZERO_UUID;
+  const orgPage = await deps.audit<{ org_id: string }[]>`
+    select distinct r.org_id
+    from stripe_meter_reports r
+    where r.status = 'sent'
+      and r.day >= ${horizon}::date
+      and r.day < ${settledBefore}::date
+      and r.org_id > ${after}
+    order by r.org_id
+    limit ${deps.orgLimit}`;
+
+  const pageOrgIds = orgPage.map((o) => o.org_id);
+  // A SHORT page means the end of the list was reached: wrap, so the next pass starts from the beginning.
+  // Pinning the cursor at the tail would leave every later pass reconciling nothing, counters still clean.
+  const nextCursor =
+    pageOrgIds.length === deps.orgLimit && pageOrgIds.length > 0
+      ? (pageOrgIds[pageOrgIds.length - 1] as string)
+      : null;
+
+  if (pageOrgIds.length === 0) {
+    return {
+      daysChecked: 0,
+      orgsChecked: 0,
+      mismatches: [],
+      skippedNoCustomer: 0,
+      erroredOrgs: 0,
+      capped: false,
+      nextCursor,
+    };
+  }
+
+  // PHASE 2 — the settled rows for exactly that page.
+  // `in ${audit([...])}` expands the array into a real parameterized IN list. NOT `= any(${ids}::uuid[])`:
+  // that cast makes the driver serialize the array as a bare comma-joined string and Postgres rejects it
+  // ("malformed array literal") — the same trap already documented in api-keys.ts. A real-Postgres test
+  // caught it here too; the mocked one I wrote first did not.
   const rows = await deps.audit<
     { org_id: string; day: string; sent: string; customer: string | null }[]
   >`
@@ -108,6 +175,7 @@ export async function reconcileStripeTransport(
     where r.status = 'sent'
       and r.day >= ${horizon}::date
       and r.day < ${settledBefore}::date
+      and r.org_id in ${deps.audit(pageOrgIds)}
     order by r.org_id, r.day`;
 
   // Split: orgs we can reconcile (have a customer) vs orgs with a sent tail but no customer mapping.
@@ -185,5 +253,6 @@ export async function reconcileStripeTransport(
     skippedNoCustomer: noCustomerOrgs.size,
     erroredOrgs,
     capped,
+    nextCursor,
   };
 }

@@ -260,7 +260,13 @@
   // UNSET on purpose — setting it would also lower the ingest fetch() path's default runaway CPU guard, and
   // the hourly cron already gets a 15-minute CPU budget by default (these crons are I/O-bound regardless).
   "limits": {
-    "subrequests": 50000,
+    // Raised from 50,000 on 2026-07-22: scripts/subrequest-budget-guard.mjs computes the worst case from
+    // the ACTUAL bounded-loop constants and it came out at ~52,000 — i.e. the previous ceiling could be
+    // exceeded by legitimate work, and exceeding it does not fail cleanly (whichever cron makes the next
+    // call throws, so the victim is unrelated to the cause). Paid plans allow up to 10,000,000. This value
+    // is a RUNAWAY backstop, not a tuning knob: the guard requires it to stay at least 2x the modelled
+    // worst case, so raising a per-cron bound fails CI until this is re-derived.
+    "subrequests": 200000,
   },
   // Two cron triggers, each its OWN scheduled() invocation (switched on controller.cron, index.ts
   // scheduledCronPlan): the hourly head-anchor + rollup/reconcilers/purges + retention prune, and a 5-minute
