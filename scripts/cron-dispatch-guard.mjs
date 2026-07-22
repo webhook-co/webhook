@@ -52,24 +52,24 @@ const PLAN_FLAGS = ["runsCap", CADENCE_GATE_FLAG];
  * alert-matched, so changing one is an observability change, not a rename.
  */
 export const ENGINE_CRONS = {
-  runCapProducerCron: { cadence: "cap", message: "cap producer cron failed" },
-  runAuditAnchorCron: { cadence: "hourly", message: "audit anchor cron failed" },
-  runReconcilerCron: { cadence: "hourly", message: "delivery reconciler cron failed" },
-  runMeteringRollupCron: { cadence: "hourly", message: "metering rollup cron failed" },
-  runDeliveryStatsRollupCron: { cadence: "hourly", message: "delivery stats rollup cron failed" },
-  runActivationRollupCron: { cadence: "hourly", message: "activation rollup cron failed" },
-  runMeterReporterCron: { cadence: "hourly", message: "meter reporter cron failed" },
-  runMeteringReconcileCron: { cadence: "hourly", message: "meter reconcile cron failed" },
+  runCapProducerCron: { cadence: "cap", beat: "cap-producer" },
+  runAuditAnchorCron: { cadence: "hourly", beat: "anchor" },
+  runReconcilerCron: { cadence: "hourly", beat: "reconcile" },
+  runMeteringRollupCron: { cadence: "hourly", beat: "meter-rollup" },
+  runDeliveryStatsRollupCron: { cadence: "hourly", beat: "delivery-stats-rollup" },
+  runActivationRollupCron: { cadence: "hourly", beat: "activation-rollup" },
+  runMeterReporterCron: { cadence: "hourly", beat: "meter-reporter" },
+  runMeteringReconcileCron: { cadence: "hourly", beat: "meter-reconcile" },
   runMeterTransportReconcileCron: {
     cadence: "hourly",
-    message: "meter transport reconcile cron failed",
+    beat: "meter-transport-reconcile",
   },
-  runPayloadPurgeDrainCron: { cadence: "hourly", message: "payload purge cron failed" },
-  runRetentionPruneDrainCron: { cadence: "hourly", message: "retention prune cron failed" },
-  runOrgReaperDrainCron: { cadence: "hourly", message: "org reaper cron failed" },
-  runOrphanSweepDrainCron: { cadence: "hourly", message: "orphan sweep cron failed" },
-  runEventPayloadPurgeDrainCron: { cadence: "hourly", message: "event payload purge cron failed" },
-  runFreeOrgCapCron: { cadence: "hourly", message: "free-org-cap cron failed" },
+  runPayloadPurgeDrainCron: { cadence: "hourly", beat: "payload-purge" },
+  runRetentionPruneDrainCron: { cadence: "hourly", beat: "retention-prune" },
+  runOrgReaperDrainCron: { cadence: "hourly", beat: "org-reaper" },
+  runOrphanSweepDrainCron: { cadence: "hourly", beat: "orphan-sweep" },
+  runEventPayloadPurgeDrainCron: { cadence: "hourly", beat: "event-payload-purge" },
+  runFreeOrgCapCron: { cadence: "hourly", beat: "free-org-cap" },
 };
 
 /**
@@ -79,8 +79,8 @@ export const ENGINE_CRONS = {
  * ABSENCE of a catch just as firmly as it asserts the engine's presence of one.
  */
 export const API_CRONS = {
-  runRetentionReconcileCron: { cadence: "always", message: null },
-  runBillingCancellationCron: { cadence: "always", message: null },
+  runRetentionReconcileCron: { cadence: "always", beat: "billing-retention-reconcile" },
+  runBillingCancellationCron: { cadence: "always", beat: "billing-cancellation" },
 };
 
 /** Every worker whose scheduled() fan-out this guard checks. */
@@ -175,51 +175,62 @@ function containsTopLevelExit(node) {
   return found;
 }
 
-/** The first `message: "<literal>"` property assigned anywhere inside a node, or null. */
-function loggedMessage(node) {
-  if (
-    ts.isPropertyAssignment(node) &&
-    ts.isIdentifier(node.name) &&
-    node.name.text === "message" &&
-    ts.isStringLiteral(node.initializer)
+/**
+ * Describe one dispatched unit.
+ *
+ * The shape every cron call site must take is
+ * `withHeartbeat(env, "<job-id>", () => runXCron(env))`. That wrapper is what makes a cron that STOPS
+ * FIRING visible — apps/health grades the absence of a beat as a failure — and it also owns the failure
+ * log (`<job-id> cron failed`, with the error NAME only, never a raw message that could carry a
+ * connection string). So the guard pins the wrapper, the job id, and the `env` argument together: a cron
+ * dispatched without the wrapper is invisible when it dies, which is the whole failure class this lane
+ * exists to close.
+ */
+function describeDispatchedUnit(arg) {
+  let node = arg;
+  // Tolerate a defensive `.catch()` around the wrapper without losing sight of the cron beneath it.
+  let hasCatch = false;
+  while (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "catch"
   ) {
-    return node.initializer.text;
+    hasCatch = true;
+    node = node.expression.expression;
+  }
+  if (!ts.isCallExpression(node)) return null;
+  if (!ts.isIdentifier(node.expression) || node.expression.text !== "withHeartbeat") {
+    // Not wrapped: still report WHICH cron, so the violation can name it.
+    const bare = findCronCall(node);
+    return bare ? { cron: bare.cron, envArg: bare.envArg, beat: null, hasCatch } : null;
+  }
+  const [envArgNode, idNode, runNode] = node.arguments;
+  const beat = idNode !== undefined && ts.isStringLiteral(idNode) ? idNode.text : null;
+  const envToWrapper =
+    envArgNode !== undefined && ts.isIdentifier(envArgNode) && envArgNode.text === "env";
+  const inner = runNode === undefined ? null : findCronCall(runNode);
+  if (inner === null) return null;
+  return { cron: inner.cron, beat, envArg: envToWrapper && inner.envArg, hasCatch };
+}
+
+/** Find a `runXCron(env)` call anywhere beneath a node. */
+function findCronCall(node) {
+  if (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    isCronIdentifier(node.expression.text)
+  ) {
+    const [first] = node.arguments;
+    return {
+      cron: node.expression.text,
+      envArg: first !== undefined && ts.isIdentifier(first) && first.text === "env",
+    };
   }
   let found = null;
   ts.forEachChild(node, (child) => {
-    if (found === null) found = loggedMessage(child);
+    if (found === null) found = findCronCall(child);
   });
   return found;
-}
-
-/**
- * Describe one dispatched unit: which cron it runs, whether a `.catch()` is attached and what that catch
- * logs, and whether the cron was handed `env`.
- */
-function describeDispatchedUnit(arg) {
-  let hasCatch = false;
-  let message = null;
-  let node = arg;
-  while (ts.isCallExpression(node)) {
-    if (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "catch") {
-      hasCatch = true;
-      // The catch body is where the alert-matched line is emitted; an empty body logs nothing.
-      if (node.arguments.length === 1) message = loggedMessage(node.arguments[0]);
-      node = node.expression.expression;
-      continue;
-    }
-    if (ts.isIdentifier(node.expression) && isCronIdentifier(node.expression.text)) {
-      const [first] = node.arguments;
-      const envArg = first !== undefined && ts.isIdentifier(first) && first.text === "env";
-      return { cron: node.expression.text, hasCatch, message, envArg };
-    }
-    if (ts.isPropertyAccessExpression(node.expression)) {
-      node = node.expression.expression;
-      continue;
-    }
-    break;
-  }
-  return null;
 }
 
 /**
@@ -346,7 +357,12 @@ export function analyseScheduledDispatch(sourceText, { hasCadenceGate = true } =
 }
 
 /** Turn an analysis into human-readable violations. A null or reason-carrying analysis is ALWAYS one. */
-export function dispatchViolations(analysis, expected = ENGINE_CRONS, label = "apps/engine") {
+export function dispatchViolations(
+  analysis,
+  expected = ENGINE_CRONS,
+  label = "apps/engine",
+  registeredIds = null,
+) {
   if (analysis === null || typeof analysis !== "object") {
     return [
       `could not read the scheduled() dispatch from ${label} — the guard cannot verify the crons`,
@@ -401,21 +417,28 @@ export function dispatchViolations(analysis, expected = ENGINE_CRONS, label = "a
         `${cron} is not called with \`env\` — a cron handed anything else silently no-ops (a dark cron behaves identically either way, so no test can see this)`,
       );
     }
-    if (want.message === null) {
-      if (unit.hasCatch) {
-        violations.push(
-          `${cron} has a \`.catch(...)\`, but ${label} deliberately leaves its crons unwrapped so a failure still reaches the Cron Trigger status (ADR-0130). Remove it, or update the guard if the policy changed.`,
-        );
-      }
-      continue;
-    }
-    if (!unit.hasCatch) {
+    if (unit.beat === null) {
       violations.push(
-        `${cron} is dispatched without a \`.catch(...)\` — its failure would surface as an unhandled rejection instead of a named log line`,
+        `${cron} is dispatched WITHOUT withHeartbeat — if it stops firing, nothing notices. Wrap it: ` +
+          `withHeartbeat(env, "${want.beat}", () => ${cron}(env))`,
       );
-    } else if (unit.message !== want.message) {
+    } else if (unit.beat !== want.beat) {
       violations.push(
-        `${cron}'s .catch() logs ${unit.message === null ? "NOTHING" : `"${unit.message}"`}, expected "${want.message}" — these strings are alert-matched, and an empty or renamed catch body is a silent loss of the only failure signal this cron has`,
+        `${cron} reports the heartbeat id "${unit.beat}", expected "${want.beat}" — the id is the job ` +
+          `apps/health grades, so a mismatch silently leaves the real job looking dead`,
+      );
+    } else if (registeredIds !== null && !registeredIds.includes(unit.beat)) {
+      violations.push(
+        `${cron} reports heartbeat "${unit.beat}", which is not in REGISTERED_JOBS ` +
+          `(apps/health/src/heartbeat.ts) — the health worker rejects unknown ids, so the beat is dropped ` +
+          `and the cron reads as dead`,
+      );
+    }
+    if (unit.hasCatch) {
+      violations.push(
+        `${cron} has a hand-attached \`.catch(...)\` around withHeartbeat — that swallows the failure ` +
+          `before the wrapper can grade it, so the job would report HEALTHY while broken. withHeartbeat ` +
+          `already catches, logs the error name, and reports ok:false.`,
       );
     }
   }
@@ -507,6 +530,19 @@ function defaultReadTriggers(rel) {
   }
 }
 
+/**
+ * The heartbeat job ids apps/health expects to receive. A cron whose id is not registered reports to a
+ * job the health worker rejects as unknown, so the beat is dropped and the cron looks dead — the exact
+ * false signal the dead-man's switch exists to avoid.
+ */
+export function readRegisteredJobIds(text) {
+  if (typeof text !== "string") return null;
+  const block = /export const REGISTERED_JOBS[\s\S]*?\n\];/.exec(text);
+  if (!block) return null;
+  const ids = [...block[0].matchAll(/id: "([A-Za-z0-9-]+)"/g)].map((m) => m[1]);
+  return ids.length > 0 ? ids : null;
+}
+
 /** Check one target. */
 export function checkTarget(target) {
   let source;
@@ -516,7 +552,21 @@ export function checkTarget(target) {
     return [`could not read ${target.label}: ${String(err)}`];
   }
   const analysis = analyseScheduledDispatch(source, { hasCadenceGate: target.hasCadenceGate });
-  return dispatchViolations(analysis, target.crons, target.label);
+  let registeredIds;
+  try {
+    registeredIds = readRegisteredJobIds(
+      readFileSync(repoFile("apps/health/src/heartbeat.ts"), "utf8"),
+    );
+  } catch {
+    registeredIds = null;
+  }
+  if (registeredIds === null) {
+    return [
+      `could not read REGISTERED_JOBS from apps/health/src/heartbeat.ts — the guard cannot verify that ` +
+        `${target.label}'s crons report to jobs the health worker accepts`,
+    ];
+  }
+  return dispatchViolations(analysis, target.crons, target.label, registeredIds);
 }
 
 /** Check every target, plus the cron triggers the non-engine dispatches are written against. */

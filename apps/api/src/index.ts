@@ -34,6 +34,7 @@ import {
 } from "@webhook-co/shared";
 import { pingDatabase } from "@webhook-co/db/health";
 import { publicReadyz, readinessProvider } from "@webhook-co/shared/health";
+import { withHeartbeat } from "@webhook-co/shared/heartbeat-client";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { createRemoteReplayHandler } from "./remote-replay.js";
@@ -63,6 +64,12 @@ const PRM_PATH = "/.well-known/oauth-protected-resource";
 const TOKEN_ISSUER = "https://auth.webhook.co";
 
 export interface Env {
+  /**
+   * Heartbeat reporting (dead-man's switch for the crons). BOTH are optional: with either unset the
+   * reporting is a no-op, so this ships dark and activates when the operator provisions apps/health.
+   */
+  HEALTH_HEARTBEAT_URL?: string;
+  HEARTBEAT_TOKEN?: SecretsStoreSecret | string;
   /** webhook_authn Hyperdrive (caching OFF): the api-key cold lookup (org-discovery-by-hash). */
   HYPERDRIVE_AUTHN: Hyperdrive;
   /** Cache-disabled Hyperdrive for authenticated tenant-scoped reads (RLS-gated). */
@@ -420,8 +427,12 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
-    ctx.waitUntil(runRetentionReconcileCron(env));
-    ctx.waitUntil(runBillingCancellationCron(env));
+    ctx.waitUntil(
+      withHeartbeat(env, "billing-retention-reconcile", () => runRetentionReconcileCron(env)),
+    );
+    ctx.waitUntil(
+      withHeartbeat(env, "billing-cancellation", () => runBillingCancellationCron(env)),
+    );
   },
 } satisfies ExportedHandler<Env>;
 

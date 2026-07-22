@@ -134,6 +134,12 @@ export const BUDGET_MODEL = [
     note: "one Stripe summaries call per org (+ the bounded org page)",
   },
   {
+    cron: "heartbeat reporting",
+    units: [],
+    ops: 15,
+    note: "one POST to apps/health per engine cron — the dead-man's switch beat",
+  },
+  {
     cron: "free-org-cap",
     units: ["DEFAULT_CAP_PRODUCER_LIMIT"],
     ops: 4,

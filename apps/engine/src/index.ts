@@ -98,6 +98,8 @@ import { existingPayloadKeys } from "@webhook-co/db/orphan-sweep";
 import { runAnchorCron } from "./anchor-cron";
 import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
 import { parseOrphanSweepDelete, runOrphanSweep } from "./orphan-sweep-cron";
+import { withHeartbeat } from "@webhook-co/shared/heartbeat-client";
+
 import { parseRotationCursor, persistRotationCursor } from "./rotation-cursor";
 import { runOrgReaperCron } from "./org-reaper-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
@@ -952,139 +954,75 @@ export default {
     // drifted `*/5` trigger degrades pause latency to ~1h rather than failing OPEN (see scheduledCronPlan).
     const plan = scheduledCronPlan(controller.cron);
     if (plan.runsCap) {
-      ctx.waitUntil(
-        runCapProducerCron(env).catch((err: unknown) =>
-          console.log(JSON.stringify({ message: "cap producer cron failed", error: String(err) })),
-        ),
-      );
+      ctx.waitUntil(withHeartbeat(env, "cap-producer", () => runCapProducerCron(env)));
     }
     // A frequent cap tick must NOT also run the heavy hourly jobs (12× the work, racing the hourly pass).
     if (!plan.runsHourly) return;
     // Catch + log here so a config error (bad secret/binding) or a DB outage surfaces in
     // observability rather than as a silent unhandled rejection inside waitUntil.
-    ctx.waitUntil(
-      runAuditAnchorCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "audit anchor cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "anchor", () => runAuditAnchorCron(env)));
     // The delivery reconciler re-wakes idle DOs that still owe a due delivery (a lost wake, or a re-enabled
     // destination). Independent of the anchor cron — one failing must not sink the other.
-    ctx.waitUntil(
-      runReconcilerCron(env).catch((err: unknown) =>
-        console.log(
-          JSON.stringify({ message: "delivery reconciler cron failed", error: String(err) }),
-        ),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "reconcile", () => runReconcilerCron(env)));
     // Metering rollup: derive per-org usage from the exactly-once events rows (no hot-path
     // counter) and freeze aged days into immutable billing snapshots. Independent of the
     // other crons — one failing must not sink the others.
-    ctx.waitUntil(
-      runMeteringRollupCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "metering rollup cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "meter-rollup", () => runMeteringRollupCron(env)));
     // Delivery-stats rollup (Lane 1.1): pre-aggregate outbound-delivery outcomes per org per day so the
     // /dashboard overview reads O(days), not O(deliveries). A display cache (not billing), so no freeze —
     // recent days just refine as deliveries settle. Independent of the others — one failing must not sink
     // the rest.
     ctx.waitUntil(
-      runDeliveryStatsRollupCron(env).catch((err: unknown) =>
-        console.log(
-          JSON.stringify({ message: "delivery stats rollup cron failed", error: String(err) }),
-        ),
-      ),
+      withHeartbeat(env, "delivery-stats-rollup", () => runDeliveryStatsRollupCron(env)),
     );
     // Activation rollup (marketing measurement): DERIVE the signup→capture→forward funnel + weekly-activated
     // NSM from tables the product already writes (no hot-path counter), into the durable activation snapshot
     // so it survives retention pruning. Reuses the same webhook_meter/webhook_app Hyperdrive bindings as the
     // delivery-stats rollup — no new binding or role. Independent of the others — one failing must not sink
     // the rest.
-    ctx.waitUntil(
-      runActivationRollupCron(env).catch((err: unknown) =>
-        console.log(
-          JSON.stringify({ message: "activation rollup cron failed", error: String(err) }),
-        ),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "activation-rollup", () => runActivationRollupCron(env)));
     // Outbound meter reporting (S4.4c): report each paying org's finalized daily usage to Stripe through
     // the outbox. Gated on BILLING_MODE — a no-op when off (the default), so it ships dark. Independent of
     // the rollup cron (it reads the frozen usage the rollup produces, but a failure must not sink it).
-    ctx.waitUntil(
-      runMeterReporterCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "meter reporter cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "meter-reporter", () => runMeterReporterCron(env)));
     // Metering reconciliation (S4.4d, money guard F6): independently recount raw events per finalized day
     // and alarm on any drift vs the frozen usage count. Runs whenever the audit Hyperdrive is provisioned
     // (independent of BILLING_MODE — it validates the live metering itself). Independent of the others.
-    ctx.waitUntil(
-      runMeteringReconcileCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "meter reconcile cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "meter-reconcile", () => runMeteringReconcileCron(env)));
     // Stripe TRANSPORT reconciliation (WS1): compare what we told Stripe (outbox `sent` rows) to what Stripe
     // aggregated (event summaries) and alarm on any drop. Calls Stripe, so it carries the reporter's full
     // gate stack PLUS the transport Hyperdrive. Independent of the others.
     ctx.waitUntil(
-      runMeterTransportReconcileCron(env).catch((err: unknown) =>
-        console.log(
-          JSON.stringify({ message: "meter transport reconcile cron failed", error: String(err) }),
-        ),
-      ),
+      withHeartbeat(env, "meter-transport-reconcile", () => runMeterTransportReconcileCron(env)),
     );
     // Durable payload-body purge: after an owner hard-deletes an org, its R2 payload bodies (outside
     // Postgres) are cleared here in bounded batches until the org's prefix is empty. Dark until the
     // purge role + Hyperdrive are provisioned. Independent of the others — a failure must not sink them.
-    ctx.waitUntil(
-      runPayloadPurgeDrainCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "payload purge cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "payload-purge", () => runPayloadPurgeDrainCron(env)));
     // Retention prune (data-lifecycle slice 2.3): delete each org's events (+ their R2 payload bodies) once
     // they age past the org's retention window (Free 7d; paid orgs excluded until per-plan windows land).
     // Dark until the retention role + Hyperdrive are provisioned. Independent of the others — a failure must
     // not sink them. NB: provisioning it also clamps the reconcile lookback (runMeteringReconcileCron).
-    ctx.waitUntil(
-      runRetentionPruneDrainCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "retention prune cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "retention-prune", () => runRetentionPruneDrainCron(env)));
     // Async org-deletion reaper (#665): drain a requested-for-deletion org's events in bounded chunks, then
     // drop the org row — the async twin of the synchronous deleteOrgWithAudit. Dark until the reaper role +
     // Hyperdrive are provisioned. Independent — a failure must not sink the other hourly jobs.
-    ctx.waitUntil(
-      runOrgReaperDrainCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "org reaper cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "org-reaper", () => runOrgReaperDrainCron(env)));
     // R2 orphan-reconcile sweep (S6c-iii): delete R2 payload objects with NO events row (an insert that
     // failed after the durable-before-ACK PUT, or a prune that crashed before its R2 delete). Bounded per
     // tick, cursor-resumed, triple-fenced (age + shape + anti-join). Reuses the retention Hyperdrive; dark
     // until it's provisioned. Independent of the others — a failure must not sink them.
-    ctx.waitUntil(
-      runOrphanSweepDrainCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "orphan sweep cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "orphan-sweep", () => runOrphanSweepDrainCron(env)));
     // Event-payload purge (S3): delete the R2 body of each user-tombstoned event, then mark the job done.
     // Reuses the webhook_purge role/Hyperdrive (0058 extended it to event_payload_purge). Dark until that
     // Hyperdrive is provisioned; independent of the others — a failure must not sink them.
     ctx.waitUntil(
-      runEventPayloadPurgeDrainCron(env).catch((err: unknown) =>
-        console.log(
-          JSON.stringify({ message: "event payload purge cron failed", error: String(err) }),
-        ),
-      ),
+      withHeartbeat(env, "event-payload-purge", () => runEventPayloadPurgeDrainCron(env)),
     );
     // Free-org-cap reconcile (PR2b): across all users, flag → suspend the overflow Free orgs of anyone over
     // the cap, and restore when they resolve it. Dark until the reconciler role + Hyperdrive are provisioned.
     // Independent of the others — a failure must not sink them.
-    ctx.waitUntil(
-      runFreeOrgCapCron(env).catch((err: unknown) =>
-        console.log(JSON.stringify({ message: "free-org-cap cron failed", error: String(err) })),
-      ),
-    );
+    ctx.waitUntil(withHeartbeat(env, "free-org-cap", () => runFreeOrgCapCron(env)));
   },
 } satisfies ExportedHandler<Env>;
 

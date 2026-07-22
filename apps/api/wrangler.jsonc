@@ -32,6 +32,10 @@
   // .dev.vars override. apps/api/index.ts validates it fail-closed (a bad value 500s, never mints a
   // broken `undefined/<token>` URL). Must match the engine route apex (wbhk.my).
   "vars": {
+    // HEALTH_HEARTBEAT_URL — where this Worker's crons report a completed run (apps/health). NOT a
+    // secret: it is a public hostname, and the credential rides in the Authorization header. Reporting
+    // needs BOTH this and HEARTBEAT_TOKEN, so it stays a no-op until the secret is bound.
+    "HEALTH_HEARTBEAT_URL": "https://health.wbhk.my",
     "INGEST_BASE_URL": "https://wbhk.my",
     // FREE_EVENT_CAP (S4.3b): usage.get shows a rowless org the cap it is enforced at. The `<FREE_EVENT_CAP>`
     // placeholder is DEPLOY-INJECTED by the overlay (from the optional FREE_EVENT_CAP GH var); unset → "" →
