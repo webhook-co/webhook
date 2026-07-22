@@ -30,7 +30,7 @@ Reading events needs an API key with `events:read`.
 # failed Stripe events across the WHOLE org in the last 7 days, following every page
 wbhk events list \
   --provider stripe \
-  --status failed \
+# free-text search across provider event id + dedup key
   --after 7d \
   --all
 
