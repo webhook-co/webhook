@@ -184,6 +184,9 @@ const APPS = {
       ...SHARED,
       // The internal activation weekly-review bearer — bound with the reviewer Hyperdrive (ADR-0127).
       ...whenActivationReviewer(["INTERNAL_REVIEW_TOKEN"]),
+      // The heartbeat credential api's two billing crons present when reporting. Gated the same way as
+      // the engine's: `wrangler deploy` fails when it binds a secret that does not exist.
+      ...whenHeartbeat(["HEARTBEAT_TOKEN"]),
       ...whenBilling(["STRIPE_WEBHOOK_SIGNING_SECRET", "STRIPE_SECRET_KEY"]),
     ],
     placeholders: [

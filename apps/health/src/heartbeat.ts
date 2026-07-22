@@ -30,6 +30,7 @@ export interface JobSpec {
   readonly label: string;
 }
 
+const MINUTE = 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 
 /**
@@ -50,6 +51,53 @@ const HOUR = 60 * 60 * 1000;
  * that guard the wrapped shape, which is a change to a safety guard and belongs in its own PR.
  */
 export const REGISTERED_JOBS: readonly JobSpec[] = [
+  // --- apps/engine: the every-5-minutes cap tick ---
+  // A TIGHTER window than the hourly jobs, on purpose. This is the job whose absence means unbounded,
+  // unbilled over-cap ingest, so two missed ticks is already worth paging on. It also runs on the hourly
+  // trigger as a backstop, but a 3h window here would hide a dropped */5 trigger for hours.
+  { id: "cap-producer", windowMs: 20 * MINUTE, label: "engine: soft-cap producer (every 5 min)" },
+
+  // --- apps/engine: the hourly fan-out ---
+  { id: "anchor", windowMs: 3 * HOUR, label: "engine: WORM audit head anchor (hourly)" },
+  { id: "reconcile", windowMs: 3 * HOUR, label: "engine: delivery reconciler (hourly)" },
+  { id: "meter-rollup", windowMs: 3 * HOUR, label: "engine: metering rollup (hourly)" },
+  {
+    id: "delivery-stats-rollup",
+    windowMs: 3 * HOUR,
+    label: "engine: delivery-stats rollup (hourly)",
+  },
+  { id: "activation-rollup", windowMs: 3 * HOUR, label: "engine: activation rollup (hourly)" },
+  { id: "meter-reporter", windowMs: 3 * HOUR, label: "engine: outbound meter reporter (hourly)" },
+  { id: "meter-reconcile", windowMs: 3 * HOUR, label: "engine: metering reconcile (hourly)" },
+  {
+    id: "meter-transport-reconcile",
+    windowMs: 3 * HOUR,
+    label: "engine: Stripe transport reconcile (hourly)",
+  },
+  { id: "payload-purge", windowMs: 3 * HOUR, label: "engine: payload purge (hourly)" },
+  { id: "retention-prune", windowMs: 3 * HOUR, label: "engine: retention prune (hourly)" },
+  { id: "org-reaper", windowMs: 3 * HOUR, label: "engine: async org deletion reaper (hourly)" },
+  { id: "orphan-sweep", windowMs: 3 * HOUR, label: "engine: orphan payload sweep (hourly)" },
+  {
+    id: "event-payload-purge",
+    windowMs: 3 * HOUR,
+    label: "engine: event payload purge (hourly)",
+  },
+  { id: "free-org-cap", windowMs: 3 * HOUR, label: "engine: free-org cap reconcile (hourly)" },
+
+  // --- apps/api ---
+  {
+    id: "billing-retention-reconcile",
+    windowMs: 3 * HOUR,
+    label: "api: billing retention reconciler (hourly)",
+  },
+  {
+    id: "billing-cancellation",
+    windowMs: 3 * HOUR,
+    label: "api: billing cancellation drain (hourly)",
+  },
+
+  // --- apps/auth ---
   { id: "notification-drain", windowMs: 3 * HOUR, label: "auth: notification drain (hourly)" },
   {
     id: "auth-expiry-sweep",

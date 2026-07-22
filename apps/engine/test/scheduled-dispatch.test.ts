@@ -70,15 +70,19 @@ async function invoke(cron: string): Promise<{ units: number; failures: string[]
   return { units, failures: failureNames(logs) };
 }
 
-// The 6 crons with no binding guard, so a bare Env drives each through its own .catch().
-// These strings are ALERT-MATCHED log prefixes — changing one is an observability change, not a rename.
+// The 6 crons with no binding guard, so a bare Env drives each through a real failure.
+//
+// The message is `<heartbeat job id> cron failed`, emitted by withHeartbeat — NOT a hand-written string.
+// That is deliberate: the id is the same one apps/health grades, so the log line and the dead-man's switch
+// can never drift apart, and withHeartbeat logs the error NAME only (a hand-rolled `String(err)` could
+// carry a Hyperdrive connection string). scripts/cron-dispatch-guard.mjs pins each id against the registry.
 const UNGUARDED_FAILURES = [
-  "activation rollup cron failed",
-  "audit anchor cron failed",
-  "cap producer cron failed",
-  "delivery reconciler cron failed",
-  "delivery stats rollup cron failed",
-  "metering rollup cron failed",
+  "activation-rollup cron failed",
+  "anchor cron failed",
+  "cap-producer cron failed",
+  "delivery-stats-rollup cron failed",
+  "meter-rollup cron failed",
+  "reconcile cron failed",
 ].sort();
 
 afterEach(() => {
@@ -98,7 +102,7 @@ describe("scheduled() dispatch", () => {
     // The 12x guard: anything moved ABOVE `if (!plan.runsHourly) return` would run every 5 minutes
     // instead of hourly. Asserting the NAME (not just the count) means a heavy cron promoted above
     // the early return is caught even if some other cron were removed in the same edit.
-    expect(failures).toEqual(["cap producer cron failed"]);
+    expect(failures).toEqual(["cap-producer cron failed"]);
     expect(units).toBe(1);
   });
 
