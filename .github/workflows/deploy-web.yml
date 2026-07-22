@@ -70,6 +70,10 @@ jobs:
       HYPERDRIVE_SWEEPER_ID: ${{ vars.HYPERDRIVE_SWEEPER_ID }}
       HYPERDRIVE_NOTIFIER_ID: ${{ vars.HYPERDRIVE_NOTIFIER_ID }}
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
+      # The generator emits EVERY app's config on every run, so this workflow must supply the ids of
+      # apps it does not itself deploy -- reqEnv() throws otherwise and wedges this deploy too.
+      KV_HEALTH_ID: ${{ vars.KV_HEALTH_ID }}
+      HEARTBEAT_TOKEN_READY: ${{ vars.HEARTBEAT_TOKEN_READY }}
       KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
       # FREE_EVENT_CAP (S4.3b) — optional Free-tier cap the usage view shows a rowless org (same GH var as
       # the engine; unset → "" → uncapped). Must equal every other worker's value.

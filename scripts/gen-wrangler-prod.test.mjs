@@ -27,6 +27,7 @@ const BASE = {
   HYPERDRIVE_AUTHN_ID: "n",
   HYPERDRIVE_INGEST_ID: "i",
   KV_CONFIG_ID: "kc",
+  KV_HEALTH_ID: "kh",
   KV_AUTHZ_ID: "ka",
   AUTH_OAUTH_KV_ID: "ok",
   AUTH_DEVICE_KV_ID: "dk",
