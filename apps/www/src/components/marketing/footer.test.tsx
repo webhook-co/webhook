@@ -21,11 +21,11 @@ describe("Footer", () => {
     expect(byLabel["MCP"]).toBe("https://docs.webhook.co/mcp/overview");
   });
 
-  // The Resources ROW, not a fifth column. A column caps out around six links before it goes tall and
-  // unbalanced; a full-width band wraps, which is what the estate this feeds (tutorials today, more
-  // later) actually needs. It also leaves the `1.6fr repeat(4,1fr)` grid and its ≤940px behaviour
-  // untouched, and sits AFTER the columns so the socials-<ul>-is-first assumption below still holds.
-  it("carries a Resources row with the three usable tools, in order", () => {
+  // Row 2 is COLUMNS now, not a band. See the note in footer.tsx for why the band's original
+  // "a column caps out, a band wraps" reasoning stopped applying: growth moved sideways into a new
+  // column instead of downwards inside one, so the cap it worried about is no longer the binding
+  // constraint. Row 2 still sits AFTER row 1, so the socials-<ul>-is-first assumption below holds.
+  it("carries a Resources column with the three usable tools, in order", () => {
     render(<Footer />);
     const links = columnLinks("Resources");
     expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
@@ -33,6 +33,35 @@ describe("Footer", () => {
       ["Webhook tutorials", "/test"],
       ["Sandbox", "/play"],
     ]);
+  });
+
+  // The comparison estate gets its OWN column beside Resources — the founder's ask, and the reason
+  // row 2 became a grid. It links the hub plus a small, capped number of named comparisons: a hub
+  // alone gives the estate one inbound link and no signal about what is in it, while a link per
+  // competitor is link-stuffing that orphans the next one. Three named + the hub is the compromise.
+  it("carries a Compare column that leads with the hub", () => {
+    render(<Footer />);
+    const links = columnLinks("Compare");
+    expect(links[0].textContent).toBe("All comparisons");
+    expect(links[0]).toHaveAttribute("href", "/vs");
+  });
+
+  // The cap is the whole point of making it a column. Pinned so the next comparison is forced through
+  // the hub rather than appended here until the grid unbalances — the exact failure the old band
+  // comment predicted, now prevented by a test instead of by a comment nobody re-reads.
+  it("caps the Compare column so growth goes through the hub, not into the footer", () => {
+    render(<Footer />);
+    expect(columnLinks("Compare").length).toBeLessThanOrEqual(4);
+  });
+
+  // The estate must be reachable from every page, or check-orphan-pages.mjs reds the build. This is
+  // that guarantee expressed as a unit test, so it fails in milliseconds rather than after a build.
+  it("links the comparison hub from the site chrome", () => {
+    const { container } = render(<Footer />);
+    const hrefs = within(container)
+      .getAllByRole("link")
+      .map((a) => a.getAttribute("href") ?? "");
+    expect(hrefs).toContain("/vs");
   });
 
   // Moved OUT of Developers, deliberately. Developers is docs deep-links; the verifier is a tool you

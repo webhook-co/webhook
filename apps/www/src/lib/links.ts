@@ -93,6 +93,18 @@ export const LINKS = {
    * HERE rather than enumerating slugs, so the seventeenth tutorial inherits the audience.
    */
   tutorials: "/test",
+  /**
+   * The comparison hub, and the parent of every `/vs/<slug>` page. Same rule as `tutorials`: the site
+   * chrome links HERE, never an individual competitor slug. A footer or nav that enumerated
+   * competitors would read as link-stuffing, would need editing for every new comparison, and would
+   * orphan the next one anyway.
+   *
+   * Competitor names are allowed in `apps/www` MARKETING CONTENT and nowhere else in the repo — never
+   * in the engine, CLI, SDKs, API, contracts, the provider registry, migrations, ADRs or docs. A
+   * competitor is something the marketing site talks about; it must never become something the
+   * product knows about. (Founder decision, 2026-07-22.)
+   */
+  comparisons: "/vs",
 
   // ── external ─────────────────────────────────────────────────────────────
   openSource: REPO,

@@ -37,6 +37,7 @@ export const RESOURCE_LINKS: readonly NavLink[] = [
   { label: "Signature verifier", href: LINKS.verify },
   { label: "Webhook tutorials", href: LINKS.tutorials },
   { label: "Sandbox", href: LINKS.play },
+  { label: "Comparisons", href: LINKS.comparisons },
 ];
 
 /**
