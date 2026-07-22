@@ -1,5 +1,17 @@
 import { Composition } from "remotion";
 import { Promo, PROMO_DURATION_IN_FRAMES } from "./compositions/Promo/Promo";
+import { ReadmeDemo } from "./compositions/ReadmeDemo/ReadmeDemo";
+import {
+  SocialCard,
+  SOCIALCARD_HEIGHT,
+  SOCIALCARD_WIDTH,
+} from "./compositions/SocialCard/SocialCard";
+import {
+  READMEDEMO_DURATION_IN_FRAMES,
+  READMEDEMO_FPS,
+  READMEDEMO_HEIGHT,
+  READMEDEMO_WIDTH,
+} from "./compositions/ReadmeDemo/beats";
 import { promoSchema } from "./compositions/Promo/schema";
 import { PromoMaster } from "./promo/PromoMaster";
 import { BrandLockup } from "./scenes/BrandLockup";
@@ -8,6 +20,22 @@ import "./fonts";
 
 export const RemotionRoot = () => (
   <>
+    <Composition
+      id="SocialCard"
+      component={SocialCard}
+      durationInFrames={1}
+      fps={30}
+      width={SOCIALCARD_WIDTH}
+      height={SOCIALCARD_HEIGHT}
+    />
+    <Composition
+      id="ReadmeDemo"
+      component={ReadmeDemo}
+      durationInFrames={READMEDEMO_DURATION_IN_FRAMES}
+      fps={READMEDEMO_FPS}
+      width={READMEDEMO_WIDTH}
+      height={READMEDEMO_HEIGHT}
+    />
     <Composition
       id="Showcase"
       component={BrandLockup}
