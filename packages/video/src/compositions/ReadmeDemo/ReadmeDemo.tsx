@@ -18,18 +18,18 @@ import { AbsoluteFill, OffthreadVideo, staticFile, useCurrentFrame } from "remot
 import { mono } from "../../promo/fonts";
 import { colors, radii, shadows } from "../../promo/tokens";
 import {
-  CALLOUT,
   CAPTIONS,
   calloutOpacity,
   captionOpacity,
+  CHROME_HEIGHT,
   TERMINAL_HEIGHT,
   TERMINAL_WIDTH,
   VERDICT_BAND,
 } from "./beats";
 import { CalloutView, DemoLockup, WindowChromeView } from "./components";
+import { READMEDEMO_WIDTH } from "./beats";
 
-const CHROME_HEIGHT = 44;
-const WINDOW_X = (1280 - TERMINAL_WIDTH) / 2;
+const WINDOW_X = (READMEDEMO_WIDTH - TERMINAL_WIDTH) / 2;
 const WINDOW_Y = 112;
 
 export function ReadmeDemo() {
@@ -134,5 +134,3 @@ export function ReadmeDemo() {
     </AbsoluteFill>
   );
 }
-
-export { CALLOUT };

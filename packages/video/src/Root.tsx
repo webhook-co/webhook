@@ -1,7 +1,12 @@
 import { Composition } from "remotion";
 import { Promo, PROMO_DURATION_IN_FRAMES } from "./compositions/Promo/Promo";
 import { ReadmeDemo } from "./compositions/ReadmeDemo/ReadmeDemo";
-import { READMEDEMO_DURATION_IN_FRAMES, READMEDEMO_FPS } from "./compositions/ReadmeDemo/beats";
+import {
+  READMEDEMO_DURATION_IN_FRAMES,
+  READMEDEMO_FPS,
+  READMEDEMO_HEIGHT,
+  READMEDEMO_WIDTH,
+} from "./compositions/ReadmeDemo/beats";
 import { promoSchema } from "./compositions/Promo/schema";
 import { PromoMaster } from "./promo/PromoMaster";
 import { BrandLockup } from "./scenes/BrandLockup";
@@ -15,8 +20,8 @@ export const RemotionRoot = () => (
       component={ReadmeDemo}
       durationInFrames={READMEDEMO_DURATION_IN_FRAMES}
       fps={READMEDEMO_FPS}
-      width={1280}
-      height={720}
+      width={READMEDEMO_WIDTH}
+      height={READMEDEMO_HEIGHT}
     />
     <Composition
       id="Showcase"

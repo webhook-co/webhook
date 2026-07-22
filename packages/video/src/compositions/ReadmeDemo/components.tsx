@@ -7,20 +7,11 @@
 
 import type { CSSProperties, ReactElement } from "react";
 
+import { Mark } from "@webhook-co/ui";
+
 import { inter, mono } from "../../promo/fonts";
 import { colors, radii } from "../../promo/tokens";
-
-/**
- * The canonical webhook.co mark — three continuous arcs, copied byte-for-byte
- * from packages/ui/src/components/mark.tsx. Exported so a test can pin the
- * geometry: a previous pass silently substituted the generic Lucide "webhook"
- * glyph, which is not the brand mark.
- */
-export const MARK_PATHS = [
-  "M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2",
-  "m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06",
-  "m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13a4 4 0 0 1 0 8",
-] as const;
+import { CHROME_HEIGHT } from "./beats";
 
 export interface DemoLockupProps {
   /** Mark size in px. The wordmark scales with it. */
@@ -28,9 +19,17 @@ export interface DemoLockupProps {
 }
 
 /**
- * Mark + wordmark. The name is always lowercase — `webhook` in semibold with
- * `.co` de-emphasised, per the brand lockup rule. The mark inherits
- * `currentColor` so it reads white on this composition's dark surface.
+ * Mark + wordmark. The glyph is the canonical `Mark` from `@webhook-co/ui` —
+ * imported, never re-drawn, so a substitute icon can't creep in (an earlier
+ * pass had inlined the generic Lucide "webhook" glyph). The name is always
+ * lowercase, `webhook` in semibold with `.co` de-emphasised, per the brand
+ * lockup rule. `Mark` inherits `currentColor`, so it reads white on this
+ * composition's dark surface.
+ *
+ * We keep the text styling explicit here rather than reusing `ui/Wordmark`:
+ * that component fixes the wordmark at `text-xl` and styles via Tailwind theme
+ * classes, whereas this lockup scales mark + text together off one `size` prop
+ * and must not depend on a theme CSS context inside the Remotion canvas.
  */
 export function DemoLockup({ size = 26 }: DemoLockupProps): ReactElement {
   return (
@@ -42,22 +41,7 @@ export function DemoLockup({ size = 26 }: DemoLockupProps): ReactElement {
         color: colors.termFg,
       }}
     >
-      <svg
-        width={size}
-        height={size}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={3}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        role="img"
-        aria-label="webhook.co"
-      >
-        {MARK_PATHS.map((d) => (
-          <path key={d} d={d} />
-        ))}
-      </svg>
+      <Mark size={size} aria-label="webhook.co" />
       <span
         data-testid="lockup"
         style={{
@@ -94,7 +78,7 @@ export function WindowChromeView({ title }: WindowChromeViewProps): ReactElement
     <div
       style={{
         position: "relative",
-        height: 44,
+        height: CHROME_HEIGHT,
         display: "flex",
         alignItems: "center",
         paddingLeft: 18,
@@ -136,20 +120,16 @@ export interface CalloutViewProps {
   /** Already-computed envelope in [0, 1]. The wrapper owns the timing. */
   opacity: number;
   band: Band;
-  /**
-   * Optional. Omitted inside the terminal: the recording's own footer row
-   * (`↑/↓ move · r replay …`) sits directly under the band, so a label there
-   * overprints real output. The bottom caption carries the words instead.
-   */
-  label?: string;
 }
 
 /**
- * The verdict-column highlight: a soft accent band over the signature column
- * plus a label beneath it. Renders nothing at zero opacity so a fully faded
- * callout leaves no stray box in the frame.
+ * The verdict-column highlight: a soft accent band over the signature column.
+ * Renders nothing at zero opacity so a fully faded callout leaves no stray box
+ * in the frame. It carries no label of its own — the recording's own footer row
+ * sits directly under the band, so the words live in the caption below the
+ * window instead.
  */
-export function CalloutView({ opacity, band, label }: CalloutViewProps): ReactElement | null {
+export function CalloutView({ opacity, band }: CalloutViewProps): ReactElement | null {
   if (opacity <= 0) {
     return null;
   }
@@ -173,24 +153,6 @@ export function CalloutView({ opacity, band, label }: CalloutViewProps): ReactEl
           boxShadow: `0 0 0 1px rgba(63,178,127,0.10), 0 0 34px ${colors.verifiedGlow}`,
         }}
       />
-      {label === undefined ? null : (
-        <div
-          data-testid="callout-label"
-          style={{
-            position: "absolute",
-            left: band.x + band.width / 2,
-            top: band.y + band.height + 14,
-            transform: "translateX(-50%)",
-            whiteSpace: "nowrap",
-            fontFamily: mono,
-            fontSize: 15,
-            letterSpacing: "0.02em",
-            color: colors.verified,
-          }}
-        >
-          {label}
-        </div>
-      )}
     </div>
   );
 }
