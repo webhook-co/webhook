@@ -15,6 +15,19 @@
 // 7 days. app.webhook.co and auth.webhook.co are Workers custom domains too, so the zone's automatic
 // setup is inert everywhere on it. A manual embed is the only form that works.
 //
+// ── Why this token belongs to a HOST-BOUND site, and must stay that way ──
+// A manual embed uploads to cloudflareinsights.com/cdn-cgi/rum, and Cloudflare attributes that upload
+// by matching the payload's hostname against the site's registered HOST. The original `webhook.co`
+// site (tag a19a1e7a…) was ZONE-BOUND — created for automatic setup, so it carries a ruleset zone and
+// no `host` at all — and a zone-bound site can only collect from its own proxied origin's
+// /cdn-cgi/rum, which is exactly the endpoint that 404s here. Measured 2026-07-22: with the beacon
+// live and provably firing (right token, right endpoint, CSP clear), that site recorded 0 events
+// across 4 page views over 32 minutes, while docs — a HOST-bound site — went from page view to
+// visible data in ~2 minutes. Flipping the zone-bound site to auto_install:false did NOT fix it, and
+// the API silently ignores `host` on a zone-bound site, so it cannot be converted.
+// Hence a dedicated host-bound site for www.webhook.co (tag 0ed80986…), whose token is below.
+// If you ever re-point this at a zone-bound site's token, analytics goes silently back to zero.
+//
 // ── Two shapes that would ship a DEAD beacon ──
 //  1. A CLASSIC <script> (never `type="module"`) carrying the token in `data-cf-beacon`. Cloudflare's
 //     beacon finds its own element via `document.currentScript` — always null for a module script —
@@ -32,7 +45,7 @@
 
 // A public Cloudflare Web Analytics beacon site token, not a credential (see header); `gitleaks:allow`
 // marks the secret scanner's generic-api-key false positive on its 32-hex entropy.
-const CF_BEACON_TOKEN = "c18db0638ed94235909a96bf7a17308b"; // gitleaks:allow
+const CF_BEACON_TOKEN = "702e527496ff43cba2dd3e0fb1be201e"; // gitleaks:allow
 
 const CF_BEACON_CONFIG = JSON.stringify({
   token: CF_BEACON_TOKEN,
