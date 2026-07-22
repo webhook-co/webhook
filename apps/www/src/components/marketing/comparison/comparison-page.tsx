@@ -206,14 +206,25 @@ export function ComparisonPage({ comparison: c }: { comparison: Comparison }) {
           <ul className="flex flex-col gap-2.5">
             {c.sources.map((source) => (
               <li key={source.id} className="text-sm text-fg-muted">
+                {/* Underlined, not merely coloured. Each of these sits inline with the "— checked
+                    <date>" text beside it, which makes it a link in a text block: colour alone is not
+                    a distinguishing feature, and axe's `link-in-text-block` rule fails the real-browser
+                    scan for it. The jsdom suite cannot see this — it has no cascade to measure. */}
                 <a
                   href={source.url}
                   rel="nofollow noopener"
-                  className={cn(focusRing, "rounded-control text-fg-secondary hover:text-fg")}
+                  className={cn(
+                    focusRing,
+                    "rounded-control underline decoration-strong underline-offset-2 text-fg-secondary transition-colors hover:text-fg hover:decoration-fg",
+                  )}
                 >
                   {source.label}
                 </a>
-                <span className="text-fg-faint">
+                {/* `text-fg-faint` is a DECORATIVE token — it measures 2.45:1 against the light-mode
+                    page and fails WCAG AA for text, which the real-browser axe scan caught and no
+                    jsdom assertion ever could. The check date is information, so it gets the body
+                    token. */}
+                <span className="text-fg-muted">
                   {" "}
                   — checked <time dateTime={source.checked}>{source.checked}</time>
                 </span>
