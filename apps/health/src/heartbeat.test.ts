@@ -87,7 +87,7 @@ describe("the registered job list", () => {
   });
 
   it("accepts only registered ids", () => {
-    expect(isRegisteredJob("anchor")).toBe(true);
+    expect(isRegisteredJob("audit-anchor")).toBe(true);
     expect(isRegisteredJob("../../etc/passwd")).toBe(false);
     expect(isRegisteredJob("")).toBe(false);
   });
@@ -116,13 +116,16 @@ describe("jobChecks", () => {
     const entries = Object.fromEntries(
       REGISTERED_JOBS.map((j) => [beatKey(j.id), JSON.stringify({ ts: now - 1000, ok: true })]),
     );
-    entries[beatKey("meter-rollup")] = JSON.stringify({ ts: now - 99 * 60 * 60 * 1000, ok: true });
+    entries[beatKey("metering-rollup")] = JSON.stringify({
+      ts: now - 99 * 60 * 60 * 1000,
+      ok: true,
+    });
     const outcomes = await runChecks(
       jobChecks(store(entries), () => now),
       { timeoutMs: 500 },
     );
     const failed = outcomes.filter((o) => o.status === "fail").map((o) => o.name);
-    expect(failed).toEqual(["meter-rollup"]);
+    expect(failed).toEqual(["metering-rollup"]);
   });
 
   it("fails every job on an empty store", async () => {

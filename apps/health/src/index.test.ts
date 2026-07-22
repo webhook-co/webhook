@@ -48,26 +48,26 @@ describe("POST /internal/heartbeat/:job", () => {
   it("records a beat for a registered job with a valid token", async () => {
     const { env, store } = envWith();
     const res = await handleFetch(
-      req("/internal/heartbeat/anchor", {
+      req("/internal/heartbeat/audit-anchor", {
         method: "POST",
         headers: { authorization: "Bearer s3cret" },
       }),
       env,
     );
     expect(res.status).toBe(202);
-    expect(JSON.parse(store.get(beatKey("anchor")) as string)).toMatchObject({ ok: true });
+    expect(JSON.parse(store.get(beatKey("audit-anchor")) as string)).toMatchObject({ ok: true });
   });
 
   it("records an explicit failure when the job reports one", async () => {
     const { env, store } = envWith();
     await handleFetch(
-      req("/internal/heartbeat/anchor?status=fail", {
+      req("/internal/heartbeat/audit-anchor?status=fail", {
         method: "POST",
         headers: { authorization: "Bearer s3cret" },
       }),
       env,
     );
-    expect(JSON.parse(store.get(beatKey("anchor")) as string)).toMatchObject({ ok: false });
+    expect(JSON.parse(store.get(beatKey("audit-anchor")) as string)).toMatchObject({ ok: false });
   });
 
   // An unauthenticated heartbeat lets anyone silence a dead job by reporting for it, which is worse
@@ -80,7 +80,7 @@ describe("POST /internal/heartbeat/:job", () => {
     ]) {
       const { env, store } = envWith();
       const res = await handleFetch(
-        req("/internal/heartbeat/anchor", { method: "POST", headers }),
+        req("/internal/heartbeat/audit-anchor", { method: "POST", headers }),
         env,
       );
       expect(res.status).toBe(404); // 404, not 401 — never confirm what exists
@@ -91,7 +91,7 @@ describe("POST /internal/heartbeat/:job", () => {
   it("refuses every report when no token is configured", async () => {
     const { env, store } = envWith({}, "");
     const res = await handleFetch(
-      req("/internal/heartbeat/anchor", {
+      req("/internal/heartbeat/audit-anchor", {
         method: "POST",
         headers: { authorization: "Bearer " },
       }),
@@ -129,7 +129,7 @@ describe("POST /internal/heartbeat/:job", () => {
   it("does not accept a heartbeat over GET", async () => {
     const { env, store } = envWith();
     const res = await handleFetch(
-      req("/internal/heartbeat/anchor", { headers: { authorization: "Bearer s3cret" } }),
+      req("/internal/heartbeat/audit-anchor", { headers: { authorization: "Bearer s3cret" } }),
       env,
     );
     expect(res.status).toBe(404);
@@ -147,7 +147,7 @@ describe("GET /component/jobs", () => {
 
   it("is 503 when a job goes silent", async () => {
     const beats = freshBeats();
-    beats[beatKey("meter-rollup")] = JSON.stringify({ ts: 0, ok: true });
+    beats[beatKey("metering-rollup")] = JSON.stringify({ ts: 0, ok: true });
     const { env } = envWith(beats);
     const res = await handleFetch(req("/component/jobs"), env);
     expect(res.status).toBe(503);
@@ -161,7 +161,7 @@ describe("GET /component/jobs", () => {
   // The public component must not enumerate our internal job names to an anonymous caller.
   it("names no job in the public response body", async () => {
     const beats = freshBeats();
-    beats[beatKey("meter-rollup")] = JSON.stringify({ ts: 0, ok: true });
+    beats[beatKey("metering-rollup")] = JSON.stringify({ ts: 0, ok: true });
     const { env } = envWith(beats);
     const body = await (await handleFetch(req("/component/jobs"), env)).text();
     for (const j of REGISTERED_JOBS) expect(body).not.toContain(j.id);

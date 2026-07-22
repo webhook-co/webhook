@@ -33,18 +33,21 @@ export interface JobSpec {
 const HOUR = 60 * 60 * 1000;
 
 /**
- * The jobs expected to report. Adding a cron without adding it here means it stays unobserved, which
- * is the exact failure this module exists to prevent — so `apps/health` tests assert this list
- * against the crons actually declared in the wrangler configs.
+ * The jobs expected to report.
+ *
+ * DELIBERATELY NOT EVERY CRON. The estate runs 19 scheduled jobs, but many are gated on OPTIONAL
+ * bindings — a feature that has not been provisioned simply never runs, and registering it would
+ * render this component permanently red for a job that is not supposed to fire. Every job listed
+ * here runs unconditionally on its schedule.
+ *
+ * The unlisted jobs still report (the call sites are harmless and dark by default); they are just
+ * not graded. Promote one here once its binding is provisioned in production.
  */
 export const REGISTERED_JOBS: readonly JobSpec[] = [
-  { id: "anchor", windowMs: 3 * HOUR, label: "engine: WORM audit head anchor (hourly)" },
-  { id: "reconcile", windowMs: 3 * HOUR, label: "engine: delivery reconciler (hourly)" },
-  { id: "payload-purge", windowMs: 3 * HOUR, label: "engine: payload purge (hourly)" },
-  { id: "retention-prune", windowMs: 3 * HOUR, label: "engine: retention prune (hourly)" },
-  { id: "orphan-sweep", windowMs: 3 * HOUR, label: "engine: orphan payload sweep (hourly)" },
-  { id: "org-reaper", windowMs: 3 * HOUR, label: "engine: async org deletion reaper (hourly)" },
-  { id: "meter-rollup", windowMs: 3 * HOUR, label: "api: metering rollup (hourly)" },
+  { id: "audit-anchor", windowMs: 3 * HOUR, label: "engine: WORM audit head anchor (hourly)" },
+  { id: "delivery-reconciler", windowMs: 3 * HOUR, label: "engine: delivery reconciler (hourly)" },
+  { id: "metering-rollup", windowMs: 3 * HOUR, label: "engine: metering rollup (hourly)" },
+  { id: "cap-producer", windowMs: 3 * HOUR, label: "engine: free-tier cap producer (every 5 min)" },
   { id: "notification-drain", windowMs: 3 * HOUR, label: "auth: notification drain (hourly)" },
   {
     id: "auth-expiry-sweep",

@@ -49,6 +49,7 @@ import { readIntrospectEnv } from "./runtime/env";
 import { runNotificationDrain } from "./runtime/notify-cron";
 import { runAuthExpirySweep } from "./runtime/sweep-cron";
 import { authReadinessChecks } from "./readiness";
+import { withHeartbeat } from "@webhook-co/shared/heartbeat-client";
 import { publicReadyz, readinessProvider } from "@webhook-co/shared/health";
 
 // The OAuth issuer instance — @cloudflare/workers-oauth-provider wrapping the OpenNext handler (A2b-1). We
@@ -89,11 +90,11 @@ export default {
   // errors); both are waitUntil'd so the isolate lives until they + their pool-close finish.
   scheduled: (event, env, ctx) => {
     // The notification drain runs EVERY hour, so an auto-disable owner email is at most ~1h late (S3 PR3c-3b).
-    ctx.waitUntil(runNotificationDrain(env));
+    ctx.waitUntil(withHeartbeat(env, "notification-drain", () => runNotificationDrain(env)));
     // The cross-org expiry sweep (ADR-0055) is a DAILY job — gate it to the 04:00 UTC firing (a low-traffic
     // window; the on-access per-org sweep handles active orgs, so this only mops up churned ones).
     if (new Date(event.scheduledTime).getUTCHours() === 4) {
-      ctx.waitUntil(runAuthExpirySweep(env));
+      ctx.waitUntil(withHeartbeat(env, "auth-expiry-sweep", () => runAuthExpirySweep(env)));
     }
   },
 };
