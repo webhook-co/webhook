@@ -307,4 +307,50 @@ describe("heartbeat reporting", () => {
     expect(heartbeat[0]).not.toContain("postgres://");
     expect(heartbeat[0]).not.toContain("pw@host");
   });
+  // THE LOAD-BEARING CASE. The crons fail by RETURNING NULL, not by throwing, so `absorb` must pass
+  // that value through. Without this, the suite stays green even if absorb does `await run()` and
+  // discards the result — and every real failure grades as healthy.
+  it("reports failure when a cron returns null WITHOUT throwing", async () => {
+    const lines = captureAllLogs();
+    const units: Promise<unknown>[] = [];
+    dispatchAuthScheduled({ scheduledTime: Date.UTC(2026, 0, 1, 12) }, {}, (p) => units.push(p), {
+      notificationDrain: async () => null,
+      expirySweep: async () => null,
+    });
+    await Promise.all(units);
+    expect(
+      lines.filter((l) => l.includes("notification-drain cron reported failure")),
+    ).toHaveLength(1);
+  });
+
+  it("reports failure when the expiry sweep returns null, at the hour it actually runs", async () => {
+    const lines = captureAllLogs();
+    const units: Promise<unknown>[] = [];
+    dispatchAuthScheduled(
+      { scheduledTime: Date.UTC(2026, 0, 1, EXPIRY_SWEEP_UTC_HOUR) },
+      {},
+      (p) => units.push(p),
+      { notificationDrain: async () => ({ sent: 1 }), expirySweep: async () => null },
+    );
+    await Promise.all(units);
+    expect(lines.filter((l) => l.includes("auth-expiry-sweep cron reported failure"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("reports NO failure when both crons return a real result", async () => {
+    const lines = captureAllLogs();
+    const units: Promise<unknown>[] = [];
+    dispatchAuthScheduled(
+      { scheduledTime: Date.UTC(2026, 0, 1, EXPIRY_SWEEP_UTC_HOUR) },
+      {},
+      (p) => units.push(p),
+      {
+        notificationDrain: async () => ({ sent: 0 }),
+        expirySweep: async () => ({ refreshTokens: 0, sessionExchanges: 0 }),
+      },
+    );
+    await Promise.all(units);
+    expect(lines.filter((l) => l.includes("reported failure"))).toHaveLength(0);
+  });
 });
