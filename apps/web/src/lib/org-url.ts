@@ -8,11 +8,22 @@
  *
  * Use this for EVERY dashboard link. A bare `/endpoints` no longer exists — the hard cutover deleted it — so
  * a link that forgets the prefix is a 404, and neither the type checker nor a unit test that only asserts
- * "there is an anchor here" will notice. `slug === ""` (a component rendered outside an org route) yields the
- * bare path, which 404s LOUDLY rather than linking into the wrong org — a broken link beats a wrong one.
+ * "there is an anchor here" will notice.
+ *
+ * `slug === ""` (a component rendered outside an org route) must still never link into a DIFFERENT org — a
+ * broken link beats a wrong one. Returning the BARE path did not honour that, and the comment here used to
+ * claim it did: `(app)/[...legacy]` claims any path whose first segment is in `MOVED_SEGMENTS` and 307s the
+ * reader into their DEFAULT org rather than 404ing.
+ *
+ * The fallback therefore routes through a slug that CANNOT EXIST, rather than through one that merely
+ * happens to be unregistered today. `-` fails `validateOrgSlug` on length (min 3) and on format (a slug must
+ * start and end alphanumeric), so no org can ever hold it and `resolveOrgAccess` can only `notFound()`.
+ * Leaning on the reserved-slug list instead would have been one drift away from breaking: `MOVED_SEGMENTS`
+ * contains `suspended`, which is NOT in `ORG_SLUG_RESERVED` — `/org/suspended/…` reaches a real org for
+ * anyone who registers that slug. Pinned by org-url.test.ts against both real sets.
  */
 export function orgHref(slug: string, path: string): string {
-  return slug ? `/org/${slug}${path}` : path;
+  return slug ? `/org/${slug}${path}` : `/org/-${path}`;
 }
 
 /**

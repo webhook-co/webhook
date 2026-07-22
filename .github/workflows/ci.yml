@@ -366,10 +366,12 @@ jobs:
       # console, network — for every failed test. Without this step that trace dies with the runner, so a
       # failure that does NOT reproduce locally is undiagnosable: all you get is the assertion text.
       #
-      # That is not hypothetical. `org-events.spec.ts:115` has gone red twice (5a112d9e on main, and a
-      # Dependabot bump PR) with the server logging a clean 200 for the detail route and no error, while the
-      # client never rendered — and it passes locally every time. The trace is the only artifact that could
-      # say whether the navigation committed, whether the client threw, and what the DOM actually held.
+      # That is not hypothetical. `org-events.spec.ts:115` went red on ~4% of runs and never once locally,
+      # and the trace is what finally diagnosed it: the RSC payload named `(app)/[...legacy]/page.tsx` as the
+      # page that rendered, so the request had never reached the event-detail route at all — `next dev` had
+      # not yet learned that route and the catch-all claimed its URL. ("The client never rendered" was the
+      # earlier reading of the same symptom, and it was wrong; the client rendered the app's own 404.) The
+      # harness now refuses to start until that route resolves (playwright/global-setup.ts).
       # `if: failure()` so a green run uploads nothing.
       - name: Upload Playwright trace
         if: failure()
