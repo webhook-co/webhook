@@ -37,14 +37,14 @@
     "@axe-core/playwright": "^4.12.1",
     "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.61.1",
-    "@tailwindcss/postcss": "^4.3.2",
+    "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.3",
+    "@vitejs/plugin-react": "^6.0.4",
     "@webhook-co/cli": "workspace:*",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/openapi": "workspace:*",
@@ -53,7 +53,7 @@
     "jsdom": "^29.1.1",
     "linkedom": "^0.18.13",
     "sharp": "^0.35.3",
-    "tailwindcss": "^4.3.2",
+    "tailwindcss": "^4.3.3",
     "vitest-axe": "^0.1.0"
   }
 }

@@ -43,8 +43,8 @@
     "no-early-db-close": "node scripts/no-early-db-close.mjs"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.5",
-    "@cloudflare/workers-types": "^5.20260715.1",
+    "@cloudflare/vitest-pool-workers": "^0.18.7",
+    "@cloudflare/workers-types": "^5.20260722.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
     "@vitest/coverage-v8": "^4.1.10",
@@ -55,13 +55,13 @@
     "globals": "^17.7.0",
     "husky": "^9.1.7",
     "jsonc-parser": "^3.3.1",
-    "lint-staged": "^17.0.8",
-    "prettier": "^3.9.5",
+    "lint-staged": "^17.1.1",
+    "prettier": "^3.9.6",
     "turbo": "^2.10.5",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.64.0",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10",
-    "wrangler": "^4.111.0",
+    "wrangler": "^4.113.0",
     "yaml": "^2.9.0"
   }
 }
