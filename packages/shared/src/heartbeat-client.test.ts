@@ -201,4 +201,29 @@ describe("withHeartbeat", () => {
     await withHeartbeat(env, "anchor", async () => {}, { fetchImpl: g as unknown as typeof fetch });
     expect((g.mock.calls[0]?.[1] as RequestInit).redirect).toBe("error");
   });
+  // REGRESSION. A cron's throw can carry a Hyperdrive connection string, which embeds a role
+  // credential. Logging String(err) here would put it in Workers logs — and this helper is the
+  // shape every future cron call site copies.
+  it("logs a throw's NAME, never its message", async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+    const f = okFetch();
+    const boom = new Error("postgres://webhook_app:sup3rs3cret@ep-x.neon.tech/db");
+    boom.name = "ConnectionError";
+    await withHeartbeat(
+      env,
+      "audit-anchor",
+      async () => {
+        throw boom;
+      },
+      { fetchImpl: f as unknown as typeof fetch },
+    );
+    spy.mockRestore();
+
+    const joined = lines.join("\n");
+    expect(joined).toContain("ConnectionError");
+    expect(joined).not.toContain("sup3rs3cret");
+    expect(joined).not.toContain("postgres://");
+    expect(f.mock.calls[0]?.[0]).toContain("status=fail"); // still reported as a failure
+  });
 });

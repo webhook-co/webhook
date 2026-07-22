@@ -106,7 +106,17 @@ export async function withHeartbeat(
     }
   } catch (err: unknown) {
     ok = false;
-    console.log(JSON.stringify({ message: `${jobId} cron failed`, error: String(err) }));
+    // The error's NAME, never its message. The frames that can reach here include client
+    // construction, whose live argument is a Hyperdrive connection string embedding a role
+    // credential — so a raw message would make non-leakage depend on an upstream library's error
+    // formatting, which nothing in this repo pins. This helper is the intended shape for every
+    // future cron call site, so scrubbing belongs here rather than at each of them. (no-secrets)
+    console.log(
+      JSON.stringify({
+        message: `${jobId} cron failed`,
+        error: err instanceof Error ? err.name : typeof err,
+      }),
+    );
   }
   await reportHeartbeat(env, jobId, ok, opts.fetchImpl);
 }
