@@ -35,7 +35,7 @@ const detail: EventDetailItem = {
   verification: { ok: true, keyId: "key_1", scheme: "stripe" },
 };
 
-const cursor: Cursor = { receivedAt: new Date("2026-06-28T00:00:00Z"), id: EVENT_ID };
+const cursor: Cursor = { orderKey: "2026-06-28T00:00:00.000000Z", id: EVENT_ID };
 
 function readers(over: Partial<EventReaders> = {}): EventReaders {
   return {
