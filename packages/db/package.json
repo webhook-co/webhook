@@ -30,7 +30,8 @@
     "./org-lifecycle": "./src/org-lifecycle.ts",
     "./retention": "./src/retention.ts",
     "./orphan-sweep": "./src/orphan-sweep.ts",
-    "./event-delete": "./src/event-delete.ts"
+    "./event-delete": "./src/event-delete.ts",
+    "./health": "./src/health.ts"
   },
   "scripts": {
     "build": "tsc",

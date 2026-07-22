@@ -5,6 +5,7 @@ import {
   healthDocument,
   memoized,
   publicReadyz,
+  readinessProvider,
   runChecks,
   worstStatus,
   type Check,
@@ -198,6 +199,73 @@ describe("authedHealth", () => {
   it("refuses every request when no token is configured", () => {
     expect(authedHealth(doc, req("Bearer "), "").status).toBe(404);
     expect(authedHealth(doc, req(), "").status).toBe(404);
+  });
+});
+
+describe("readinessProvider", () => {
+  it("evaluates the checks and returns a health document", async () => {
+    const provider = readinessProvider((env: { dsn: string }) => ({
+      database: async () => {
+        if (env.dsn !== "ok") throw new Error("bad dsn");
+      },
+    }));
+    const doc = await provider({ dsn: "ok" });
+    expect(doc.status).toBe("pass");
+    expect(Object.keys(doc.checks)).toEqual(["database:responseTime"]);
+  });
+
+  it("reports fail when a dependency throws", async () => {
+    const provider = readinessProvider(() => ({
+      database: async () => {
+        throw new Error("down");
+      },
+    }));
+    expect((await provider({})).status).toBe("fail");
+  });
+
+  // The cache is what stops an unauthenticated endpoint from turning request rate into database
+  // load, so the provider must build the check set ONCE and reuse the verdict.
+  it("builds the checks once and reuses the verdict inside the TTL", async () => {
+    let built = 0;
+    let ran = 0;
+    const provider = readinessProvider(
+      () => {
+        built += 1;
+        return {
+          database: async () => {
+            ran += 1;
+          },
+        };
+      },
+      { cacheMs: 60_000 },
+    );
+    await provider({});
+    await provider({});
+    await provider({});
+    expect(built).toBe(1);
+    expect(ran).toBe(1);
+  });
+
+  it("re-evaluates once the TTL has passed", async () => {
+    let ran = 0;
+    let clock = 0;
+    const provider = readinessProvider(
+      () => ({
+        database: async () => {
+          ran += 1;
+        },
+      }),
+      { cacheMs: 100, now: () => clock },
+    );
+    await provider({});
+    clock = 101;
+    await provider({});
+    expect(ran).toBe(2);
+  });
+
+  it("bounds a hanging dependency with the supplied timeout", async () => {
+    const provider = readinessProvider(() => ({ database: hang }), { timeoutMs: 20 });
+    expect((await provider({})).status).toBe("fail");
   });
 });
 

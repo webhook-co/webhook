@@ -48,6 +48,8 @@ import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
 import { runNotificationDrain } from "./runtime/notify-cron";
 import { runAuthExpirySweep } from "./runtime/sweep-cron";
+import { pingDatabase } from "@webhook-co/db/health";
+import { publicReadyz, readinessProvider } from "@webhook-co/shared/health";
 
 // The OAuth issuer instance — @cloudflare/workers-oauth-provider wrapping the OpenNext handler (A2b-1). We
 // keep a reference rather than exporting it directly because the default export now also carries a
@@ -58,8 +60,31 @@ const provider = new OAuthProvider({
   defaultHandler: makeIssuerDefaultHandler(openNextHandler),
 });
 
+/**
+ * auth readiness. webhook_auth backs the issuer's own global reads; webhook_app backs the
+ * org-scoped reads the login flow performs under RLS. Checked separately so a single broken role is
+ * visible rather than masked by the other.
+ */
+const authReadiness = readinessProvider<Record<string, unknown>>((env) => ({
+  database: () => pingDatabase(hyperdriveDsn(env, "HYPERDRIVE_AUTH")),
+  tenant: () => pingDatabase(hyperdriveDsn(env, "HYPERDRIVE_TENANT")),
+}));
+
+/** Read a Hyperdrive binding's DSN, throwing (-> a `fail` check) when it is absent. */
+function hyperdriveDsn(env: Record<string, unknown>, binding: string): string {
+  const hd = env[binding] as { connectionString?: string } | undefined;
+  if (!hd?.connectionString) throw new Error(`${binding} binding is not configured`);
+  return hd.connectionString;
+}
+
 export default {
   fetch: async (request, env, ctx) => {
+    // Readiness, answered BEFORE the OAuth provider and before OpenNext boots: a readiness probe
+    // must not depend on the framework cold-starting, or a slow cold start reads as an outage.
+    if (request.method === "GET" && new URL(request.url).pathname === "/readyz") {
+      return publicReadyz(await authReadiness(env as unknown as Record<string, unknown>));
+    }
+
     // Throttle the provider-owned DCR endpoint (POST /register) before delegating — it's public,
     // unauthenticated, and otherwise unthrottled. Fails open (unbound KV / absent IP / KV fault); a
     // non-/register request returns null and falls straight through to the provider.

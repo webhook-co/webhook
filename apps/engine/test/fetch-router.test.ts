@@ -1,6 +1,8 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import { healthDocument } from "@webhook-co/shared/health";
+
 import { handleFetch, type Env, type IngestDepsHandle } from "../src/index";
 import type { IngestDeps, ResolvedEndpoint } from "../src/ingest";
 
@@ -178,6 +180,57 @@ describe("handleFetch routing + lifecycle", () => {
     expect(await res.text()).toBe("ok");
     expect(res.headers.get("x-robots-tag")).toBe("noindex");
     expect(built).toBe(0); // health never touches the DB path
+  });
+
+  it("GET /readyz reports 200 when the ingest dependencies answer, and does NOT build ingest deps", async () => {
+    let built = 0;
+    const res = await handleFetch(
+      get("/readyz"),
+      bindings,
+      ctx,
+      () => {
+        built += 1;
+        return Promise.resolve(fakeHandle().handle);
+      },
+      async () =>
+        healthDocument([{ name: "database", status: "pass", durationMs: 1 }], { time: "t" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"status":"pass"}');
+    expect(built).toBe(0); // readiness runs its own cheap probes, never the full ingest dep graph
+  });
+
+  // The whole point of the endpoint: a broken dependency must turn the apex RED. The old static
+  // /healthz would have answered 200 through exactly this scenario.
+  it("GET /readyz reports 503 when a dependency is failing", async () => {
+    const res = await handleFetch(get("/readyz"), bindings, ctx, undefined, async () =>
+      healthDocument([{ name: "database", status: "fail", durationMs: 1 }], { time: "t" }),
+    );
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe('{"status":"fail"}');
+  });
+
+  it("GET /readyz carries the apex transport-security headers and leaks no dependency detail", async () => {
+    const res = await handleFetch(get("/readyz"), bindings, ctx, undefined, async () =>
+      healthDocument([{ name: "database", status: "pass", durationMs: 1 }], { time: "t" }),
+    );
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=63072000");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("x-robots-tag")).toBe("noindex");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const body = await res.text();
+    expect(body).not.toContain("database"); // check names stay behind the authenticated endpoint
+  });
+
+  it("301s a plaintext /readyz before evaluating readiness", async () => {
+    let evaluated = 0;
+    const res = await handleFetch(httpGet("/readyz"), bindings, ctx, undefined, async () => {
+      evaluated += 1;
+      return healthDocument([], { time: "t" });
+    });
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("https://wbhk.my/readyz");
+    expect(evaluated).toBe(0);
   });
 
   it("a token path is NEVER caught by the root redirect — GET/POST /whep_good route to ingest (no 3xx)", async () => {

@@ -231,3 +231,35 @@ export function memoized<T>(
     }
   };
 }
+
+/**
+ * Compose {@link runChecks}, {@link healthDocument} and {@link memoized} into the single function an
+ * app's `/readyz` route calls.
+ *
+ * Each service otherwise repeats the same four lines of wiring, and the one that matters most — the
+ * cache — is the easiest to forget. Forgetting it turns an unauthenticated endpoint into a way to
+ * generate one database connection per request.
+ *
+ * The check set is built ONCE, on first call, capturing the env. Worker bindings are stable for an
+ * isolate's lifetime, so this is safe and avoids rebuilding the closure per request.
+ */
+export function readinessProvider<E>(
+  buildChecks: (env: E) => Record<string, Check>,
+  opts: { timeoutMs?: number; cacheMs?: number; now?: () => number } = {},
+): (env: E) => Promise<HealthDocument> {
+  const timeoutMs = opts.timeoutMs ?? 2_000;
+  const cacheMs = opts.cacheMs ?? 20_000;
+  let evaluate: (() => Promise<HealthDocument>) | undefined;
+
+  return (env: E) => {
+    evaluate ??= memoized(
+      async () => {
+        const outcomes = await runChecks(buildChecks(env), { timeoutMs });
+        return healthDocument(outcomes, { time: new Date().toISOString() });
+      },
+      cacheMs,
+      opts.now,
+    );
+    return evaluate();
+  };
+}
