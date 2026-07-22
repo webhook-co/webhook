@@ -343,7 +343,9 @@ export const upgradeCommand = buildCommand<UpgradeFlags, [], AppContext>({
         return;
       case "install": {
         // plan.action === "install" implies release !== null (planUpgrade); narrow it for TS.
-        if (release === null) return;
+        if (release === null) {
+          throw new Error("internal error: invariant violated (install action requires a release)");
+        }
         if (format !== "json") {
           this.process.stderr.write(`downloading wbhk ${plan.latest} (${plan.assetName})…\n`);
         }
