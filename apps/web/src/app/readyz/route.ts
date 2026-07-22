@@ -10,6 +10,9 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
  * touches no session: a readiness probe that depended on the page tree would report the framework's
  * health rather than the service's.
  */
+// dal-gate-allow: readiness runs `select 1` and reads no row, no session and no tenant data. Gating
+// it on verifySession() would make the probe report whether a CALLER is authenticated rather than
+// whether the service can serve, and would make it unusable by an external prober.
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
