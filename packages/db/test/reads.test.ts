@@ -7,6 +7,7 @@ import {
   newId,
   parseSince,
   type Cursor,
+  type VerificationState,
   userActor,
 } from "@webhook-co/shared";
 import { type AuthContext } from "@webhook-co/contract";
