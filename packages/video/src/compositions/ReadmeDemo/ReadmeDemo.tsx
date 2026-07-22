@@ -19,15 +19,13 @@ import { mono } from "../../promo/fonts";
 import { colors, radii, shadows } from "../../promo/tokens";
 import {
   CAPTIONS,
-  calloutOpacity,
   captionOpacity,
   CHROME_HEIGHT,
+  READMEDEMO_WIDTH,
   TERMINAL_HEIGHT,
   TERMINAL_WIDTH,
-  VERDICT_BAND,
 } from "./beats";
-import { CalloutView, DemoLockup, WindowChromeView } from "./components";
-import { READMEDEMO_WIDTH } from "./beats";
+import { DemoLockup, WindowChromeView } from "./components";
 
 const WINDOW_X = (READMEDEMO_WIDTH - TERMINAL_WIDTH) / 2;
 const WINDOW_Y = 112;
@@ -83,24 +81,20 @@ export function ReadmeDemo() {
         }}
       >
         <WindowChromeView title="wbhk listen" />
-        <div
+        {/* Just the recording. The terminal's own colouring already marks each
+            row `verified` (green) / `unverified` (amber) — that's real CLI
+            output, so no overlay is needed or wanted on top of it; the caption
+            below names what the column means. */}
+        <OffthreadVideo
+          src={staticFile("terminal.mp4")}
           style={{
-            position: "relative",
             width: TERMINAL_WIDTH,
             height: TERMINAL_HEIGHT,
+            display: "block",
             backgroundColor: colors.termBg,
           }}
-        >
-          <OffthreadVideo
-            src={staticFile("terminal.mp4")}
-            style={{ width: TERMINAL_WIDTH, height: TERMINAL_HEIGHT, display: "block" }}
-            muted
-          />
-          {/* Positioned in the recording's own pixel space — see VERDICT_BAND.
-              No label: the caption below the window explains the band, and the
-              recording's own footer row sits where a label would land. */}
-          <CalloutView opacity={calloutOpacity(frame)} band={VERDICT_BAND} />
-        </div>
+          muted
+        />
       </div>
 
       {/* The narration. One caption at a time, cross-faded. */}

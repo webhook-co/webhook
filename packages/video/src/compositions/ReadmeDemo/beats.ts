@@ -32,23 +32,19 @@ export interface Caption {
 }
 
 /**
- * The second beat, named so the callout can derive its window from it (they
- * must arrive together — see CALLOUT).
- */
-const VERDICT_CAPTION: Caption = {
-  from: 150,
-  durationInFrames: 150,
-  text: "with its signature checked — 141 providers built in",
-};
-
-/**
  * Two beats, no more. A README GIF is read in a glance, and the reader is
  * already on the page — a title card would spend the loop's best seconds
- * saying what the heading above it already says.
+ * saying what the heading above it already says. The second beat names what the
+ * terminal's own colouring is already showing (the `verified`/`unverified`
+ * column), so no on-screen overlay is needed to point at it.
  */
 export const CAPTIONS: readonly Caption[] = [
   { from: 30, durationInFrames: 110, text: "every webhook that arrives, live" },
-  VERDICT_CAPTION,
+  {
+    from: 150,
+    durationInFrames: 150,
+    text: "with its signature checked — 141 providers built in",
+  },
 ] as const;
 
 export const CAPTION_FADE_FRAMES = 10;
@@ -70,30 +66,3 @@ function envelope(frame: number, from: number, duration: number, fade: number): 
 export function captionOpacity(frame: number, caption: Caption): number {
   return envelope(frame, caption.from, caption.durationInFrames, CAPTION_FADE_FRAMES);
 }
-
-/**
- * When the verdict callout is up. DERIVED from the second caption, not a matching
- * literal: the band and the words that explain it must arrive together, or the
- * highlight reads as a rendering artifact — so the coupling is by construction.
- */
-export const CALLOUT = {
-  from: VERDICT_CAPTION.from,
-  durationInFrames: VERDICT_CAPTION.durationInFrames,
-} as const;
-
-const CALLOUT_FADE_FRAMES = 12;
-
-export function calloutOpacity(frame: number): number {
-  return envelope(frame, CALLOUT.from, CALLOUT.durationInFrames, CALLOUT_FADE_FRAMES);
-}
-
-/**
- * The highlight band over the signature-verdict column, in the recording's own
- * coordinate space (origin = terminal viewport top-left).
- *
- * Measured off the real frames, not guessed: amber `unverified` ink spans
- * x 243..381, green `verified` ink spans x 315..425. The TUI separates columns
- * with spaces rather than padding to a fixed width, so the two verdicts do NOT
- * share a left edge — the band covers the union of both, with breathing room.
- */
-export const VERDICT_BAND = { x: 232, y: 66, width: 206, height: 238 } as const;

@@ -10,7 +10,7 @@ import type { CSSProperties, ReactElement } from "react";
 import { Mark } from "@webhook-co/ui";
 
 import { inter, mono } from "../../promo/fonts";
-import { colors, radii } from "../../promo/tokens";
+import { colors } from "../../promo/tokens";
 import { CHROME_HEIGHT } from "./beats";
 
 export interface DemoLockupProps {
@@ -105,54 +105,6 @@ export function WindowChromeView({ title }: WindowChromeViewProps): ReactElement
       >
         {title}
       </span>
-    </div>
-  );
-}
-
-export interface Band {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}
-
-export interface CalloutViewProps {
-  /** Already-computed envelope in [0, 1]. The wrapper owns the timing. */
-  opacity: number;
-  band: Band;
-}
-
-/**
- * The verdict-column highlight: a soft accent band over the signature column.
- * Renders nothing at zero opacity so a fully faded callout leaves no stray box
- * in the frame. It carries no label of its own — the recording's own footer row
- * sits directly under the band, so the words live in the caption below the
- * window instead.
- */
-export function CalloutView({ opacity, band }: CalloutViewProps): ReactElement | null {
-  if (opacity <= 0) {
-    return null;
-  }
-
-  return (
-    <div
-      data-testid="callout"
-      style={{ position: "absolute", inset: 0, opacity, pointerEvents: "none" }}
-    >
-      <div
-        data-testid="callout-band"
-        style={{
-          position: "absolute",
-          left: band.x,
-          top: band.y,
-          width: band.width,
-          height: band.height,
-          borderRadius: radii.terminal,
-          border: `1.5px solid ${colors.verified}`,
-          backgroundColor: "rgba(63,178,127,0.10)",
-          boxShadow: `0 0 0 1px rgba(63,178,127,0.10), 0 0 34px ${colors.verifiedGlow}`,
-        }}
-      />
     </div>
   );
 }

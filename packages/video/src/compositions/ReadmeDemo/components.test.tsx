@@ -4,8 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { Mark } from "@webhook-co/ui";
 
-import { colors } from "../../promo/tokens";
-import { CalloutView, DemoLockup, WindowChromeView } from "./components";
+import { DemoLockup, WindowChromeView } from "./components";
 
 // The canonical mark's path data, extracted from the shared component itself —
 // NOT a local copy. Pinning DemoLockup against this proves it renders the real
@@ -53,34 +52,5 @@ describe("DemoLockup", () => {
     // Never "Webhook", never all-caps — and `.co` is a separate, muted element.
     expect(screen.getByTestId("lockup").textContent).toBe("webhook.co");
     expect(screen.getByTestId("lockup-tld").textContent).toBe(".co");
-  });
-});
-
-describe("CalloutView", () => {
-  const band = { x: 228, y: 58, width: 212, height: 252 };
-
-  it("renders nothing when fully faded out", () => {
-    const { container } = render(<CalloutView opacity={0} band={band} />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it("positions the band at the measured verdict-column geometry", () => {
-    render(<CalloutView opacity={1} band={band} />);
-    const el = screen.getByTestId("callout-band");
-    expect(el.style.left).toBe("228px");
-    expect(el.style.top).toBe("58px");
-    expect(el.style.width).toBe("212px");
-    expect(el.style.height).toBe("252px");
-  });
-
-  it("carries the supplied opacity so the wrapper owns the timing", () => {
-    render(<CalloutView opacity={0.5} band={band} />);
-    expect(screen.getByTestId("callout").style.opacity).toBe("0.5");
-  });
-
-  it("tints with the film's single accent, not a new colour", () => {
-    render(<CalloutView opacity={1} band={band} />);
-    expect(screen.getByTestId("callout-band").style.borderColor).toBeTruthy();
-    expect(colors.verified).toBe("#3FB27F");
   });
 });
