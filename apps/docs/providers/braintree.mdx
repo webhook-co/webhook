@@ -9,13 +9,16 @@ Braintree signs webhooks with an HMAC-SHA1 keyed by `SHA1(private_key)`. The sig
 
 ## Get the keys
 
-In the Braintree Control Panel, open **Settings → API Keys**. You'll register the **Private Key** as the signing secret. For the subscription handshake you'll also need the matching **Public Key**.
+In the Braintree Control Panel, open the gear menu, choose **API**, and scroll to **API Keys**. You'll register the **Private Key** as the signing secret. For the subscription handshake you'll also need the matching **Public Key**.
+
+Sandbox and production are separate control panels with separate key pairs, so a sandbox delivery will never verify against a production key. Braintree also issues a key pair per user on the gateway and keeps old keys working until you delete them, which is why a signature arrives as a set rather than a single value.
 
 ## Register the private key
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$BRAINTREE_PRIVATE_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider braintree
 ```
@@ -37,9 +40,24 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
+## How the signature is checked
+
+- **Signed message** — the `bt_payload` form field exactly as received, including the trailing newline Braintree's encoder adds. It is the base64 text that is signed, not the bytes it decodes to, so verification happens before any decoding.
+- **Algorithm** — HMAC-SHA1, hex-encoded.
+- **Key** — the SHA-1 digest of your private key as raw bytes, not the private key itself.
+- **Signature format** — `&`-joined `publicKey|signature` pairs; the pair matching your key is the one that counts.
+
+That key derivation is the detail hand-rolled Braintree verifiers get wrong, and it is easy to see why: Braintree's documentation names the two form fields and then stops. It publishes no algorithm, no signature format and no key derivation — the scheme is specified only by its own SDKs.
+
+Two more consequences worth knowing. The decoded payload is XML, not JSON. And the base64 in `bt_payload` is line-wrapped, so a decoder that rejects embedded newlines will fail on a perfectly valid delivery.
+
+## No replay window
+
+Braintree binds no timestamp into the signature, so webhook.co enforces no time tolerance. A captured `bt_signature` and `bt_payload` pair stays valid until the signing key is deleted. The notification carries a timestamp inside the signed payload, which Braintree offers for ordering rather than freshness, since deliveries are retried for up to 24 hours in production.
+
 ## The bt_challenge handshake
 
-Braintree verifies a new webhook with a `bt_challenge` GET. Answering it needs your public key too, registered as a second secret with `kind: braintree_public_key` — available over the API or SDK:
+webhook.co answers Braintree's `bt_challenge` GET. Doing so needs your public key too, registered as a second secret with `kind: braintree_public_key` — available over the API or SDK:
 
 ```sh
 curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
@@ -61,3 +79,5 @@ With both registered, webhook.co computes the challenge response Braintree expec
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [Braintree's webhook documentation](https://developer.paypal.com/braintree/docs/guides/webhooks/parse/node) and its published server SDKs, checked 2026-07-22.

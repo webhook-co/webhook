@@ -9,13 +9,14 @@ HubSpot's v3 signature is an HMAC-SHA256 over `{method}{requestURI}{body}{timest
 
 ## Get the client secret
 
-In the HubSpot developer account, open your app's **Auth** settings and copy the **Client secret**. This same secret signs the app's webhooks.
+In your HubSpot developer account, open the app's **Auth** tab and copy the **Client secret** from its client credentials. The same secret signs the app's webhooks. Rotating it invalidates in-flight verification, so register the replacement before you rotate and leave the old one in place until traffic has moved over — every secret registered for the provider is tried.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$HUBSPOT_CLIENT_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider hubspot
 ```
@@ -37,12 +38,32 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
+## How the signature is checked
+
+- **Signed message** — the HTTP method, the full request URL, the raw body, and the timestamp, concatenated in that order with no separators.
+- **Algorithm** — HMAC-SHA256, base64-encoded.
+- **Key** — the client secret used verbatim, as its UTF-8 bytes.
+- **Signature format** — the bare encoded MAC.
+- **Timestamp** — read from the `X-HubSpot-Request-Timestamp` header, in milliseconds. The raw header string is what goes into the signed message; the conversion to seconds is only for the window arithmetic.
+
+## Version 3 only
+
+HubSpot has shipped three signature schemes. Only v3 is an HMAC. Its v1 and v2 predecessors are a plain SHA-256 over the secret concatenated with the request — a different construction that shares one header, `X-HubSpot-Signature`, distinguished only by `X-HubSpot-Signature-Version`.
+
+webhook.co verifies v3. A request that arrives carrying only a v1 or v2 signature has no `X-HubSpot-Signature-v3` header, so there is nothing to check and the event is captured without a verification result. This matters because HubSpot documents CRM object webhooks as sending v1: confirm your app receives the v3 header before relying on verification.
+
 ## Replay window
 
-The signed timestamp (milliseconds) is part of the signature and drives a 5-minute window — webhook.co rejects a v3 request older than that. Because the URI is signed, your app's configured target must be the endpoint's ingest URL exactly.
+The timestamp is inside the signature, so it cannot be moved without breaking it. webhook.co rejects a v3 request whose timestamp is more than 5 minutes from now — in either direction. HubSpot's own prose only asks you to reject requests _older_ than five minutes, and two of its sample implementations check one side only, so a future-dated timestamp that HubSpot's samples would accept fails here.
+
+## The URL is part of the signature
+
+Because the request URI is signed, the target URL configured in your HubSpot app must be the endpoint's ingest URL exactly. A rewritten host, an added path prefix, a reordered query string, or a trailing slash introduced by a proxy changes the signed message and fails verification. HubSpot also caches webhook settings for a few minutes, so a target URL you have just changed can keep signing against the previous value for a short while.
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [HubSpot's request validation documentation](https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/request-validation), checked 2026-07-22.

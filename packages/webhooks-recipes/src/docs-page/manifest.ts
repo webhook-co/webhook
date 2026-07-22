@@ -18,6 +18,19 @@ export interface ManifestPage {
   readonly text: string;
 }
 
+/**
+ * The `sidebarTitle` from a page's frontmatter, or null. Used as the brand token to neutralize for a
+ * page the registry does not know (`directory`, `custom`, …). Scoped to the LEADING frontmatter block
+ * so a line in the body can never be mistaken for a declaration.
+ */
+export function sidebarTitle(mdx: string): string | null {
+  const block = /^---\n([\s\S]*?)\n---/.exec(mdx);
+  if (block === null) return null;
+  const field = /^sidebarTitle:\s*"?([^"\n]*?)"?\s*$/m.exec(block[1]!);
+  const value = field?.[1]?.trim();
+  return value === undefined || value === "" ? null : value;
+}
+
 /** Extract the human-visible prose from an MDX page. */
 export function mdxToText(mdx: string): string {
   let s = mdx;

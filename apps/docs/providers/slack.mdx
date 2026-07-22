@@ -9,13 +9,16 @@ Slack signs each request with an HMAC-SHA256 over the basestring `v0:{timestamp}
 
 ## Get the signing secret
 
-In your Slack app config at api.slack.com/apps, open **Basic Information → App Credentials** and copy the **Signing Secret**.
+In your Slack app config at api.slack.com/apps, open **Basic Information → App Credentials** and copy the **Signing Secret**. It sits next to the older verification token, which Slack marks deprecated across its docs and which proves nothing about a request's contents — the signing secret is the one you want.
+
+Slack documents no grace period when you regenerate a signing secret, unlike the client secret, which keeps its predecessor alive for a day. Register the new value alongside the old one before you press regenerate; both stay live here until you remove one.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$SLACK_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider slack
 ```
@@ -37,12 +40,33 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
+## How the signature is checked
+
+- **Signed message** — the literal `v0`, a colon, the timestamp exactly as the header carried it, another colon, then the raw body.
+- **Algorithm** — HMAC-SHA256, hex-encoded.
+- **Key** — the signing secret used verbatim, as its UTF-8 bytes. It looks like a 32-character hex value, and Slack calls this out explicitly: treat it as a string, never hex-decode it first.
+- **Signature format** — the hex digest behind a required `v0=` prefix.
+
+Note the version marker is punctuated two ways in one operation: `v0:` inside the basestring, `v0=` in the header. Swapping them yields a plausible-looking digest that never matches.
+
 ## The url_verification handshake
 
-When you save an ingest URL in Slack's **Event Subscriptions**, Slack POSTs a `url_verification` challenge. webhook.co detects it and echoes the `challenge` value automatically — no configuration, and the challenge is never captured as an event. Slack signs the timestamp, so webhook.co enforces a 5-minute replay window on real events.
+When you save an ingest URL in Slack's **Event Subscriptions**, Slack POSTs a `url_verification` challenge. webhook.co detects it and echoes the `challenge` value automatically — no configuration, and the challenge is never captured as an event.
+
+## Replay window
+
+The timestamp is part of the basestring, so it cannot be altered without breaking the signature. webhook.co rejects a request whose timestamp is more than 5 minutes from now in either direction, matching the tolerance Slack's own reference implementation uses.
+
+Worth knowing when a delivery fails this check rather than the signature: Slack schedules its third retry at five minutes, right on the boundary, and its opt-in delayed-events mode retries hourly for a day. Those deliveries are outside any five-minute window by design.
+
+## Content type does not change the recipe
+
+Slack sends JSON for the Events API and form-encoded bodies for slash commands and interactivity, but the basestring is the raw body either way. The form-encoded case is the more fragile one, because interactivity payloads are JSON percent-encoded inside a `payload=` field — and any parser that decodes and re-encodes that will alter escapes it must preserve exactly.
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [Slack's request verification documentation](https://docs.slack.dev/authentication/verifying-requests-from-slack), checked 2026-07-22.
