@@ -1,7 +1,14 @@
 import { runChecks } from "@webhook-co/shared/health";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { webReadinessChecks } from "./route";
+import { GET, webReadinessChecks } from "./route";
+
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: vi.fn(async () => ({
+    env: { HYPERDRIVE_TENANT: { connectionString: "postgres://app" } },
+  })),
+}));
+vi.mock("@webhook-co/db/health", () => ({ pingDatabase: vi.fn(async () => {}) }));
 
 const statuses = async (checks: unknown) =>
   Object.fromEntries(
@@ -37,5 +44,24 @@ describe("dashboard readiness", () => {
     expect(await statuses(webReadinessChecks({ HYPERDRIVE_TENANT: {} }, async () => {}))).toEqual({
       database: "fail",
     });
+  });
+});
+
+// THE GAP THAT LET A 500 SHIP. The check builder was tested; the HANDLER -- which is where the
+// runtime declaration and the context accessor live -- was not. Both were wrong in production:
+// `runtime = "edge"` plus the SYNC getCloudflareContext() threw, so the endpoint returned 500
+// instead of a readiness verdict, and no test could have noticed.
+describe("the route handler itself", () => {
+  it("returns a readiness verdict rather than throwing", async () => {
+    const res = await GET();
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"status":"pass"}');
+  });
+
+  it("does not declare the edge runtime", async () => {
+    const mod: Record<string, unknown> = await import("./route");
+    // OpenNext runs Next in the Node runtime on workerd; declaring "edge" builds this as an Edge
+    // Function where getCloudflareContext is not available the same way.
+    expect(mod.runtime).toBeUndefined();
   });
 });

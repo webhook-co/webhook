@@ -13,7 +13,6 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 // dal-gate-allow: readiness runs `select 1` and reads no row, no session and no tenant data. Gating
 // it on verifySession() would make the probe report whether a CALLER is authenticated rather than
 // whether the service can serve, and would make it unusable by an external prober.
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 /**
@@ -39,7 +38,11 @@ const readiness = readinessProvider<{ HYPERDRIVE_TENANT?: { connectionString?: s
 );
 
 export async function GET(): Promise<Response> {
-  const { env } = getCloudflareContext();
+  // The ASYNC form, and NO `runtime = "edge"`. OpenNext runs Next in the Node runtime on workerd:
+  // declaring the edge runtime builds this as an Edge Function where the context is not available
+  // the same way, and the sync accessor is not valid there either. Both mistakes produced a 500 in
+  // production rather than a readiness verdict — the app's own DAL uses this exact form.
+  const { env } = await getCloudflareContext({ async: true });
   return publicReadyz(
     await readiness(env as unknown as { HYPERDRIVE_TENANT?: { connectionString?: string } }),
   );
