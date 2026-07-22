@@ -9,13 +9,17 @@ Shopify signs each webhook with an HMAC-SHA256 over the raw body, base64-encoded
 
 ## Get the signing secret
 
-For app webhooks, the secret is your app's **API secret key** (Partner Dashboard → your app → **API credentials**). For webhooks created in the Shopify admin under **Settings → Notifications**, use the signing secret shown there. Shopify identifies the store in `X-Shopify-Shop-Domain`, but the signature is what proves authenticity.
+Which secret signs a Shopify webhook depends on who created it, and getting this wrong is the most common cause of a uniform, permanent failure on one integration while identical code works elsewhere.
+
+- **Created by an app** — whether declared in `shopify.app.toml` or created through the Admin API — is signed with that app's **client secret**, found in the Dev Dashboard under your app's settings. One secret covers every store that installed the app.
+- **Created in the Shopify admin** under **Settings → Notifications → Webhooks** belongs to no app, so no client secret verifies it. Shopify signs these with a key unique to that store, shown in the admin alongside the webhook.
 
 ## Register it on your endpoint
 
 <CodeGroup>
 
 ```sh CLI
+# read from a no-echo prompt (or piped stdin) — never an argv flag
 printf %s "$SHOPIFY_API_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
   --provider shopify
 ```
@@ -37,13 +41,30 @@ await webhook.endpoints.providerSecrets.add({
 
 </CodeGroup>
 
+## How the signature is checked
+
+- **Signed message** — the raw request body, with nothing prepended or appended.
+- **Algorithm** — HMAC-SHA256, base64-encoded. Not hex, which is the encoding Shopify uses for OAuth and app proxies with the very same secret.
+- **Key** — the secret used verbatim, as its UTF-8 bytes.
+- **Signature format** — the bare encoded MAC, with no prefix.
+
 <Note>
-  The signature is base64, not hex. Register the raw secret exactly as Shopify shows it — webhook.co
-  handles the encoding.
+  Register the secret exactly as Shopify shows it. The base64 decoder here is strict: a signature
+  carrying stray whitespace or broken padding is reported as malformed rather than as a mismatch.
 </Note>
+
+## Rotating the secret has a propagation window
+
+Shopify documents that after you rotate an app's client secret it can take **up to an hour** before deliveries are signed with the new one. Register the new secret ahead of the switch and keep the previous secret registered until the window has passed — webhook.co tries every secret registered for that provider on the endpoint, so both are live at once and nothing fails in between.
+
+## No replay window
+
+Nothing in a Shopify signature binds it to a moment. `X-Shopify-Triggered-At` exists but sits outside the HMAC, so it can be rewritten at will and is not a freshness signal. Resist adding a tolerance of your own: Shopify's own troubleshooting notes contemplate deliveries arriving as much as a day late, so a short staleness window would drop genuine events. Deduplicate on `X-Shopify-Webhook-Id`, which is unique per delivery — not on `X-Shopify-Event-Id`, which is deliberately shared across every delivery produced by one merchant action.
 
 ## Confirm
 
 ```sh
 wbhk events list <endpoint-id> --status verified
 ```
+
+Provider behaviour above is from [Shopify's webhook verification documentation](https://shopify.dev/docs/apps/build/webhooks/verify-deliveries), checked 2026-07-22.
