@@ -59,7 +59,15 @@ function fakeReader(byCustomer: Record<string, Record<string, number>>): MeterSu
   };
 }
 
-function run(reader: MeterSummaryReader, opts: { limit?: number; lookbackDays?: number } = {}) {
+function run(
+  reader: MeterSummaryReader,
+  opts: {
+    limit?: number;
+    lookbackDays?: number;
+    orgLimit?: number;
+    cursor?: string | null;
+  } = {},
+) {
   return reconcileStripeTransport({
     audit: transport,
     reader,
@@ -67,6 +75,10 @@ function run(reader: MeterSummaryReader, opts: { limit?: number; lookbackDays?: 
     settleLagMs: DAY_MS, // 24h → days < 2026-07-14 are settled
     lookbackDays: opts.lookbackDays ?? 40,
     limit: opts.limit ?? 1000,
+    // `orgLimit` bounds the ORG page (one Stripe call each); `limit` bounds only the drift LIST. The
+    // default here is large so the pre-existing drift cases still see every seeded org in one pass.
+    orgLimit: opts.orgLimit ?? 1000,
+    cursor: opts.cursor ?? null,
   });
 }
 
@@ -224,6 +236,8 @@ describe("reconcileStripeTransport", () => {
       settleLagMs: DAY_MS,
       lookbackDays: 40,
       limit: 2,
+      orgLimit: 1000,
+      cursor: null,
       log: (m) => logs.push(m),
     });
     expect(res.mismatches.length).toBe(2);
@@ -240,5 +254,119 @@ describe("reconcileStripeTransport", () => {
     const res = await run(fakeReader({ cus_1: {} }), { limit: 1 });
     expect(res.mismatches.length).toBe(1);
     expect(res.capped).toBe(true);
+  });
+});
+
+// The ORG bound (2026-07-22). `limit` caps only the surfaced drift LIST; the driving query carried no
+// LIMIT at all, so the loop issued one Stripe `listMeterEventSummaries` call per distinct paying org with a
+// settled row in the window — an external fan-out that scaled with the customer base, inside an invocation
+// whose subrequest budget is shared with fourteen other crons.
+//
+// A plain LIMIT would have been worse than none: ordered by org id, the same head of the list would be
+// reconciled every tick and the tail NEVER checked, while every counter still read clean. So the bound is a
+// resumable rotation, and these run against real Postgres because that is the only place the SQL is real —
+// a mocked version of this suite passed while the query was rejecting `""` as a uuid and mis-serializing
+// the org array.
+describe("reconcileStripeTransport — the org fan-out is bounded and rotates", () => {
+  /** Seed `n` orgs, each with one settled drifting day, and return their ids in Postgres sort order. */
+  async function seedOrgs(n: number): Promise<string[]> {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const org = await seedOrg();
+      await seedCustomer(org, `cus_${org}`);
+      await seedSent(org, "2026-07-11", 10);
+      ids.push(org);
+    }
+    // `order by r.org_id` is Postgres' uuid ordering, which is byte order — matched here by sorting the
+    // canonical text form, since the ids are lowercase hex with fixed dash positions.
+    return [...ids].sort();
+  }
+
+  /** Records which customers Stripe was actually asked about. */
+  function countingReader(): { reader: MeterSummaryReader; asked: string[] } {
+    const asked: string[] = [];
+    return {
+      asked,
+      reader: {
+        async listDaySummaries(customer) {
+          asked.push(customer);
+          return [];
+        },
+      },
+    };
+  }
+
+  it("never asks Stripe about more orgs than orgLimit, however many are eligible", async () => {
+    await seedOrgs(6);
+    const { reader, asked } = countingReader();
+
+    const res = await run(reader, { orgLimit: 2 });
+
+    expect(asked).toHaveLength(2);
+    expect(res.orgsChecked).toBe(2);
+  });
+
+  it("resumes AFTER the cursor, reaching orgs the first page never saw", async () => {
+    const ids = await seedOrgs(4);
+    const { reader, asked } = countingReader();
+
+    await run(reader, { orgLimit: 2, cursor: ids[1] });
+
+    // Strictly greater than the cursor: the 3rd and 4th orgs, never the first two.
+    expect(asked).toEqual([`cus_${ids[2]}`, `cus_${ids[3]}`]);
+  });
+
+  it("two passes with the returned cursor cover every org exactly once", async () => {
+    // The property that makes the rotation correct: full coverage over time, no org checked twice in a
+    // cycle and none skipped. A naive LIMIT would re-check page one forever.
+    const ids = await seedOrgs(4);
+    const first = countingReader();
+    const firstRes = await run(first.reader, { orgLimit: 2 });
+    const second = countingReader();
+    const secondRes = await run(second.reader, { orgLimit: 2, cursor: firstRes.nextCursor });
+
+    expect([...first.asked, ...second.asked].sort()).toEqual(ids.map((i) => `cus_${i}`).sort());
+    expect(new Set([...first.asked, ...second.asked]).size).toBe(4);
+    // The second page was full as well, so the cycle has not yet wrapped.
+    expect(secondRes.nextCursor).toBe(ids[3]);
+  });
+
+  it("WRAPS when the page is short, so the tail never pins the cursor past the end", async () => {
+    // Pinning the cursor at the last org would leave every later pass starting beyond the end and
+    // reconciling NOTHING — with orgsChecked: 0 and no drift, which reads exactly like a clean run.
+    const ids = await seedOrgs(3);
+
+    const res = await run(countingReader().reader, { orgLimit: 10 });
+
+    expect(res.orgsChecked).toBe(3);
+    expect(res.nextCursor).toBeNull();
+    // And a pass starting past the final org finds nothing, which is why the wrap has to happen.
+    const beyond = await run(countingReader().reader, { orgLimit: 10, cursor: ids[2] });
+    expect(beyond.orgsChecked).toBe(0);
+    expect(beyond.nextCursor).toBeNull();
+  });
+
+  it("treats an EMPTY-STRING cursor as a clean start, not as a uuid", async () => {
+    // The regression this pins: `org_id` is a uuid column, so an empty-string cursor reaching SQL is
+    // `invalid input syntax for type uuid` — the cron would fail EVERY tick until the KV key was cleared
+    // by hand. The first version of this rotation did exactly that, and a mocked test suite passed anyway;
+    // only a real database says so. An empty cursor must behave identically to no cursor at all.
+    await seedOrgs(3);
+
+    const empty = await run(countingReader().reader, { orgLimit: 10, cursor: "" });
+    const absent = await run(countingReader().reader, { orgLimit: 10, cursor: null });
+
+    expect(empty.orgsChecked).toBe(3);
+    expect(empty.orgsChecked).toBe(absent.orgsChecked);
+    expect(empty.nextCursor).toBe(absent.nextCursor);
+  });
+
+  it("reconciles nothing and wraps when there are no eligible orgs at all", async () => {
+    const res = await run(countingReader().reader, { orgLimit: 5 });
+
+    expect(res.orgsChecked).toBe(0);
+    expect(res.daysChecked).toBe(0);
+    expect(res.mismatches).toEqual([]);
+    expect(res.nextCursor).toBeNull();
   });
 });
