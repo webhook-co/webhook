@@ -14,6 +14,7 @@
 import { createClient, pruneAllExpiredAuthTokens } from "@webhook-co/db";
 
 import { readSweepEnv, type SweepEnv } from "./env";
+import { safeErrorMessage } from "./redact";
 
 /**
  * Run one cross-org expiry sweep. Opens a webhook_sweeper-scoped postgres.js client over HYPERDRIVE_SWEEPER,
@@ -32,7 +33,7 @@ export async function runAuthExpirySweep(
     console.log(
       JSON.stringify({
         message: "auth.sweep.cron.error",
-        error: error instanceof Error ? error.message : String(error),
+        error: safeErrorMessage(error),
       }),
     );
     return null;
@@ -49,17 +50,18 @@ export async function runAuthExpirySweep(
     console.log(
       JSON.stringify({
         message: "auth.sweep.cron.error",
-        error: error instanceof Error ? error.message : String(error),
+        error: safeErrorMessage(error),
       }),
     );
     return null;
   } finally {
-    await sql
-      .end()
-      .catch((error: unknown) =>
-        console.log(
-          JSON.stringify({ message: "auth.sweep.cron.pool_close_failed", error: String(error) }),
-        ),
-      );
+    await sql.end().catch((error: unknown) =>
+      console.log(
+        JSON.stringify({
+          message: "auth.sweep.cron.pool_close_failed",
+          error: safeErrorMessage(error),
+        }),
+      ),
+    );
   }
 }

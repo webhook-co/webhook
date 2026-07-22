@@ -34,25 +34,25 @@ const controller = {
 const bareEnv = {} as Env;
 
 describe("apps/api scheduled() dispatch", () => {
-  it("dispatches BOTH billing crons, each as its own independent waitUntil unit", async () => {
+  it("dispatches BOTH billing crons as independent units, and neither rejects when unprovisioned", async () => {
     const { ctx, units } = recordingCtx();
 
     await worker.scheduled!(controller, bareEnv, ctx);
 
     // Two units, not one: the retention reconciler and the cancellation drain must be handed to
-    // waitUntil separately, so neither can starve the other. Delete either ctx.waitUntil(...) and
-    // this reads 1.
+    // waitUntil separately, so neither can starve the other. Delete either ctx.waitUntil(...) and this
+    // reads 1.
+    //
+    // This pins CARDINALITY only. WHICH two crons — and that each is handed `env` and left deliberately
+    // unwrapped so a failure still reaches the Cron Trigger status — is pinned statically by
+    // scripts/cron-dispatch-guard.mjs, because a promise is opaque and both crons are dark no-ops here.
+    // Without that guard, swapping one cron for a duplicate of the other would pass this test while a
+    // hard-deleted org kept being charged.
     expect(units).toHaveLength(2);
-  });
 
-  it("no cron rejects on an unprovisioned deployment — a missing binding is a clean no-op", async () => {
-    // A scheduled handler has no caller to answer, so a misconfigured deployment must be a SILENT
-    // no-op, never a rejection that marks the whole invocation failed. Both crons self-guard on
-    // BILLING_MODE / the Hyperdrive binding; this asserts the dispatch actually honours that.
-    const { ctx, units } = recordingCtx();
-
-    await worker.scheduled!(controller, bareEnv, ctx);
-
+    // A scheduled handler has no caller to answer, so a misconfigured deployment must be a SILENT no-op,
+    // never a rejection that marks the whole invocation failed. Both crons self-guard on BILLING_MODE /
+    // the Hyperdrive binding; this asserts the dispatch actually honours that.
     await expect(Promise.all(units)).resolves.toHaveLength(2);
   });
 });

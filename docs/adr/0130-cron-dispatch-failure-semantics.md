@@ -69,11 +69,14 @@ failure *and* provably suppress retry — but only if it is called before anythi
      notification drain — which sends owner email. A duplicate email is worse than a logged failure.
 
 3. **The fan-out is covered by two complementary layers**, because neither is sufficient alone.
-   - **Runtime** (`apps/engine/test/scheduled-dispatch.test.ts`, and the api/auth equivalents) drives the
-     real `scheduled()` handler and asserts how many units are dispatched, that the cap tick runs only the
-     cap producer, and that failures are absorbed. It must use a **hand-built bare `Env`**, never `env`
-     from `cloudflare:test` — the pool builds that from `wrangler.jsonc`, where every Hyperdrive binding is
-     present, so the dark-launch guards do not fire and the crons dial a real database.
+   - **Runtime.** `apps/engine/test/scheduled-dispatch.test.ts` and `apps/api/src/scheduled-dispatch.test.ts`
+     drive the real `scheduled()` handler and assert how many units are dispatched, that the cap tick runs
+     only the cap producer, and that failures are absorbed. They must use a **hand-built bare `Env`**, never
+     `env` from `cloudflare:test` — the pool builds that from `wrangler.jsonc`, where every Hyperdrive
+     binding is present, so the dark-launch guards do not fire and the crons dial a real database.
+     **`apps/auth` is the exception**: its `scheduled` lives in the tsconfig-excluded `src/worker.ts`, which
+     no test can import, so it is covered at MODULE level (`src/runtime/scheduled.test.ts`) and the one-line
+     delegate in `worker.ts` is deliberate residual untested surface, verified only by `deploy:dry`.
    - **Static** (`scripts/cron-dispatch-guard.mjs`) parses the dispatch body with the TypeScript compiler
      API and pins **identity**, which a runtime test cannot: a `waitUntil` promise is opaque, and 9 of the
      15 engine crons are dark no-ops that emit nothing. It asserts the exact set of cron identifiers, a
@@ -90,13 +93,20 @@ failure *and* provably suppress retry — but only if it is called before anythi
 
 ## Consequences
 
-- A deleted cron, a dropped `.catch()`, a cron promoted above the early return, or an unregistered new
-  cron is now caught — each by at least one layer, and the first three by both.
+- Caught by at least one layer, each demonstrated by mutating the source: a deleted cron; a dropped
+  `.catch()`; a `.catch()` whose body was **emptied or its message renamed** (the likelier regression, and
+  invisible at runtime because 9 of the 15 crons are dark no-ops that emit nothing either way); a cron
+  promoted above the cadence gate; a cron wrapped in an unrelated conditional; a cron handed something
+  other than `env`; a second early return that short-circuits the crons below it; an unregistered new cron;
+  and, for `apps/api`, one cron swapped for a duplicate of the other.
 - Adding cron #16 to the engine requires updating `scripts/cron-dispatch-guard.mjs`, which forces an
   explicit decision about its cadence. That friction is the point.
-- The engine's 50,000 subrequest ceiling is re-derived in `apps/engine/wrangler.jsonc` against all 15 crons
-  (previously it cited "~9 crons" and only the retention prune's 6,000). Worst case is on the order of
-  15,000–17,000, so the ceiling holds with roughly 3x headroom.
+- The engine's 50,000 subrequest ceiling comment in `apps/engine/wrangler.jsonc` no longer claims a precise
+  worst case. It previously cited "~9 crons" and the retention prune's 6,000; the crons had grown to 15, and
+  the accounting was inconsistent besides — it counted the drains' multi-statement work correctly but treated
+  the per-org enumerations (up to 1,000 orgs, each a multi-statement transaction) as one operation per org.
+  Replacing one invented number with another would have repeated the mistake, so the comment now names the
+  dominant contributors and states plainly that 50,000 is a chosen backstop, not a measured bound.
 
 ## Open
 
@@ -106,6 +116,18 @@ to retry. It is left open because it is an operations decision, not an engineeri
 sharing one invocation, any single transient failure would redden the whole run, so it is only an
 improvement alongside alerting that can act on it (Logpush filtered on `Outcome = exception`, or the
 GraphQL Analytics API). The per-cron structured log lines remain the actionable signal until then.
+
+**One cron's outbound fan-out is not bounded by a constant.** In `reconcileStripeTransport`
+(`packages/db/src/meter-transport-reconcile.ts`) the driving query carries no `LIMIT`; `deps.limit`
+(`DEFAULT_TRANSPORT_LIMIT`) caps only the surfaced *drift list*. The `for (const [orgId, …] of byOrg)` loop
+therefore issues one Stripe `listMeterEventSummaries` call per distinct paying org with a settled row in the
+window — it scales with the customer base. Combined with the per-org enumerations above, the shared 50,000
+ceiling is a function of tenant count rather than of any bound in the code. This was found while re-deriving
+the ceiling and is left as a finding rather than fixed here: changing the bound on a billing-reconciliation
+query is a metering-correctness change, not a test-coverage one, and belongs in its own lane with its own
+review. The failure mode if the ceiling is reached is that whichever `waitUntil` units run last fail — and
+because every engine cron swallows into a log line and the Cron Trigger status is always green (above), the
+observable symptom is silence.
 
 **Wall-clock truncation is unmodelled.** `finishScheduled` joins the waitUntil set against a 15-minute
 limit and **cancels** the losers. A cancelled cron is not a rejection, so its `.catch()` never runs and it

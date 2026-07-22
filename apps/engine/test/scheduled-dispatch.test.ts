@@ -34,16 +34,12 @@ const failureNames = (logs: readonly string[]): string[] =>
     .filter((m): m is string => typeof m === "string" && m.endsWith(" cron failed"))
     .sort();
 
-/** A bare Env: no Hyperdrive bindings, billing unset. KV_CONFIG is the one binding a cron reads
- *  before its guard, so it is stubbed; everything else is deliberately absent. */
+/** A bare Env — NOTHING is bound. Every cron either hits a dark-launch guard or throws reading
+ *  `.connectionString` of undefined on its first statement, so no binding needs stubbing: the two crons
+ *  that touch KV_CONFIG reach it only after a Hyperdrive access that has already thrown, or behind
+ *  `if (!env.HYPERDRIVE_RETENTION) return`. Verified by removing the stub and re-running. */
 function bareEnv(): Env {
-  return {
-    KV_CONFIG: {
-      get: async () => null,
-      put: async () => undefined,
-      delete: async () => undefined,
-    },
-  } as unknown as Env;
+  return {} as unknown as Env;
 }
 
 /** ScheduledController is structurally simple and nothing validates it, so a literal is enough.

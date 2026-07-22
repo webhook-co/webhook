@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { runNotificationDrain } from "./notify-cron";
 import {
+  DEFAULT_CRONS,
   EXPIRY_SWEEP_UTC_HOUR,
   dispatchAuthScheduled,
   runsExpirySweep,
   type AuthScheduledCrons,
 } from "./scheduled";
+import { runAuthExpirySweep } from "./sweep-cron";
 
 // apps/auth declares ONE hourly trigger ("0 * * * *") but runs a DAILY job behind it. Before this module
 // that split lived as an inline `new Date(event.scheduledTime).getUTCHours() === 4` inside src/worker.ts —
@@ -13,18 +16,26 @@ import {
 // merely untested but unreachable by any test, and its failure mode is silent: get the hour wrong and the
 // ADR-0055 cross-org expiry sweep simply never runs again, with no error and no alert.
 
-/** Records which crons ran, without touching a database. */
-function recordingCrons(): { crons: AuthScheduledCrons; ran: string[] } {
+/** Records which crons ran AND what env each was handed, without touching a database. */
+function recordingCrons(): {
+  crons: AuthScheduledCrons;
+  ran: string[];
+  envs: Record<string, unknown>[];
+} {
   const ran: string[] = [];
+  const envs: Record<string, unknown>[] = [];
   return {
     ran,
+    envs,
     crons: {
-      notificationDrain: async () => {
+      notificationDrain: async (env) => {
         ran.push("notificationDrain");
+        envs.push(env);
         return null;
       },
-      expirySweep: async () => {
+      expirySweep: async (env) => {
         ran.push("expirySweep");
+        envs.push(env);
         return null;
       },
     },
@@ -36,13 +47,26 @@ const atUtcHour = (hour: number): number => Date.UTC(2026, 6, 22, hour, 0, 0, 0)
 
 async function dispatchAt(
   scheduledTime: number,
-): Promise<{ ran: string[]; units: Promise<unknown>[] }> {
-  const { crons, ran } = recordingCrons();
+  env: Record<string, unknown> = {},
+): Promise<{ ran: string[]; envs: Record<string, unknown>[]; units: Promise<unknown>[] }> {
+  const { crons, ran, envs } = recordingCrons();
   const units: Promise<unknown>[] = [];
-  dispatchAuthScheduled({ scheduledTime }, {}, (p) => units.push(p), crons);
+  dispatchAuthScheduled({ scheduledTime }, env, (p) => units.push(p), crons);
   await Promise.all(units);
-  return { ran, units };
+  return { ran, envs, units };
 }
+
+function captureLogs(): string[] {
+  const lines: string[] = [];
+  vi.spyOn(console, "log").mockImplementation((line: string) => {
+    lines.push(line);
+  });
+  return lines;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("runsExpirySweep", () => {
   it("runs the sweep at 04:00 UTC — the agreed low-traffic window", () => {
@@ -86,6 +110,38 @@ describe("runsExpirySweep", () => {
     expect(runsExpirySweep(new Date(atUtcHour(EXPIRY_SWEEP_UTC_HOUR)))).toBe(true);
     expect(runsExpirySweep(new Date(atUtcHour(EXPIRY_SWEEP_UTC_HOUR + 1)))).toBe(false);
   });
+
+  it("does not sweep on an unparseable scheduledTime", () => {
+    // getUTCHours() on an Invalid Date is NaN, which is never === the hour. Pinned so a future
+    // "defensive" default cannot quietly turn a malformed firing into a sweep.
+    expect(runsExpirySweep(Number.NaN)).toBe(false);
+    expect(runsExpirySweep(new Date("not a date"))).toBe(false);
+  });
+});
+
+describe("DEFAULT_CRONS", () => {
+  it("wires the real crons to the right fields", () => {
+    // Every dispatch test below injects its own fakes, so the DEFAULT wiring is otherwise never executed.
+    // Swap these two fields and the whole suite stays green while production runs the cross-org expiry
+    // sweep hourly and drains owner notifications once a day. Both have the same signature, so tsc cannot
+    // see the swap either — only an identity assertion can.
+    expect(DEFAULT_CRONS.notificationDrain).toBe(runNotificationDrain);
+    expect(DEFAULT_CRONS.expirySweep).toBe(runAuthExpirySweep);
+  });
+
+  it("is what dispatchAuthScheduled uses when no crons are injected", async () => {
+    // Drives the real modules. Hermetic: with a bare env both validate-and-return-null before any I/O
+    // (proven in notify-cron / sweep-cron tests), so this touches no database.
+    const units: Promise<unknown>[] = [];
+    captureLogs();
+
+    dispatchAuthScheduled({ scheduledTime: atUtcHour(EXPIRY_SWEEP_UTC_HOUR) }, {}, (p) =>
+      units.push(p),
+    );
+
+    expect(units).toHaveLength(2);
+    await expect(Promise.all(units)).resolves.toHaveLength(2);
+  });
 });
 
 describe("dispatchAuthScheduled", () => {
@@ -112,21 +168,101 @@ describe("dispatchAuthScheduled", () => {
     expect(offHour.units).toHaveLength(1);
   });
 
-  it("does not reject when a cron fails — a cron failure must not wedge the invocation", async () => {
+  it("passes the REAL env to every cron, not a substitute", async () => {
+    // Handing a cron `{}` instead of `env` is silent: both crons validate their env and return null, so
+    // they no-op exactly as they would on an unprovisioned deployment. Owner auto-disable emails would
+    // simply stop, with a suite that never noticed. Identity, not shape.
+    const env = { HYPERDRIVE_SWEEPER: { connectionString: "x" }, marker: Symbol("env") };
+    const { envs } = await dispatchAt(atUtcHour(EXPIRY_SWEEP_UTC_HOUR), env);
+
+    expect(envs).toHaveLength(2);
+    for (const seen of envs) expect(seen).toBe(env);
+  });
+
+  // Both arms must be covered: the arm whose regression actually causes the double-send the module's
+  // docblock warns about is the SWEEP arm, and it only runs on one hour of the day.
+  for (const arm of [
+    { cron: "notificationDrain", message: "auth.notify.cron.error" },
+    { cron: "expirySweep", message: "auth.sweep.cron.error" },
+  ] as const) {
+    it(`absorbs a ${arm.cron} failure — it must not wedge the invocation`, async () => {
+      const lines = captureLogs();
+      const units: Promise<unknown>[] = [];
+      dispatchAuthScheduled(
+        { scheduledTime: atUtcHour(EXPIRY_SWEEP_UTC_HOUR) },
+        {},
+        (p) => units.push(p),
+        {
+          notificationDrain: async () =>
+            arm.cron === "notificationDrain" ? Promise.reject(new Error("boom")) : null,
+          expirySweep: async () =>
+            arm.cron === "expirySweep" ? Promise.reject(new Error("boom")) : null,
+        },
+      );
+
+      // Both units settle; the failing one resolves rather than rejecting, so it cannot surface as an
+      // unhandled rejection at the invocation boundary and leave the runtime's retry flag set.
+      await expect(Promise.all(units)).resolves.toHaveLength(2);
+      const entries = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message).toBe(arm.message);
+      expect(entries[0].stage).toBe("dispatch");
+    });
+
+    it(`absorbs a SYNCHRONOUS throw from ${arm.cron}`, async () => {
+      // AuthScheduledCrons types the crons as `=> Promise<…>`, not `async`. A non-async implementation
+      // that throws before returning its promise would propagate out of the dispatch and out of
+      // scheduled() entirely, skipping every cron below it.
+      const lines = captureLogs();
+      const units: Promise<unknown>[] = [];
+      const boom = (): Promise<unknown> => {
+        throw new Error("sync boom");
+      };
+      dispatchAuthScheduled(
+        { scheduledTime: atUtcHour(EXPIRY_SWEEP_UTC_HOUR) },
+        {},
+        (p) => units.push(p),
+        {
+          notificationDrain: arm.cron === "notificationDrain" ? boom : async () => null,
+          expirySweep: arm.cron === "expirySweep" ? boom : async () => null,
+        },
+      );
+
+      expect(units).toHaveLength(2);
+      await expect(Promise.all(units)).resolves.toHaveLength(2);
+      expect(lines.map((l) => (JSON.parse(l) as { message: string }).message)).toEqual([
+        arm.message,
+      ]);
+    });
+  }
+
+  it("never puts a failure's MESSAGE in the log line — only its name", async () => {
+    // The one frame that can reach the dispatch-level catch is each cron's createClient(...) call, which
+    // sits OUTSIDE its try block and takes the Hyperdrive connection string — a role credential — as its
+    // live argument. So the dispatch must not log a raw error message, whatever an upstream library
+    // chooses to put in it. Asserted on the field that would ACTUALLY carry the credential in production.
+    const secret = "postgres://webhook_sweeper:SUPER_SECRET@db.invalid/neondb";
+    const lines = captureLogs();
     const units: Promise<unknown>[] = [];
+
     dispatchAuthScheduled(
       { scheduledTime: atUtcHour(EXPIRY_SWEEP_UTC_HOUR) },
       {},
       (p) => units.push(p),
       {
         notificationDrain: async () => {
-          throw new Error("drain exploded");
+          throw new Error(`connect failed for ${secret}`);
         },
         expirySweep: async () => null,
       },
     );
-    // Both units still settle; the failing one resolves rather than rejecting, so it cannot surface as
-    // an unhandled rejection at the invocation boundary.
-    await expect(Promise.all(units)).resolves.toHaveLength(2);
+    await Promise.all(units);
+
+    expect(lines).toHaveLength(1);
+    const entry = JSON.parse(lines[0]) as Record<string, unknown>;
+    expect(entry.message).toBe("auth.notify.cron.error");
+    expect(entry.error).toBe("Error");
+    expect(lines[0]).not.toContain("SUPER_SECRET");
+    expect(lines[0]).not.toContain("webhook_sweeper");
   });
 });
