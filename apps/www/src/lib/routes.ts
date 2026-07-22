@@ -29,7 +29,7 @@ export interface MarketingRoute {
 
 // Bump on substantive content changes. A fixed constant (not `new Date()`) so the emitted sitemap
 // bytes are deterministic — the built-HTML SEO check asserts stable output.
-export const SITEMAP_LAST_MODIFIED = "2026-07-21";
+export const SITEMAP_LAST_MODIFIED = "2026-07-22";
 
 export const MARKETING_ROUTES: readonly MarketingRoute[] = [
   {
@@ -269,6 +269,48 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     path: "/sub-processors",
     changeFrequency: "yearly",
     priority: 0.3,
+    a11y: true,
+    sitemap: true,
+  },
+  // The comparison hub, and the parent of every /vs/<slug>. Same priority as /test and /verify: it
+  // carries the estate's head term and it is the ONE page the site chrome links, so every member
+  // reaches a reader through it. Its members are 0.7, matching the tutorials.
+  {
+    path: "/vs",
+    changeFrequency: "monthly",
+    priority: 0.8,
+    a11y: true,
+    sitemap: true,
+  },
+  // Per-competitor comparisons. Authored, and deliberately NOT to a shared template — a comparison
+  // page's rhetorical skeleton is more rigid than a tutorial's, so the near-duplicate risk is higher
+  // rather than lower. `comparisons.test.ts` measures pairwise similarity against a threshold far
+  // stricter than the shared content-dup guard's, and asserts every comparison has a row here.
+  {
+    path: "/vs/ngrok",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/vs/webhook-site",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/vs/hookdeck",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/vs/requestbin",
+    changeFrequency: "monthly",
+    priority: 0.7,
     a11y: true,
     sitemap: true,
   },
