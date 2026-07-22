@@ -100,9 +100,18 @@ describe("scheduled() dispatch", () => {
     // its own unit so it can outlive the fan-out it watches. A dropped ctx.waitUntil(...) shows up here
     // as 15. (The AST guard pins WHICH 15 crons by identifier; a count alone could not.)
     expect(units).toBe(CRON_UNITS + 1);
-    // ...and the supervisor really ran: it is the only thing that emits this line, so its absence would
-    // mean wall-clock truncation is once again completely unobserved.
-    expect(logs.map((l) => JSON.parse(l).message)).toContain("cron.run.complete");
+
+    // ...and the supervisor SAW all 15. Asserting the fields, not just that the line exists: the
+    // zero-unit path emits the same message, so a presence check would still pass if the shadowed ctx
+    // stopped registering units with the run — the waitUntil count cannot catch that, because the
+    // forwarding would be intact. `dispatched` is also how self-tracking would show up (16, not 15).
+    const supervisor = logs
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((entry) => entry.message === "cron.run.complete");
+    expect(supervisor).toHaveLength(1);
+    expect(supervisor[0].dispatched).toBe(CRON_UNITS);
+    expect(supervisor[0].unfinished).toBe(0);
+    expect(supervisor[0].truncated).toBe(false);
   });
 
   it("runs ONLY the cap producer on the */5 trigger — by name, not by count", async () => {
