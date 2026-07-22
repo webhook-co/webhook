@@ -7,6 +7,7 @@ import { createOrgWithOwner } from "@webhook-co/db/orgs";
 import { testAuditKey } from "../../../packages/db/test/audit-key";
 import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
+import { deepestAppPageRoute, probeUrlFor } from "./deepest-route";
 import { BASE_URL, PORT, writeFixture, type Fixture } from "./fixture";
 
 // The dashboard's first end-to-end harness.
@@ -114,6 +115,46 @@ async function seed(appUrl: string, ownerUrl: string): Promise<Fixture> {
   }
 }
 
+/**
+ * Has `next dev` finished learning the route table?
+ *
+ * ── Why "the server answers" is NOT the same as "the server is ready" ───────────────────────────────────
+ *
+ * `next dev` picks the page for a request from `fsChecker.dynamicRoutes`, a list it rebuilds from a
+ * **watchpack filesystem snapshot** on every `aggregated` event — and watchpack debounces that at 5ms while
+ * an asynchronous, recursive, per-directory scan is still walking `src/app`. The dev server starts serving
+ * at the end of the FIRST aggregation, so for a moment it is live with a PARTIALLY-SCANNED route table.
+ *
+ * The deepest route is the last thing that scan reaches. Ours is
+ * `org/[slug]/endpoints/[id]/events/[eventId]` (depth 7). The catch-all `(app)/[...legacy]` is depth 1 and
+ * is found almost immediately. While the deep one is missing, the catch-all is the only route that matches
+ * its URLs — so the request is served by `LegacyDashboardRedirect`, `isLegacyDashboardPath(["org", …])` is
+ * false, and the reader gets the app's own 404 with an HTTP 200 RSC payload. That is exactly the shape
+ * `org-events.spec.ts:115` went red with on ~4% of CI runs: a correct href, a committed URL, and a 404.
+ *
+ * The old probe asked `/dev-session` — ONE route, at depth 1. It could never fail for the reason that
+ * actually breaks the suite: a gate whose input is scoped cannot fail. This asks about the route that is
+ * genuinely last.
+ *
+ * ── Why the status codes discriminate ──────────────────────────────────────────────────────────────────
+ *
+ * Unauthenticated and with no session cookie:
+ *   • the real `[eventId]` page runs its org-access gate first and REDIRECTS to sign-in  → 307
+ *   • `(app)/[...legacy]` rejects a first segment of `org` and calls `notFound()`        → 404
+ * So a 404 here means the deep route is not in the table yet, and a 307 means it is. Verified both ways by
+ * booting `next dev` with the route directory present and moved aside.
+ *
+ * This is NOT a wait papering over a product race. Production builds the candidate set at build time, sorts
+ * it, freezes it into `routes-manifest.json` and reads it once before serving — `next build`/`next start`
+ * and `@opennextjs/cloudflare` alike — so no such window exists there. The window is `next dev`'s alone,
+ * and it is the harness's job not to start testing in the middle of it.
+ */
+async function routeTableIsComplete(): Promise<boolean> {
+  const probe = probeUrlFor(deepestAppPageRoute());
+  const res = await fetch(`${BASE_URL}${probe}`, { redirect: "manual" });
+  return res.status !== 404;
+}
+
 /** Boot `next dev` against the seeded database and resolve once it answers. */
 async function startDevServer(appConnectionString: string): Promise<ChildProcess> {
   // `-H 127.0.0.1` is not cosmetic. Next builds `request.url` from the hostname it was bound to, not from the
@@ -155,10 +196,13 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
       // compile — count as booted, and every spec would then fail with a confusing symptom far from the
       // cause. (The probe sends no `?user=`/`?org=`, so it is the default-principal path and needs no seed.)
       const res = await fetch(`${BASE_URL}/dev-session`, { redirect: "manual" });
-      if (res.status === 307) return child;
-      throw new Error(
-        `e2e: /dev-session answered ${res.status}, expected 307 — the dev server booted but is not healthy`,
-      );
+      if (res.status !== 307) {
+        throw new Error(
+          `e2e: /dev-session answered ${res.status}, expected 307 — the dev server booted but is not healthy`,
+        );
+      }
+      if (await routeTableIsComplete()) return child;
+      /* serving, but the route table is still partial — keep polling */
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("e2e:")) {
         killTree(child);
