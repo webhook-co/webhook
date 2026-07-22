@@ -66,8 +66,12 @@ failure *and* provably suppress retry — but only if it is called before anythi
    - `apps/engine` catches every cron and logs a named line. Its crons are cursor-resumed bounded drains
      that resume on the next tick, so a per-job log is the actionable signal. **Consequence: the engine's
      Cron Trigger status is always green.** See "Open" below.
-   - `apps/api` deliberately does **not** wrap its crons, so a regression reaches the Cron Trigger status.
+   - `apps/api` deliberately did **not** wrap its crons, so a regression reached the Cron Trigger status.
      Both crons self-guard and return cleanly when billing is unprovisioned.
+   - SUPERSEDED by #759: all three now dispatch through `withHeartbeat`, which owns the catch, logs the
+     error NAME (never a raw message that could carry a connection string), and reports the outcome to
+     `apps/health`. A hand-attached `.catch()` around that wrapper is now a guard VIOLATION — it swallows
+     the failure before the wrapper can grade it, so the job would report healthy while broken.
    - `apps/auth` catches at the dispatch site. This is specific to auth: it never calls
      `controller.noRetry()`, so the retry flag stays true, and a re-invocation would re-run the
      notification drain — which sends owner email. A duplicate email is worse than a logged failure.
@@ -83,12 +87,16 @@ failure *and* provably suppress retry — but only if it is called before anythi
      delegate in `worker.ts` is deliberate residual untested surface, verified only by `deploy:dry`.
    - **Static** (`scripts/cron-dispatch-guard.mjs`) parses the dispatch body with the TypeScript compiler
      API and pins **identity**, which a runtime test cannot: a `waitUntil` promise is opaque, and 9 of the
-     15 engine crons are dark no-ops that emit nothing. It asserts the exact set of cron identifiers, a
-     `.catch()` on each, and which side of `if (!plan.runsHourly) return;` each sits on.
+     15 engine crons are dark no-ops that emit nothing. It asserts the exact set of cron identifiers, the
+     `withHeartbeat` wrapper and job id on each (cross-checked against `REGISTERED_JOBS`), that each is
+     handed `env`, that none is nested behind a non-CronPlan conditional, and which side of
+     `if (!plan.runsHourly) return;` each sits on.
 
 4. **The guard keys on function identifiers, never on the human name in the log line.** Those two can
    desynchronise, and two engine crons (`runRetentionPruneDrainCron`, `runFreeOrgCapCron`) deliberately
-   throw so that their `.catch()` emits an alarm — a mismatched pairing would page the wrong subsystem.
+   throw so that their failure path emits an alarm — a mismatched pairing would page the wrong subsystem.
+   Since #759 the log line is derived from the heartbeat job id, so the alert string and the dead-man's
+   switch cannot drift apart; the guard pins the id against `apps/health`'s registry.
 
 5. **`apps/auth`'s dispatch lives in a type-checked module.** `src/worker.ts` is excluded from tsconfig
    (it imports the gitignored `.open-next` bundle), so logic placed there is neither type-checked nor
@@ -112,7 +120,46 @@ failure *and* provably suppress retry — but only if it is called before anythi
   Replacing one invented number with another would have repeated the mistake, so the comment now names the
   dominant contributors and states plainly that 50,000 is a chosen backstop, not a measured bound.
 
+## Follow-ups — all three CLOSED (2026-07-22)
+
+Everything this ADR left open has since shipped. Recorded here rather than deleted, because two of the
+three turned out to be worse than described.
+
+**The engine's Cron Trigger status.** Superseded rather than fixed as written. The proposal was
+`controller.noRetry()` plus letting failures surface — but a heartbeat detects "stopped running", which a
+status signal fundamentally cannot: a cron that never fires produces no status at all. #759 wires every
+cron through `withHeartbeat`, so `apps/health` grades the ABSENCE of a report as a failure. That is
+strictly stronger, and it sidesteps the alert-noise objection entirely. The status remains green-on-catch;
+that is now a deliberate, secondary concern.
+
+**The unbounded fan-out — WORSE than described.** #757 bounded `reconcileStripeTransport` with a resumable
+org rotation. While deriving it, `scripts/subrequest-budget-guard.mjs` found that the hourly fan-out's
+worst case (**52,108**) already EXCEEDED the declared 50,000 ceiling. This ADR's own estimate of
+"15,000-17,000" was wrong by 3x, for exactly the reason it warned about in the section above: it counted
+the drains' multi-statement work and treated the 1,000-org enumerations as one operation each. The ceiling
+is now 200,000, and the guard requires 2x headroom so it cannot be pinned to the modelled total again.
+
+**Wall-clock truncation.** #760 adds `apps/engine/src/cron-run.ts`, which races the fan-out against a
+13-minute deadline (below the platform's 15) and logs `cron.run.truncated` with the unfinished count and
+elapsed time. It deliberately does not name the unfinished crons — the heartbeat already does that — and
+it cancels its timer the moment the fan-out settles, because a pending timer would hold the isolate open
+on every tick.
+
 ## Open
+
+Nothing from the original list. Two things are known and deliberately not done:
+
+**The engine's Cron Trigger status is still always green** (every cron is caught). With heartbeats live
+this is a secondary signal, and changing it is an operations decision about alert noise, not an
+engineering gap. `controller.noRetry()` must be the first statement if it is ever changed — the runtime's
+`retry` flag defaults to true and its consumer is closed-source.
+
+**The 15 engine cron wrappers are still module-private, inline in index.ts.** Extracting them into
+`apps/engine/src/crons/*.ts` (the `apps/api` shape) would allow testing each dark-launch guard's positive
+path and its `finally { sql.end() }`. Re-scoped DOWN from how it was first assessed: the catastrophic case
+— an inverted `!` turning the retention prune from dark into deleting production events — is ALREADY
+caught by the bare-env partition test, which pins exactly which crons no-op and which fail. The refactor
+buys depth, not disaster prevention.
 
 **The engine's Cron Trigger status is always green.** Making it honest means calling `controller.noRetry()`
 as the first statement and letting a failure surface — mechanically straightforward, and safe with respect
