@@ -92,15 +92,16 @@ const rowTwoColumns: { title: string; links: FooterLink[] }[] = [
     title: "Compare",
     // Derived, never hand-listed. Hand-pairing a display name with a slug is how a typo ships and
     // waits for a post-build dead-link check to find it — and the hub page makes exactly this
-    // argument about its own index, so the footer should not do the opposite two files away. The
-    // slice is the cap: growth goes through the hub, which is what keeps the next comparison from
-    // being orphaned AND keeps this column scannable.
+    // argument about its own index, so the footer should not do the opposite two files away.
+    //
+    // It names EVERY comparison while there are four of them (founder call, 2026-07-22): four
+    // competitor links is a useful index rather than link-stuffing, and the hub still leads the
+    // column so it remains the thing the estate hangs off. That stops being true as the set grows,
+    // so `footer.test.tsx` fails at the fifth comparison and forces the decision then, rather than
+    // letting the column quietly grow until the grid unbalances.
     links: [
       { label: "All comparisons", href: LINKS.comparisons },
-      ...COMPARISONS.slice(0, 3).map((c) => ({
-        label: `vs ${c.name}`,
-        href: comparisonPath(c.slug),
-      })),
+      ...COMPARISONS.map((c) => ({ label: `vs ${c.name}`, href: comparisonPath(c.slug) })),
     ],
   },
 ];

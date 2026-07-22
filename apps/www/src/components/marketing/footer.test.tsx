@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { axeComponent } from "@/test/axe";
 
+import { COMPARISONS } from "@/lib/comparisons";
+
 import { Footer } from "./footer";
 
 const columnLinks = (name: string) =>
@@ -46,12 +48,22 @@ describe("Footer", () => {
     expect(links[0]).toHaveAttribute("href", "/vs");
   });
 
-  // The cap is the whole point of making it a column. Pinned so the next comparison is forced through
-  // the hub rather than appended here until the grid unbalances — the exact failure the old band
-  // comment predicted, now prevented by a test instead of by a comment nobody re-reads.
-  it("caps the Compare column so growth goes through the hub, not into the footer", () => {
+  // While the estate is small the column names every comparison — four competitor links is a useful
+  // index, not link-stuffing (founder call, 2026-07-22). The cap is what stops that staying true by
+  // default: at the FIFTH comparison `1 + COMPARISONS.length` exceeds it and this test goes red,
+  // which forces a deliberate decision about what the footer shows instead of letting the column grow
+  // until the grid unbalances. That is the failure the old band comment predicted, now prevented by a
+  // test rather than by a comment nobody re-reads.
+  it("names every comparison while the set is small, and forces a decision when it grows", () => {
     render(<Footer />);
-    expect(columnLinks("Compare").length).toBeLessThanOrEqual(4);
+    const links = columnLinks("Compare");
+    expect(
+      links.length,
+      "the Compare column has outgrown the footer — link a subset and let the hub carry the rest",
+    ).toBeLessThanOrEqual(5);
+    expect(links.length, "every comparison should be named while there are four or fewer").toBe(
+      1 + COMPARISONS.length,
+    );
   });
 
   // The estate must be reachable from every page, or check-orphan-pages.mjs reds the build. This is
