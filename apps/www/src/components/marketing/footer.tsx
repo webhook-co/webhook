@@ -2,6 +2,7 @@ import { cn, Wordmark } from "@webhook-co/ui";
 
 import { GithubIcon, LinkedinIcon } from "@/components/ui/brand-icons";
 import { COMPARISONS, comparisonPath } from "@/lib/comparisons";
+import { StatusIndicator, type StatusBadge } from "@/components/marketing/status-indicator";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
@@ -31,6 +32,7 @@ const columns: { title: string; links: FooterLink[] }[] = [
       { label: "API reference", href: LINKS.apiReference },
       { label: "CLI", href: LINKS.cli },
       { label: "MCP", href: LINKS.mcp },
+      { label: "Status", href: LINKS.status },
     ],
   },
   {
@@ -116,7 +118,7 @@ const socials: { label: string; icon: typeof GithubIcon; href?: string }[] = [
   { label: "webhook.co on LinkedIn", icon: LinkedinIcon, href: LINKS.linkedin },
 ];
 
-export function Footer() {
+export function Footer({ status = null }: { status?: StatusBadge | null } = {}) {
   return (
     <footer className="border-t border-hairline pt-[clamp(48px,7vw,80px)] pb-12">
       <div className={container}>
@@ -216,12 +218,14 @@ export function Footer() {
           ))}
         </div>
 
-        {/* No "All systems operational" indicator. It was a hardcoded string next to a green dot,
-            with nothing monitoring anything — its own comment admitted "there is no status page to
-            point at". A health indicator that isn't wired to a health check is a lie told in the most
-            trustworthy-looking way available. It comes back when a real status page does. */}
+        {/* The "All systems operational" indicator is BACK, and this time it is wired to something.
+            It was removed when it was a hardcoded string beside a green dot with nothing monitoring
+            anything — a health indicator that isn't wired to a health check is a lie told in the most
+            trustworthy-looking way available. StatusIndicator now reads the live status page, and
+            renders NOTHING if that read fails, so this row can never claim health it cannot see. */}
         <div className="mt-[clamp(40px,5vw,64px)] flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6 text-sm text-fg-muted">
           <span>© 2026 webhook.co</span>
+          <StatusIndicator status={status} />
         </div>
       </div>
     </footer>
