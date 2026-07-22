@@ -414,11 +414,19 @@ export async function revealHeader(
  */
 export async function loadEvent(
   orgId: string,
-  endpointId: string,
-  eventId: string,
+  rawEndpointId: string,
+  rawEventId: string,
   readers?: EventReaders,
 ): Promise<EventResult> {
-  if (!isUuid(endpointId) || !isUuid(eventId)) return { status: "not_found" };
+  if (!isUuid(rawEndpointId) || !isUuid(rawEventId)) return { status: "not_found" };
+  // CANONICALIZE BEFORE COMPARING. `isUuid` is case-INsensitive and Postgres parses a uuid literal the same
+  // way, but the endpoint check below is a JS `!==` on two strings — so an uppercase-hex `[id]` segment
+  // passes the shape gate, reaches a row whose stored `endpoint_id` is canonical lowercase, and 404s an
+  // event the caller owns and the list just linked them to. That is the same false-404 the destinations
+  // detail page normalizes away (destinations/[id]/page.tsx); the two surfaces must not disagree about the
+  // same URL. Canonicalizing does NOT widen scope: a different endpoint still fails the comparison.
+  const endpointId = rawEndpointId.toLowerCase();
+  const eventId = rawEventId.toLowerCase();
   if (readers) return readEvent(orgId, endpointId, eventId, readers);
   return withTenantDb((app) => readEvent(orgId, endpointId, eventId, boundReaders(app)));
 }

@@ -164,6 +164,30 @@ describe("loadEvent", () => {
     expect(result).toEqual({ status: "not_found" });
   });
 
+  // isUuid accepts EITHER case, but ids are stored canonically lowercase — so an uppercase-hex endpoint
+  // segment passes the shape gate and then fails the exact-match `!==`, 404ing an event the caller owns and
+  // the list just showed them. The destinations detail page normalizes for exactly this reason
+  // (destinations/[id]/page.tsx); this read must too, or the two surfaces disagree about the same URL.
+  it("resolves an event when the endpoint segment is UPPERCASE hex (case-insensitive uuid)", async () => {
+    const result = await loadEvent("o", ENDPOINT_ID.toUpperCase(), EVENT_ID, readers());
+    expect(result).toEqual({ status: "ok", event: detail });
+  });
+
+  it("resolves an event when the EVENT segment is UPPERCASE hex", async () => {
+    const r = readers();
+    const result = await loadEvent("o", ENDPOINT_ID, EVENT_ID.toUpperCase(), r);
+    expect(result).toEqual({ status: "ok", event: detail });
+    // The db must be asked for the CANONICAL id, not the caller's casing.
+    expect(r.getEvent).toHaveBeenCalledWith("o", EVENT_ID);
+  });
+
+  // The widening must not reach past case: a different endpoint still 404s.
+  it("still returns not_found for a DIFFERENT endpoint given in uppercase", async () => {
+    const otherEndpoint = "0190A1B2-C3D4-7E5F-8A0B-1C2D3E4F5099";
+    const result = await loadEvent("o", otherEndpoint, EVENT_ID, readers());
+    expect(result).toEqual({ status: "not_found" });
+  });
+
   it("returns not_found for a non-uuid id WITHOUT touching the db", async () => {
     const r = readers();
     expect(await loadEvent("o", ENDPOINT_ID, "nope", r)).toEqual({ status: "not_found" });

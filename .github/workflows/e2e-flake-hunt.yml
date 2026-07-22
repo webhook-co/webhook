@@ -49,19 +49,29 @@ jobs:
       - run: pnpm --filter @webhook-co/web exec playwright install --with-deps chromium
       - name: Run the suite repeatedly
         run: |
+          set +e
           fails=0
           for i in $(seq 1 6); do
-            rm -rf apps/web/.next
-            if pnpm --filter @webhook-co/web test:e2e; then
+            # A COLD .next per run is the point: the failure only ever appears on the first-ever request to
+            # a route, so a warm cache between runs would hide exactly what we are hunting. The dev server
+            # is still exiting when the previous run returns, so retry the removal rather than racing it.
+            for a in 1 2 3 4 5; do
+              rm -rf apps/web/.next 2>/dev/null
+              [ -d apps/web/.next ] || break
+              sleep 3
+            done
+            pnpm --filter @webhook-co/web test:e2e
+            if [ $? -eq 0 ]; then
               echo "HUNT run $i: pass"
             else
               fails=$((fails+1))
               echo "HUNT run $i: FAIL"
               mkdir -p /tmp/hunt-traces/run-$i
-              cp -r apps/web/test-results/. /tmp/hunt-traces/run-$i/ 2>/dev/null || true
+              cp -r apps/web/test-results/. /tmp/hunt-traces/run-$i/ 2>/dev/null
             fi
           done
           echo "HUNT_SUMMARY shard=${{ matrix.shard }} fails=$fails of=6"
+          exit 0
       - name: Upload traces
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
