@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const GEN = join(REPO, "scripts", "gen-wrangler-prod.mjs");
-const APPS = ["engine", "api", "web", "mcp", "auth"];
+const APPS = ["engine", "api", "web", "mcp", "auth", "health"];
 
 // Dummy ids for every reqEnv() the generator needs (no real infra touched).
 const BASE = {
@@ -27,6 +27,7 @@ const BASE = {
   HYPERDRIVE_AUTHN_ID: "n",
   HYPERDRIVE_INGEST_ID: "i",
   KV_CONFIG_ID: "kc",
+  KV_HEALTH_ID: "kh",
   KV_AUTHZ_ID: "ka",
   AUTH_OAUTH_KV_ID: "ok",
   AUTH_DEVICE_KV_ID: "dk",
@@ -51,6 +52,9 @@ const BILLING_KEYS = [
   "HYPERDRIVE_PURGE_ID",
   "HYPERDRIVE_RETENTION_ID",
   "HYPERDRIVE_ACTIVATION_REVIEWER_ID",
+  // apps/health's heartbeat-secret gate — cleared for the same reason: an ambient var must not make
+  // the dark assertions flap.
+  "HEARTBEAT_TOKEN_READY",
 ];
 
 /** Run the generator with BASE + `extra`. Inherits the ambient env (PATH etc.) but CLEARS any billing vars
@@ -254,4 +258,52 @@ test("HYPERDRIVE_RETENTION (slice 2.3): bound when provisioned, stripped when da
     !(dark.hyperdrive ?? []).some((h) => h.binding === "HYPERDRIVE_RETENTION"),
     "retention Hyperdrive should be stripped when its id is unset",
   );
+});
+
+// --- apps/health: the HEARTBEAT_TOKEN_READY gate -------------------------------------------------
+//
+// `wrangler deploy` FAILS outright when it binds a secret that does not exist in the store, so this
+// gate is what lets the Worker ship before the credential is minted. Both directions are asserted:
+// an ungated binding would block the deploy, and a permanently-gated one would leave heartbeat
+// reporting silently dead.
+
+test("health DARK (no HEARTBEAT_TOKEN_READY): no secret bound, KV id substituted, no tenant secrets", () => {
+  gen();
+  const cfg = readProd("health");
+  assert.deepEqual(cfg.secrets_store_secrets, []);
+  assert.equal(cfg.kv_namespaces[0].binding, "HEALTH_KV");
+  assert.equal(cfg.kv_namespaces[0].id, "kh");
+  assert.equal(cfg.routes[0].pattern, "health.wbhk.my");
+  // It touches no tenant data, payloads or credentials beyond its own bearer tokens — binding the
+  // shared keys here would widen its blast radius for nothing.
+  const raw = JSON.stringify(cfg);
+  for (const shared of ["CREDENTIAL_PEPPER", "CURSOR_KEY", "AUDIT_CHAIN_HMAC_KEY"]) {
+    assert.ok(!raw.includes(shared), `health must not bind ${shared}`);
+  }
+});
+
+test("health READY (HEARTBEAT_TOKEN_READY set): the heartbeat secret is bound", () => {
+  gen({ HEARTBEAT_TOKEN_READY: "1" });
+  const names = readProd("health").secrets_store_secrets.map((s) => s.secret_name);
+  assert.deepEqual(names, ["HEARTBEAT_TOKEN"]);
+});
+
+test("engine and auth carry the heartbeat credential only when the gate is set", () => {
+  // The receiver having the credential is useless if the REPORTERS do not: every job would report
+  // into a 404, which on the status page is indistinguishable from a real outage.
+  gen();
+  for (const app of ["engine", "auth"]) {
+    assert.equal(hasSecret(readProd(app), "HEARTBEAT_TOKEN"), false, `${app} dark`);
+  }
+  gen({ HEARTBEAT_TOKEN_READY: "1" });
+  for (const app of ["engine", "auth", "health"]) {
+    assert.equal(hasSecret(readProd(app), "HEARTBEAT_TOKEN"), true, `${app} ready`);
+  }
+});
+
+test("engine and auth know where to report, and it is not a secret", () => {
+  gen();
+  for (const app of ["engine", "auth"]) {
+    assert.equal(readProd(app).vars.HEALTH_HEARTBEAT_URL, "https://health.wbhk.my");
+  }
 });

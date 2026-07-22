@@ -56,7 +56,25 @@ async function dispatchAt(
   return { ran, envs, units };
 }
 
+/**
+ * Capture only the DISPATCH-level log lines (`stage: "dispatch"`) — the ones `absorb` emits, which is
+ * what every assertion below is about. The dispatch also emits heartbeat lines now; those are
+ * asserted separately rather than allowed to perturb these counts.
+ */
 function captureLogs(): string[] {
+  const lines: string[] = [];
+  vi.spyOn(console, "log").mockImplementation((line: string) => {
+    try {
+      if ((JSON.parse(line) as { stage?: string }).stage === "dispatch") lines.push(line);
+    } catch {
+      lines.push(line);
+    }
+  });
+  return lines;
+}
+
+/** Every captured line, dispatch or not — for asserting on the heartbeat's own output. */
+function captureAllLogs(): string[] {
   const lines: string[] = [];
   vi.spyOn(console, "log").mockImplementation((line: string) => {
     lines.push(line);
@@ -264,5 +282,75 @@ describe("dispatchAuthScheduled", () => {
     expect(entry.error).toBe("Error");
     expect(lines[0]).not.toContain("SUPER_SECRET");
     expect(lines[0]).not.toContain("webhook_sweeper");
+  });
+});
+
+describe("heartbeat reporting", () => {
+  // The dead-man's switch is only useful if a FAILED run is distinguishable from a healthy one.
+  // Both auth crons signal failure by returning null rather than throwing, so `absorb` must pass
+  // that value through to the heartbeat instead of discarding it.
+  it("reports a failed run without leaking the failure's message", async () => {
+    const lines = captureAllLogs();
+    const units: Promise<unknown>[] = [];
+    dispatchAuthScheduled({ scheduledTime: Date.UTC(2026, 0, 1, 12) }, {}, (p) => units.push(p), {
+      notificationDrain: async () => {
+        throw new Error("connection string postgres://user:pw@host/db");
+      },
+      expirySweep: async () => null,
+    });
+    await Promise.all(units);
+
+    const heartbeat = lines.filter((l) => l.includes("reported failure"));
+    expect(heartbeat.length).toBe(1);
+    // absorb converts the throw to null before the heartbeat sees it, so the heartbeat line carries
+    // no error text at all — the credential in that message cannot reach a log through this path.
+    expect(heartbeat[0]).not.toContain("postgres://");
+    expect(heartbeat[0]).not.toContain("pw@host");
+  });
+  // THE LOAD-BEARING CASE. The crons fail by RETURNING NULL, not by throwing, so `absorb` must pass
+  // that value through. Without this, the suite stays green even if absorb does `await run()` and
+  // discards the result — and every real failure grades as healthy.
+  it("reports failure when a cron returns null WITHOUT throwing", async () => {
+    const lines = captureAllLogs();
+    const units: Promise<unknown>[] = [];
+    dispatchAuthScheduled({ scheduledTime: Date.UTC(2026, 0, 1, 12) }, {}, (p) => units.push(p), {
+      notificationDrain: async () => null,
+      expirySweep: async () => null,
+    });
+    await Promise.all(units);
+    expect(
+      lines.filter((l) => l.includes("notification-drain cron reported failure")),
+    ).toHaveLength(1);
+  });
+
+  it("reports failure when the expiry sweep returns null, at the hour it actually runs", async () => {
+    const lines = captureAllLogs();
+    const units: Promise<unknown>[] = [];
+    dispatchAuthScheduled(
+      { scheduledTime: Date.UTC(2026, 0, 1, EXPIRY_SWEEP_UTC_HOUR) },
+      {},
+      (p) => units.push(p),
+      { notificationDrain: async () => ({ sent: 1 }), expirySweep: async () => null },
+    );
+    await Promise.all(units);
+    expect(lines.filter((l) => l.includes("auth-expiry-sweep cron reported failure"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("reports NO failure when both crons return a real result", async () => {
+    const lines = captureAllLogs();
+    const units: Promise<unknown>[] = [];
+    dispatchAuthScheduled(
+      { scheduledTime: Date.UTC(2026, 0, 1, EXPIRY_SWEEP_UTC_HOUR) },
+      {},
+      (p) => units.push(p),
+      {
+        notificationDrain: async () => ({ sent: 0 }),
+        expirySweep: async () => ({ refreshTokens: 0, sessionExchanges: 0 }),
+      },
+    );
+    await Promise.all(units);
+    expect(lines.filter((l) => l.includes("reported failure"))).toHaveLength(0);
   });
 });

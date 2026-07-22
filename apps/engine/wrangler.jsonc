@@ -13,6 +13,10 @@
   // placeholder is replaced by the FREE_EVENT_CAP GH var; unset → "" → uncapped/no-Free-enforcement, the
   // fail-safe default). The literal placeholder is what `wrangler dev` sees locally (parses to uncapped).
   "vars": {
+    // HEALTH_HEARTBEAT_URL — where this Worker's crons report a completed run (apps/health). NOT a
+    // secret: it is a public hostname, and the credential rides in the Authorization header. Reporting
+    // needs BOTH this and HEARTBEAT_TOKEN, so it stays a no-op until the secret is bound.
+    "HEALTH_HEARTBEAT_URL": "https://health.wbhk.my",
     "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
     // ORPHAN_SWEEP_DELETE (S6c-iii): "true" lets the orphan-sweep cron actually delete identified orphans;
     // anything else (incl. unset → "") = COUNT-ONLY (finds + logs orphans, deletes nothing). Fail-safe: an

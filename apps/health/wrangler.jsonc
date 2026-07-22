@@ -8,10 +8,11 @@
   // status page red. Only signals with no endpoint of their own live here (scheduled-job liveness;
   // the delivery canary next).
   //
-  // NOT YET WIRED FOR DEPLOY. The KV id below is a placeholder and there is no entry in
-  // scripts/gen-wrangler-prod.mjs, deliberately: adding one with a required env var would fail every
-  // existing deploy until the operator provisions the namespace. See
-  // internal/runbooks/status-health-activation.md for the provisioning order.
+  // The KV id is a PLACEHOLDER; scripts/gen-wrangler-prod.mjs substitutes the real one from the
+  // KV_HEALTH_ID repo variable at deploy (no resource id is ever committed). HEARTBEAT_TOKEN is
+  // injected there too, gated on HEARTBEAT_TOKEN_READY -- wrangler deploy FAILS when it binds a
+  // secret that does not exist, so the gate lets this Worker ship before the secret is minted.
+  // Provisioning order: internal/runbooks/status-health-activation.md.
   "kv_namespaces": [{ "binding": "HEALTH_KV", "id": "<KV_HEALTH_ID>" }],
   "observability": { "enabled": true },
   // The delivery canary tick. Correlates the previous nonce and arms a new one.

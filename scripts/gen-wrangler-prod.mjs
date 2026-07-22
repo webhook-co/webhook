@@ -40,6 +40,12 @@ const whenBilling = (names) => (BILLING_ON ? names : []);
 const whenActivationReviewer = (names) =>
   process.env.HYPERDRIVE_ACTIVATION_REVIEWER_ID ? names : [];
 
+// The heartbeat credential for apps/health. Gated on its own var so the Worker can be DEPLOYED before
+// the secret is minted: `wrangler deploy` fails outright when it binds a secret that does not exist in
+// the store, so an ungated entry here would block the deploy rather than merely leave reporting off.
+// Unset -> no binding -> apps/health 404s every heartbeat report (its documented closed state).
+const whenHeartbeat = (names) => (process.env.HEARTBEAT_TOKEN_READY ? names : []);
+
 /** Escape a value for embedding INSIDE a JSON string literal (quotes, backslashes, control chars). */
 const jsonStringBody = (v) => JSON.stringify(v).slice(1, -1);
 
@@ -63,6 +69,8 @@ const TOKEN = {
   "<HYPERDRIVE_AUTHN_ID>": reqEnv("HYPERDRIVE_AUTHN_ID"),
   "<HYPERDRIVE_INGEST_ID>": reqEnv("HYPERDRIVE_INGEST_ID"),
   "<KV_CONFIG_ID>": reqEnv("KV_CONFIG_ID"),
+  // apps/health's beat + canary store. Provisioned 2026-07-22 (webhook-prod-kv-health).
+  "<KV_HEALTH_ID>": reqEnv("KV_HEALTH_ID"),
   "<KV_AUTHZ_ID>": reqEnv("KV_AUTHZ_ID"),
   // <OAUTH_KV_ID> removed (A8): mcp is no longer an OAuth issuer, so it has no OAUTH_KV binding. The
   // OAUTH_KV_ID GitHub repo variable is now unused (was mcp-only) and can be retired.
@@ -123,6 +131,9 @@ const APPS = {
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
       "LISTEN_TICKET_KEY",
+      // The heartbeat credential the engine's crons present when reporting. Gated: `wrangler deploy`
+      // fails when it binds a secret that does not exist, and reporting is a no-op without it.
+      ...whenHeartbeat(["HEARTBEAT_TOKEN"]),
       // STRIPE_SECRET_KEY (S4.4c) — the outbound meter-reporter's Stripe key. Bound only when billing is on.
       ...whenBilling(["STRIPE_SECRET_KEY"]),
     ],
@@ -415,6 +426,8 @@ const APPS = {
       "RESEND_API_KEY",
       // Cloudflare Turnstile siteverify secret — keys the captcha gate on the magic-link send.
       "TURNSTILE_SECRET_KEY",
+      // The heartbeat credential auth's crons present when reporting (same gate as engine).
+      ...whenHeartbeat(["HEARTBEAT_TOKEN"]),
     ],
     placeholders: [
       "<AUTH_OAUTH_KV_ID>",
@@ -427,6 +440,19 @@ const APPS = {
       "<HYPERDRIVE_SWEEPER_ID>",
       "<HYPERDRIVE_NOTIFIER_ID>",
     ],
+  },
+  // apps/health — the derived-signal plane (health.wbhk.my). Holds ONLY the signals that have no
+  // public endpoint of their own: scheduled-job liveness and the end-to-end delivery canary. Every
+  // other status component is probed directly on its own hostname, so this Worker failing cannot
+  // paint the whole status page red.
+  //
+  // No SHARED secrets: it touches no tenant data, no payloads and no credentials beyond its own
+  // bearer tokens, so binding the pepper/cursor/audit keys here would widen its blast radius for
+  // nothing.
+  health: {
+    domain: "health.wbhk.my",
+    secrets: [...whenHeartbeat(["HEARTBEAT_TOKEN"])],
+    placeholders: ["<KV_HEALTH_ID>"],
   },
 };
 

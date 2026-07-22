@@ -140,6 +140,12 @@ export { DeliveryDO } from "./delivery-do";
 // (unit-tested with fakes); this file wires the real per-request deps and routes to it.
 
 export interface Env {
+  /**
+   * Heartbeat reporting (dead-man's switch for the crons). BOTH are optional: with either unset the
+   * reporting is a no-op, so this ships dark and activates when the operator provisions apps/health.
+   */
+  HEALTH_HEARTBEAT_URL?: string;
+  HEARTBEAT_TOKEN?: SecretsStoreSecret | string;
   /** Cache-disabled Hyperdrive config for authenticated tenant-scoped reads (api./app.). */
   HYPERDRIVE_TENANT: Hyperdrive;
   /** webhook_authn Hyperdrive (caching OFF): the cold endpoint-token lookup (org-discovery-by-hash). */

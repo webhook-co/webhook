@@ -11,6 +11,8 @@
 // ./issuer/introspect-handler, and leaves worker.ts holding a single delegating call — the smallest
 // untyped surface available, and strictly less than the inline predicate + two cron imports it replaces.
 
+import { withHeartbeat } from "@webhook-co/shared/heartbeat-client";
+
 import { runNotificationDrain } from "./notify-cron";
 import { runAuthExpirySweep } from "./sweep-cron";
 
@@ -63,13 +65,19 @@ export function runsExpirySweep(scheduledTime: number | Date): boolean {
  * would make non-leakage depend on an upstream library's error formatting, which nothing in this repo pins.
  * Everything inside the crons' try blocks is already logged, sanitised, by their own handlers. (no-secrets)
  */
-async function absorb(run: () => Promise<unknown>, message: string): Promise<void> {
+async function absorb(run: () => Promise<unknown>, message: string): Promise<unknown> {
   try {
     // The cron is INVOKED inside the try, not passed in as an already-running promise. AuthScheduledCrons
     // types these as `=> Promise<…>`, not `async`, so a non-async implementation that threw before
     // returning its promise would propagate straight out of the dispatch, out of scheduled(), and skip
     // every cron below it — the exact outcome this helper exists to prevent.
-    await run();
+    //
+    // The cron's RESULT is returned rather than discarded, and a swallowed throw becomes `null`. Both
+    // crons here signal failure by returning null instead of rejecting, so discarding the value would
+    // report a broken job as healthy to the heartbeat — the precise false-healthy signal the
+    // dead-man's switch exists to prevent. `null` is this repo's existing failure sentinel, so a
+    // throw and a failed run reach the heartbeat as the same fact: the work did not happen.
+    return await run();
   } catch (error: unknown) {
     console.log(
       JSON.stringify({
@@ -78,6 +86,7 @@ async function absorb(run: () => Promise<unknown>, message: string): Promise<voi
         error: error instanceof Error ? error.name : typeof error,
       }),
     );
+    return null;
   }
 }
 
@@ -91,8 +100,19 @@ export function dispatchAuthScheduled(
   waitUntil: (promise: Promise<unknown>) => void,
   crons: AuthScheduledCrons = DEFAULT_CRONS,
 ): void {
-  waitUntil(absorb(() => crons.notificationDrain(env), "auth.notify.cron.error"));
+  // Wrapped in withHeartbeat so a job that stops firing is VISIBLE. Note the ordering: withHeartbeat
+  // must see the cron's own result, because both of these signal failure by returning null rather
+  // than throwing — a wrapper that only caught throws would report them healthy while broken.
+  waitUntil(
+    withHeartbeat(env, "notification-drain", () =>
+      absorb(() => crons.notificationDrain(env), "auth.notify.cron.error"),
+    ),
+  );
   if (runsExpirySweep(event.scheduledTime)) {
-    waitUntil(absorb(() => crons.expirySweep(env), "auth.sweep.cron.error"));
+    waitUntil(
+      withHeartbeat(env, "auth-expiry-sweep", () =>
+        absorb(() => crons.expirySweep(env), "auth.sweep.cron.error"),
+      ),
+    );
   }
 }
