@@ -100,6 +100,7 @@ import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
 import { parseOrphanSweepDelete, runOrphanSweep } from "./orphan-sweep-cron";
 import { withHeartbeat } from "@webhook-co/shared/heartbeat-client";
 
+import { CRON_RUN_DEADLINE_MS, createCronRun, realDelay } from "./cron-run";
 import { parseRotationCursor, persistRotationCursor } from "./rotation-cursor";
 import { runOrgReaperCron } from "./org-reaper-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
@@ -946,7 +947,19 @@ export default {
     return handleFetch(request, env, ctx);
   },
 
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(
+    controller: ScheduledController,
+    env: Env,
+    invocation: ExecutionContext,
+  ): Promise<void> {
+    // Every dispatch below goes through `ctx`, which forwards to the real ExecutionContext AND registers
+    // the unit with the run supervisor. Shadowing rather than threading a tracker through each call site
+    // keeps all 15 dispatch lines byte-identical, so the shape scripts/cron-dispatch-guard.mjs pins is
+    // unchanged and adding supervision cannot quietly alter what is dispatched.
+    const run = createCronRun();
+    const ctx = {
+      waitUntil: (promise: Promise<unknown>) => invocation.waitUntil(run.track(promise)),
+    };
     // Cloudflare dispatches EACH cron expression as its OWN scheduled() invocation with its own subrequest/
     // CPU budget; `controller.cron` names the one that fired. scheduledCronPlan routes it: the dedicated
     // `*/5` trigger runs ONLY the cap producer (so a pause lands within minutes, S4), while every other
@@ -1023,6 +1036,25 @@ export default {
     // the cap, and restore when they resolve it. Dark until the reconciler role + Hyperdrive are provisioned.
     // Independent of the others — a failure must not sink them.
     ctx.waitUntil(withHeartbeat(env, "free-org-cap", () => runFreeOrgCapCron(env)));
+
+    // Watch the fan-out against the platform's 15-minute cron limit. At that limit `finishScheduled`
+    // CANCELS whatever is still running, and a cancellation is not a rejection — no cron error path runs,
+    // no heartbeat is reported, nothing is logged. The heartbeat layer still catches it eventually (a
+    // truncated cron stops beating, so apps/health names it), but only after that job's window elapses;
+    // this makes the truncation itself visible in the invocation it happened in, and surfaces the elapsed
+    // trend that shows a fan-out drifting toward the limit before it crosses it.
+    //
+    // Registered AFTER the fan-out, so it sees every unit. The cap-only tick returns above and is not
+    // supervised: it dispatches one cron under a 30-second CPU budget, where truncation is not the risk.
+    // It goes through `invocation` rather than `ctx` so the supervisor does not track itself.
+    invocation.waitUntil(
+      run.supervise({
+        deadlineMs: CRON_RUN_DEADLINE_MS,
+        log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+        now: () => Date.now(),
+        delay: realDelay,
+      }),
+    );
   },
 } satisfies ExportedHandler<Env>;
 

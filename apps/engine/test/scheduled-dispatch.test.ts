@@ -53,7 +53,11 @@ function controller(cron: string): ScheduledController {
 }
 
 /** Drive one scheduled() invocation, capturing every waitUntil unit and every log line. */
-async function invoke(cron: string): Promise<{ units: number; failures: string[] }> {
+const CRON_UNITS = 15;
+
+async function invoke(
+  cron: string,
+): Promise<{ units: number; failures: string[]; logs: string[] }> {
   const ctx = createExecutionContext();
   const dispatched = vi.spyOn(ctx, "waitUntil");
   const logs: string[] = [];
@@ -67,7 +71,7 @@ async function invoke(cron: string): Promise<{ units: number; failures: string[]
   // Resolves only if EVERY unit settled without rejecting — i.e. no cron's failure escaped its
   // own .catch() to become an unhandled rejection at the invocation boundary.
   await waitOnExecutionContext(ctx);
-  return { units, failures: failureNames(logs) };
+  return { units, failures: failureNames(logs), logs };
 }
 
 // The 6 crons with no binding guard, so a bare Env drives each through a real failure.
@@ -91,14 +95,20 @@ afterEach(() => {
 
 describe("scheduled() dispatch", () => {
   it("dispatches every cron as its OWN waitUntil unit on the hourly trigger", async () => {
-    const { units } = await invoke(HOURLY_CRON);
-    // One unit per cron: 14 hourly jobs + the cap-producer backstop. A dropped ctx.waitUntil(...)
-    // shows up here as 14. (The AST guard pins WHICH 15 by identifier; a count alone could not.)
-    expect(units).toBe(15);
+    const { units, logs } = await invoke(HOURLY_CRON);
+    // 15 crons (14 hourly + the cap-producer backstop) PLUS the run supervisor, which is deliberately
+    // its own unit so it can outlive the fan-out it watches. A dropped ctx.waitUntil(...) shows up here
+    // as 15. (The AST guard pins WHICH 15 crons by identifier; a count alone could not.)
+    expect(units).toBe(CRON_UNITS + 1);
+    // ...and the supervisor really ran: it is the only thing that emits this line, so its absence would
+    // mean wall-clock truncation is once again completely unobserved.
+    expect(logs.map((l) => JSON.parse(l).message)).toContain("cron.run.complete");
   });
 
   it("runs ONLY the cap producer on the */5 trigger — by name, not by count", async () => {
     const { units, failures } = await invoke(CAP_PRODUCER_CRON);
+    // No supervisor on this tick: the cap-only path returns before it is registered, deliberately —
+    // one cron under a 30-second CPU budget is not where truncation happens.
     // The 12x guard: anything moved ABOVE `if (!plan.runsHourly) return` would run every 5 minutes
     // instead of hourly. Asserting the NAME (not just the count) means a heavy cron promoted above
     // the early return is caught even if some other cron were removed in the same edit.
@@ -118,7 +128,7 @@ describe("scheduled() dispatch", () => {
     // Mirrors scheduledCronPlan's fallthrough, but asserted on the DISPATCH: an unknown trigger must
     // never silently degrade to cap-only and quietly stop the rollups/reconcilers/purges.
     const { units, failures } = await invoke("*/17 * * * *");
-    expect(units).toBe(15);
+    expect(units).toBe(CRON_UNITS + 1);
     expect(failures).toEqual(UNGUARDED_FAILURES);
   });
 });
