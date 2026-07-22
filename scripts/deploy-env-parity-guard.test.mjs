@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { check, requiredEnvNames, workflowsRunningGenerator } from "./deploy-env-parity-guard.mjs";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // The invariant, proven against the REAL repository — this is the guard running against production.
 test("the actual repository passes the guard", () => {
@@ -16,8 +19,15 @@ test("finds the generator's reqEnv names", () => {
   assert.deepEqual(names, ["A_ID", "A_ID", "B_ID"]);
 });
 
+// The previous version of this asserted `requiredEnvNames.length >= 0`, which reads the FUNCTION'S
+// ARITY, not its result — an assertion that cannot fail. It is the floor for everything below, so it
+// has to actually call the thing.
 test("the real generator requires a plausible number of vars", () => {
-  assert.ok(requiredEnvNames.length >= 0);
+  const names = requiredEnvNames(
+    readFileSync(join(REPO_ROOT, "scripts", "gen-wrangler-prod.mjs"), "utf8"),
+  );
+  assert.ok(names.length >= 5, `expected >= 5 reqEnv names, got ${names.length}`);
+  assert.ok(names.includes("KV_HEALTH_ID"));
   assert.ok(workflowsRunningGenerator().length >= 2);
 });
 
