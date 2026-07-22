@@ -86,6 +86,20 @@ onlyBuiltDependencies:
 #     package is absent from the Worker bundle entirely, because `agents` routes MCP through
 #     server/webStandardStreamableHttp.js and never touches the Node transport. Retarget to a 1.x
 #     key if upstream ever widens its range (modelcontextprotocol/typescript-sdk#2531).
+#
+# sharp >=0.35.0 -> fixes GHSA-f88m-g3jw-g9cj (#31, high; four libvips CVEs — CVE-2026-33327/33328/
+#   35590/35591 — in the GIF, TIFF and VIPS decoders). 0.35.3 carries libvips 8.18.3. The tree held
+#   TWO copies: apps/www already declared ^0.35.3 for its brand-mail asset script, while `next` (an
+#   OPTIONAL dep, `^0.34.5`) and `miniflare` (an EXACT `0.34.5`) each dragged in a vulnerable 0.34.5.
+#   This key deliberately crosses both of those declared ranges, which is safe here because nothing
+#   loads either copy: there is no Cloudflare Images binding anywhere in the repo (miniflare's only
+#   sharp consumer), and apps/www builds with `output: "export"` + `images: { unoptimized: true }`,
+#   so Next's image optimizer — the only thing that would `require` its optional sharp — never runs.
+#   The one place sharp is genuinely called (apps/www/scripts/gen-brand-mail-assets.mjs and the
+#   apple-branded-mail drift test) was ALREADY on 0.35.3, so this version is proven in this tree
+#   rather than assumed. The advisory's precondition is "processing untrusted input"; these paths
+#   process our own committed brand assets. Collapsing to one copy also removes a second native
+#   binary from every install. Drop this key once next and miniflare both ship a >=0.35 default.
 overrides:
   esbuild: 0.28.1
   postcss: 8.5.15
@@ -99,3 +113,4 @@ overrides:
   "fast-uri@<3.1.3": "^3.1.3"
   "hono@<4.12.27": "^4.12.27"
   "@hono/node-server@<2.0.5": "^2.0.5"
+  "sharp@<0.35.0": "^0.35.0"
