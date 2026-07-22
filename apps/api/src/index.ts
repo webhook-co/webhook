@@ -408,7 +408,13 @@ export default {
   //    repair any org stuck BELOW it, so the prune can never delete a paying customer's data on day 8.
   //  - cancellation drain (0075): cancel the Stripe subscription of any org that was hard-deleted while
   //    still paying — enqueued by deleteOrgWithAudit, so a deleted customer stops being charged.
-  // Independent + failure-isolated: neither cron can throw, so one faulting can't starve the other.
+  // Independent: the runtime settles each ctx.waitUntil unit separately — "even if a promise passed to one
+  // waitUntil call is rejected, promises passed to other waitUntil() calls will still continue to execute"
+  // (Workers runtime-apis/context) — so one cron faulting cannot starve the other. That isolation is a
+  // RUNTIME guarantee, not something the dispatch does. Each cron additionally self-guards and returns
+  // cleanly when billing is unprovisioned; scheduled-dispatch.test.ts pins both the two-unit fan-out and
+  // the clean no-op. NB an uncaught rejection here would be recorded as the invocation's Cron Trigger
+  // status, which is deliberate: these crons are NOT wrapped in a swallowing .catch().
   async scheduled(
     _controller: ScheduledController,
     env: Env,
