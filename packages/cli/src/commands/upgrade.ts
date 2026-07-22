@@ -250,8 +250,10 @@ async function fetchVerifiedAsset(
   name: string,
 ): Promise<Uint8Array> {
   try {
-    const data = await downloadBytes(fetchFn, findAssetUrl(release, name));
-    const checksums = await downloadText(fetchFn, findAssetUrl(release, "checksums.txt"));
+    const assetUrl = findAssetUrl(release, name);
+    const checksumsUrl = findAssetUrl(release, "checksums.txt");
+    const data = await downloadBytes(fetchFn, assetUrl);
+    const checksums = await downloadText(fetchFn, checksumsUrl);
     verifyChecksum(data, checksums, name);
     return data;
   } catch (err) {
