@@ -42,12 +42,14 @@ const HOUR = 60 * 60 * 1000;
  *
  * The unlisted jobs still report (the call sites are harmless and dark by default); they are just
  * not graded. Promote one here once its binding is provisioned in production.
+ *
+ * ENGINE JOBS ARE NOT HERE YET. apps/engine dispatches its crons in a shape that
+ * `scripts/cron-dispatch-guard.mjs` asserts precisely -- each `ctx.waitUntil` unit must carry a
+ * `.catch()` logging an EXACT string that production alerts are keyed on. Wrapping those call sites
+ * deleted those catches, so the guard (correctly) refused it. Adding engine heartbeats means teaching
+ * that guard the wrapped shape, which is a change to a safety guard and belongs in its own PR.
  */
 export const REGISTERED_JOBS: readonly JobSpec[] = [
-  { id: "audit-anchor", windowMs: 3 * HOUR, label: "engine: WORM audit head anchor (hourly)" },
-  { id: "delivery-reconciler", windowMs: 3 * HOUR, label: "engine: delivery reconciler (hourly)" },
-  { id: "metering-rollup", windowMs: 3 * HOUR, label: "engine: metering rollup (hourly)" },
-  { id: "cap-producer", windowMs: 3 * HOUR, label: "engine: free-tier cap producer (every 5 min)" },
   { id: "notification-drain", windowMs: 3 * HOUR, label: "auth: notification drain (hourly)" },
   {
     id: "auth-expiry-sweep",

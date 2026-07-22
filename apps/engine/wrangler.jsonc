@@ -240,10 +240,22 @@
     { "tag": "v2", "new_sqlite_classes": ["DeliveryDO"] },
   ],
   // Per-invocation subrequest limit (S5). Cloudflare removed the old 1,000-subrequest cap on 2026-02-11; the
-  // paid default is now 10,000 subrequests/invocation. The HOURLY scheduled() invocation runs ~9 crons that
-  // SHARE one budget, and the retention prune alone can issue up to 50 orgs × 40 batches × 3 ops = 6,000
-  // binding subrequests, so the default would be too tight — raise it to 50,000 for wide margin. The bounded
-  // prune loops (orgLimit × batchesPerOrg) remain the PRIMARY guard against runaway deletion; this ceiling is
+  // paid default is now 10,000 subrequests/invocation. The HOURLY scheduled() invocation runs 15 crons that
+  // SHARE one budget — 14 hourly jobs plus the cap-producer backstop (scripts/cron-dispatch-guard.mjs pins
+  // the exact set, so this count cannot drift again). NO PRECISE WORST CASE IS CLAIMED HERE, deliberately:
+  // an earlier revision of this comment asserted one ("~9 crons", the retention prune's 6,000) and it was
+  // both stale and, on its own accounting, inconsistent. Two things dominate, and only one is bounded by a
+  // constant:
+  //   - the bounded DRAINS, which are: retention prune 50 orgs × 40 batches × ~3 ops, payload purge 20 jobs
+  //     × 50 batches, org reaper 20 × 40 chunks, event-payload purge 200 jobs, up to 500 DO wakes;
+  //   - the per-org ENUMERATIONS (metering / delivery-stats / activation rollups, cap producer, meter
+  //     reporter), each looping up to DEFAULT_*_LIMIT = 1,000 orgs with a MULTI-STATEMENT withTenant
+  //     transaction per org. These dominate the drains by an order of magnitude and scale with the org
+  //     count, not with a fixed batch bound.
+  // 50,000 was chosen as a wide backstop over the 10,000 default. It is NOT a proven bound: it has not been
+  // measured against a full tenant base, and whether a postgres.js query over Hyperdrive counts as a
+  // subrequest at all (it is a connect() socket, not a binding RPC) is not established here. The bounded
+  // loops remain the PRIMARY guard against runaway work; this ceiling is
   // only the platform backstop. NB: `limits` is worker-wide (no per-handler scope), so `cpu_ms` is left
   // UNSET on purpose — setting it would also lower the ingest fetch() path's default runaway CPU guard, and
   // the hourly cron already gets a 15-minute CPU budget by default (these crons are I/O-bound regardless).

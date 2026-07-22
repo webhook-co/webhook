@@ -39,6 +39,7 @@ import {
   type DestinationDisabledContext,
 } from "./destination-disabled-email";
 import { readNotifyEnv, type NotifyEnv } from "./env";
+import { safeErrorMessage } from "./redact";
 import {
   renderFreeOrgCapSuspendedEmail,
   renderFreeOrgCapWarningEmail,
@@ -231,7 +232,7 @@ export async function runNotificationDrain(
     console.log(
       JSON.stringify({
         message: "auth.notify.cron.error",
-        error: error instanceof Error ? error.message : String(error),
+        error: safeErrorMessage(error),
       }),
     );
     return null;
@@ -251,7 +252,7 @@ export async function runNotificationDrain(
     console.log(
       JSON.stringify({
         message: "auth.notify.cron.error",
-        error: error instanceof Error ? error.message : String(error),
+        error: safeErrorMessage(error),
       }),
     );
     return null;
@@ -260,7 +261,7 @@ export async function runNotificationDrain(
       console.log(
         JSON.stringify({
           message: "auth.notify.cron.pool_close_error",
-          error: error instanceof Error ? error.message : String(error),
+          error: safeErrorMessage(error),
         }),
       ),
     );

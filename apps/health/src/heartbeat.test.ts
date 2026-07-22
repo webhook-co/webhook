@@ -12,7 +12,7 @@ import {
   type JobSpec,
 } from "./heartbeat";
 
-const spec: JobSpec = { id: "anchor", windowMs: 1000, label: "test" };
+const spec: JobSpec = { id: "notification-drain", windowMs: 1000, label: "test" };
 
 const store = (entries: Record<string, string>): BeatStore => ({
   get: async (key) => entries[key] ?? null,
@@ -87,7 +87,7 @@ describe("the registered job list", () => {
   });
 
   it("accepts only registered ids", () => {
-    expect(isRegisteredJob("audit-anchor")).toBe(true);
+    expect(isRegisteredJob("notification-drain")).toBe(true);
     expect(isRegisteredJob("../../etc/passwd")).toBe(false);
     expect(isRegisteredJob("")).toBe(false);
   });
@@ -116,7 +116,7 @@ describe("jobChecks", () => {
     const entries = Object.fromEntries(
       REGISTERED_JOBS.map((j) => [beatKey(j.id), JSON.stringify({ ts: now - 1000, ok: true })]),
     );
-    entries[beatKey("metering-rollup")] = JSON.stringify({
+    entries[beatKey("auth-expiry-sweep")] = JSON.stringify({
       ts: now - 99 * 60 * 60 * 1000,
       ok: true,
     });
@@ -125,7 +125,7 @@ describe("jobChecks", () => {
       { timeoutMs: 500 },
     );
     const failed = outcomes.filter((o) => o.status === "fail").map((o) => o.name);
-    expect(failed).toEqual(["metering-rollup"]);
+    expect(failed).toEqual(["auth-expiry-sweep"]);
   });
 
   it("fails every job on an empty store", async () => {

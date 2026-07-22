@@ -17,6 +17,10 @@
       // index.js (real runtime). turbo builds them first (^build). See ADR-0027 / the tsconfig boundary.
       "@webhook-co/db": ["../../packages/db/dist/index"],
       "@webhook-co/shared": ["../../packages/shared/dist/index"],
+      // Subpath imports bypass the mapping above and would resolve to SOURCE, which tsc then
+      // re-checks under this app's DOM lib set — failing on Workers globals like SecretsStoreSecret.
+      // Map each subpath to its built output for the same reason the barrel is mapped.
+      "@webhook-co/shared/heartbeat-client": ["../../packages/shared/dist/heartbeat-client"],
       "@webhook-co/contract": ["../../packages/contract/dist/index"],
       "@webhook-co/webhooks-spec": ["../../packages/webhooks-spec/dist/index"]
     }

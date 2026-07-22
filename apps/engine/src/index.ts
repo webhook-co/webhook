@@ -83,7 +83,6 @@ import {
   verifyListenTicket,
 } from "@webhook-co/shared";
 import { publicReadyz, readinessProvider, type HealthDocument } from "@webhook-co/shared/health";
-import { withHeartbeat } from "@webhook-co/shared/heartbeat-client";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { MAX_FREE_ORGS_PER_USER } from "@webhook-co/shared/plans";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -951,20 +950,38 @@ export default {
     // drifted `*/5` trigger degrades pause latency to ~1h rather than failing OPEN (see scheduledCronPlan).
     const plan = scheduledCronPlan(controller.cron);
     if (plan.runsCap) {
-      ctx.waitUntil(withHeartbeat(env, "cap-producer", () => runCapProducerCron(env)));
+      ctx.waitUntil(
+        runCapProducerCron(env).catch((err: unknown) =>
+          console.log(JSON.stringify({ message: "cap producer cron failed", error: String(err) })),
+        ),
+      );
     }
     // A frequent cap tick must NOT also run the heavy hourly jobs (12× the work, racing the hourly pass).
     if (!plan.runsHourly) return;
     // Catch + log here so a config error (bad secret/binding) or a DB outage surfaces in
     // observability rather than as a silent unhandled rejection inside waitUntil.
-    ctx.waitUntil(withHeartbeat(env, "audit-anchor", () => runAuditAnchorCron(env)));
+    ctx.waitUntil(
+      runAuditAnchorCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "audit anchor cron failed", error: String(err) })),
+      ),
+    );
     // The delivery reconciler re-wakes idle DOs that still owe a due delivery (a lost wake, or a re-enabled
     // destination). Independent of the anchor cron — one failing must not sink the other.
-    ctx.waitUntil(withHeartbeat(env, "delivery-reconciler", () => runReconcilerCron(env)));
+    ctx.waitUntil(
+      runReconcilerCron(env).catch((err: unknown) =>
+        console.log(
+          JSON.stringify({ message: "delivery reconciler cron failed", error: String(err) }),
+        ),
+      ),
+    );
     // Metering rollup: derive per-org usage from the exactly-once events rows (no hot-path
     // counter) and freeze aged days into immutable billing snapshots. Independent of the
     // other crons — one failing must not sink the others.
-    ctx.waitUntil(withHeartbeat(env, "metering-rollup", () => runMeteringRollupCron(env)));
+    ctx.waitUntil(
+      runMeteringRollupCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "metering rollup cron failed", error: String(err) })),
+      ),
+    );
     // Delivery-stats rollup (Lane 1.1): pre-aggregate outbound-delivery outcomes per org per day so the
     // /dashboard overview reads O(days), not O(deliveries). A display cache (not billing), so no freeze —
     // recent days just refine as deliveries settle. Independent of the others — one failing must not sink
