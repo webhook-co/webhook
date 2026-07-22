@@ -12,7 +12,8 @@
     "./bytes": "./src/bytes.ts",
     "./email-shell": "./src/email-shell.ts",
     "./plans": "./src/plans.ts",
-    "./first-touch-cookie": "./src/first-touch-cookie.ts"
+    "./first-touch-cookie": "./src/first-touch-cookie.ts",
+    "./health": "./src/health.ts"
   },
   "scripts": {
     "build": "tsc",
