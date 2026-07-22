@@ -41,10 +41,20 @@ export async function reportHeartbeat(
     const token = await readSecretBinding(env.HEARTBEAT_TOKEN);
     if (!token) return;
 
-    const url = `${base.replace(/\/+$/, "")}/internal/heartbeat/${encodeURIComponent(jobId)}?status=${ok ? "ok" : "fail"}`;
-    await fetchImpl(url, {
+    // Built with the URL constructor rather than by trimming and concatenating strings. A regex
+    // trailing-slash trim (`/\/+$/`) is a polynomial-ReDoS pattern on operator-supplied input, and
+    // the constructor resolves an absolute path against the base correctly anyway — including a base
+    // with stray trailing slashes. A malformed base throws here and is caught below, so a mistyped
+    // variable disables reporting instead of reaching an unintended host.
+    const target = new URL(`/internal/heartbeat/${encodeURIComponent(jobId)}`, base);
+    // https only, and never follow a redirect: the bearer credential must not be replayed to a host
+    // the operator did not configure, whether via a mistyped var or a hijacked redirect.
+    if (target.protocol !== "https:") return;
+    target.searchParams.set("status", ok ? "ok" : "fail");
+    await fetchImpl(target.toString(), {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
+      redirect: "error",
       signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
     });
   } catch {
@@ -53,25 +63,50 @@ export async function reportHeartbeat(
   }
 }
 
+/** Options for {@link withHeartbeat}. */
+export interface HeartbeatOptions {
+  /**
+   * Decide whether a completed run counts as a success.
+   *
+   * Defaults to "anything but `null`", which is not arbitrary: several crons in this repo catch
+   * their own errors and signal failure by RETURNING NULL rather than rejecting — an explicit,
+   * documented contract (see `runNotificationDrain`, `runAuthExpirySweep`, both of which promise the
+   * scheduled handler will never reject). If a throw were the only recognised failure, those jobs
+   * would report healthy while broken, which is the exact false-healthy signal this whole mechanism
+   * exists to prevent.
+   */
+  readonly succeeded?: (result: unknown) => boolean;
+  readonly fetchImpl?: typeof fetch;
+}
+
+/** A job that returns `null` failed; `undefined`/void and any other value succeeded. */
+const notNull = (result: unknown): boolean => result !== null;
+
 /**
  * Run a scheduled job, log a failure, and report the outcome — the shape every cron call site wants.
  *
- * The job's own result is discarded and its errors are logged rather than rethrown, matching what
- * the `scheduled()` handlers already did. What changes is that a failure is now also REPORTED, so a
- * job that runs and fails is distinguishable from one that never ran at all.
+ * A failure is recognised BOTH from a throw and from a failure-signalling return value, so "ran and
+ * failed" is distinguishable from "never ran" for every job regardless of which convention it uses.
  */
 export async function withHeartbeat(
   env: HeartbeatEnv,
   jobId: string,
   run: () => Promise<unknown>,
-  fetchImpl: typeof fetch = fetch,
+  opts: HeartbeatOptions = {},
 ): Promise<void> {
-  let ok = true;
+  const succeeded = opts.succeeded ?? notNull;
+  // Assigned on every path below, so no initialiser: a default here would be dead and would hide a
+  // future branch that forgot to set it.
+  let ok: boolean;
   try {
-    await run();
+    const result = await run();
+    ok = succeeded(result);
+    if (!ok) {
+      console.log(JSON.stringify({ message: `${jobId} cron reported failure` }));
+    }
   } catch (err: unknown) {
     ok = false;
     console.log(JSON.stringify({ message: `${jobId} cron failed`, error: String(err) }));
   }
-  await reportHeartbeat(env, jobId, ok, fetchImpl);
+  await reportHeartbeat(env, jobId, ok, opts.fetchImpl);
 }
