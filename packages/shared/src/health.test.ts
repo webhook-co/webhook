@@ -134,6 +134,31 @@ describe("publicReadyz", () => {
     expect(res.headers.get("x-robots-tag")).toBe("noindex");
     expect(res.headers.get("content-type")).toBe("application/health+json; charset=utf-8");
   });
+
+  it("merges caller-supplied transport-security headers", () => {
+    const res = publicReadyz(doc("pass"), {
+      "strict-transport-security": "max-age=63072000",
+      "referrer-policy": "no-referrer",
+    });
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=63072000");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
+  // A caller must not be able to widen this endpoint by passing headers that make it cacheable or
+  // indexable — the health headers win, whatever is handed in.
+  it("does not let a caller override the no-store / noindex guarantees", () => {
+    const res = publicReadyz(doc("pass"), {
+      "cache-control": "public, max-age=3600",
+      "x-robots-tag": "all",
+    });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-robots-tag")).toBe("noindex");
+  });
+
+  it("still serialises to exactly the status when extra headers are supplied", async () => {
+    const res = publicReadyz(doc("fail"), { "strict-transport-security": "max-age=1" });
+    expect(await res.text()).toBe('{"status":"fail"}');
+  });
 });
 
 describe("authedHealth", () => {

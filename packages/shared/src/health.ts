@@ -138,10 +138,17 @@ const httpStatusFor = (s: HealthStatus) => (s === "fail" ? 503 : 200);
  * serialised bytes so that adding a field to {@link HealthDocument} breaks the build instead of
  * quietly widening what this endpoint discloses.
  */
-export function publicReadyz(doc: HealthDocument): Response {
+export function publicReadyz(
+  doc: HealthDocument,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify({ status: doc.status }), {
     status: httpStatusFor(doc.status),
-    headers: HEALTH_HEADERS,
+    // Callers merge their own transport-security headers (HSTS, referrer-policy) here rather than
+    // re-wrapping the Response at five call sites, which is how those headers drift apart. The
+    // health headers are applied AFTER, so a caller cannot accidentally make this endpoint
+    // cacheable or indexable.
+    headers: { ...extraHeaders, ...HEALTH_HEADERS },
   });
 }
 
