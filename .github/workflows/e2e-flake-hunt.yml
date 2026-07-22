@@ -6,12 +6,8 @@ name: e2e-flake-hunt
 # before and after a candidate fix. Delete once the lane closes.
 
 on:
-  workflow_dispatch:
-    inputs:
-      repeats:
-        description: "suite runs per shard"
-        required: false
-        default: "3"
+  push:
+    branches: [fix/org-events-catchall-shadow]
 
 permissions:
   contents: read
@@ -24,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     services:
       postgres:
         image: postgres:17
@@ -54,7 +50,7 @@ jobs:
       - name: Run the suite repeatedly
         run: |
           fails=0
-          for i in $(seq 1 ${{ inputs.repeats }}); do
+          for i in $(seq 1 6); do
             rm -rf apps/web/.next
             if pnpm --filter @webhook-co/web test:e2e; then
               echo "HUNT run $i: pass"
@@ -65,7 +61,7 @@ jobs:
               cp -r apps/web/test-results/. /tmp/hunt-traces/run-$i/ 2>/dev/null || true
             fi
           done
-          echo "HUNT_SUMMARY shard=${{ matrix.shard }} fails=$fails of=${{ inputs.repeats }}"
+          echo "HUNT_SUMMARY shard=${{ matrix.shard }} fails=$fails of=6"
       - name: Upload traces
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
