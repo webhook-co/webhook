@@ -28,6 +28,10 @@ export const ORG_SLUG_RESERVED: ReadonlySet<string> = new Set([
   "billing",
   "usage",
   "audit",
+  // The read-only suspension screen — a route segment like the rest, but it postdates migration 0069 where
+  // the others were reserved, so it was the one segment a user could squat. See migration 0096, and the
+  // `MOVED_SEGMENTS ⊆ ORG_SLUG_RESERVED` guard in apps/web that would now fail without it.
+  "suspended",
   // routing + creation
   "org",
   "orgs",
