@@ -171,9 +171,15 @@ test("submitBatch: refuses a host outside webhook.co before any network call", a
 test("submitBatch: refuses a URL that is off-host before any network call", async () => {
   // Sibling of the host guard above: the host is allowed but a URL in the batch is not on it.
   // IndexNow would answer 422; we must never spend the request finding that out.
+  //
+  // Matched with an ANCHORED regex on the message shape plus a literal `includes` for the offending
+  // URL, rather than a bare /evil\.com/. An unanchored regex tested against URL-ish text is exactly
+  // the shape of a broken host check (js/regex/missing-regexp-anchor), and a test should not model
+  // one even where it is only reading an error string.
   await assert.rejects(
     () => submitBatch("www.webhook.co", ["https://evil.com/"], { fetchImpl: neverFetch }),
-    /evil\.com/,
+    (e) =>
+      /^\d+ URL\(s\) are not on host/.test(e.message) && e.message.includes("https://evil.com/"),
   );
 });
 
