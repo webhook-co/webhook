@@ -48,7 +48,12 @@ ec7c840f1a1dd0022714bd51b2d05009f34ac39d:docs/superpowers/plans/2026-07-14-invit
 # scanner finding it in the repo has found nothing that is not already served to the open internet,
 # and it grants nothing beyond "may submit URLs for this host".
 #
-# The CURRENT tree suppresses it inline (`// gitleaks:allow`), so this fingerprint covers only the
-# FROZEN occurrence in this branch's history — the commit that added the line before the inline
-# suppression existed.
+# The CURRENT tree suppresses it inline (`// gitleaks:allow`, on the SAME LINE as the constant —
+# see the ⚠️ note there). These fingerprints cover the FROZEN occurrences in history.
+#
+# ⚠️ A fingerprint on a FEATURE BRANCH does not survive a squash-merge. The squash mints a new commit
+# SHA, so the branch fingerprint stops matching and the finding reappears under the squash commit —
+# which is exactly how #782 passed on its PR and then turned main red. Both SHAs are listed: the
+# pre-merge branch commit and the squash commit that landed on main.
 df16cdf1f536403d8ccc770df927d0b15ed35b3e:scripts/indexnow-submit.mjs:generic-api-key:31
+74e921eddb1ab2a3ec9cdb894248f8826e1f7496:scripts/indexnow-submit.mjs:generic-api-key:34
