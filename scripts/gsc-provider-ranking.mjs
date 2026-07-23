@@ -74,21 +74,27 @@ export function b64url(input) {
     .replace(/\//g, "_");
 }
 
-/** The JWT claim set for a service-account token exchange (pure — testable without crypto). */
-export function buildJwtClaims(clientEmail, tokenUri, nowSec) {
+/**
+ * The JWT claim set for a service-account token exchange (pure — testable without crypto).
+ *
+ * `scope` DEFAULTS to the read-only scope and every reporting caller omits it. Mutation is therefore
+ * opt-in at the call site (see scripts/gsc-sitemap-write.mjs), not a property of the credential: a bug
+ * in a read path cannot acquire write rights, because it would have to name the write scope to get one.
+ */
+export function buildJwtClaims(clientEmail, tokenUri, nowSec, scope = SCOPE) {
   return {
     iss: clientEmail,
-    scope: SCOPE,
+    scope,
     aud: tokenUri,
     iat: nowSec,
     exp: nowSec + 3600,
   };
 }
 
-/** Sign a service-account JWT (RS256) for the token exchange. */
-export function signServiceAccountJwt(sa, nowSec) {
+/** Sign a service-account JWT (RS256) for the token exchange. Read-only unless `scope` says otherwise. */
+export function signServiceAccountJwt(sa, nowSec, scope = SCOPE) {
   const signingInput = `${b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${b64url(
-    JSON.stringify(buildJwtClaims(sa.client_email, tokenEndpoint(sa), nowSec)),
+    JSON.stringify(buildJwtClaims(sa.client_email, tokenEndpoint(sa), nowSec, scope)),
   )}`;
   const signature = b64url(createSign("RSA-SHA256").update(signingInput).sign(sa.private_key));
   return `${signingInput}.${signature}`;
@@ -97,10 +103,10 @@ export function signServiceAccountJwt(sa, nowSec) {
 /** Exchange the JWT for a short-lived access token. */
 export async function getAccessToken(
   sa,
-  { fetchImpl = fetch, nowSec = Math.floor(Date.now() / 1000) } = {},
+  { fetchImpl = fetch, nowSec = Math.floor(Date.now() / 1000), scope = SCOPE } = {},
 ) {
   const endpoint = tokenEndpoint(sa); // throws before anything is signed or sent
-  const jwt = signServiceAccountJwt(sa, nowSec);
+  const jwt = signServiceAccountJwt(sa, nowSec, scope);
   const res = await fetchImpl(endpoint, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
