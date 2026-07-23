@@ -49,7 +49,10 @@ import type { McpEnv } from "./env";
 // principal to the DO. Was the ADR-0011 follow-up; see ADR-0035.)
 
 const SERVER_NAME = "webhook.co";
-const SERVER_VERSION = "0.0.0";
+// Kept in lockstep with `apps/mcp/server.json` (the MCP Registry manifest) by
+// scripts/mcp-registry-guard.mjs: the registry listing and the version a client sees on
+// `initialize` are the same string, so a listing can never advertise a version we don't serve.
+const SERVER_VERSION = "1.0.0";
 // Human-facing display name + description surfaced via the initialize serverInfo (SDK Implementation.title/
 // description). Clients that render a server title/description prefer these over the programmatic `name`.
 // (The connector-list ICON is client-drawn from its own registry and ignores serverInfo — a marketplace
