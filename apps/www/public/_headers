@@ -50,6 +50,37 @@
 /_next/static/*
   Cache-Control: public, max-age=31536000, immutable
 
+# The answer-engine index (llmstxt.org). Its prose is UTF-8 — em dashes, curly quotes — and `text/plain`
+# is the ONE content type on this site that cannot say so in-band: HTML declares its encoding with
+# `<meta charset>` and XML with `<?xml encoding?>`, both of which a client reads out of the bytes
+# themselves. A .txt has no such mechanism, so the Content-Type header is the only channel, and without
+# a charset parameter the client falls back to its LOCALE DEFAULT — windows-1252 across most of the
+# West. Every UTF-8 em dash (`E2 80 94`) then decodes as three separate characters, `â€”`, which is
+# exactly what shipped: a byte-perfect file, mislabelled.
+#
+# Invisible to every other check. The bytes are correct in git, correct through the export, and correct
+# on the wire, so the content test on public/llms.txt passes and `curl` shows clean output (curl writes
+# bytes, it does not decode them). Only something that DECODES — a browser, or the LLM crawler this file
+# exists for — ever sees the damage.
+#
+# ⚠️ DO NOT "VERIFY" THIS RULE LOCALLY — `wrangler dev` CANNOT REPRODUCE THE BUG. The local asset
+# server appends `charset=utf-8` to text/* by DEFAULT, so /llms.txt and /robots.txt both come back
+# correctly labelled there with no rule at all. Production does not: it served a bare `text/plain`, and
+# that gap is the whole defect. Measured 2026-07-23 — prod `content-type: text/plain` vs local
+# `text/plain; charset=utf-8` on the same bytes. Production is the only authority for this rule.
+#
+# The `!` unsets the type Workers infers from the .txt extension before setting ours, mirroring
+# /bimi/logo.svg below, so exactly one Content-Type ships however Cloudflare resolves the collision.
+# Note the duplicate-Content-Type warning on that BIMI block is stronger than anything reproducible:
+# dropping the `!` locally still yielded ONE header for both rules. But local is not authoritative here
+# (see above), the global `nosniff` makes a malformed type unrecoverable, and /bimi/logo.svg proves the
+# unset-then-set shape serves a single correct header in prod. Keep it; it costs nothing.
+#
+# Scoped to this file, not `/*.txt`: robots.txt is pure ASCII, which decodes identically either way.
+/llms.txt
+  ! Content-Type
+  Content-Type: text/plain; charset=utf-8
+
 # The BIMI indicator. Mailbox providers (Yahoo/AOL, Fastmail, La Poste) fetch this at DELIVERY time,
 # from outside any browser, so it must be unauthenticated, always-up, and correctly typed. Content-Type
 # is set explicitly rather than left to extension inference: `nosniff` is on globally, so a wrong type
