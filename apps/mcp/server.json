@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "co.webhook/webhook",
+  "title": "webhook.co",
+  "description": "Receive, inspect, replay and deliver webhooks — with signature verification and agent triggers.",
+  "version": "1.0.0",
+  "websiteUrl": "https://docs.webhook.co/mcp/overview",
+  "repository": {
+    "url": "https://github.com/webhook-co/webhook",
+    "source": "github",
+    "subfolder": "apps/mcp"
+  },
+  "icons": [
+    {
+      "src": "https://www.webhook.co/logo.png",
+      "mimeType": "image/png",
+      "sizes": ["512x512"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.webhook.co/mcp"
+    }
+  ]
+}
