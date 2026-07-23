@@ -28,6 +28,9 @@ export const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
  * Our IndexNow key. Public by design — served at `https://<host>/<key>.txt` on every host we submit
  * for. Changing it means re-deploying every key file first, or submissions start failing verification.
  */
+// gitleaks:allow — generic-api-key fires on the name "KEY" plus entropy alone. This value is
+// PUBLISHED at https://<host>/<key>.txt on every host we submit for; a scanner finding it in the repo
+// has found nothing that isn't already served to the open internet.
 export const INDEXNOW_KEY = "b6e87fae-5113-40e1-91ad-694f702bf028";
 
 /** Protocol ceiling for a single POST. */

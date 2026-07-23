@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   assertHostAllowed,
@@ -9,9 +12,19 @@ import {
   INDEXNOW_KEY,
   keyLocationFor,
   MAX_URLS_PER_REQUEST,
+  parseSitemapLocs,
+  SITEMAP_FOR_HOST,
   submitBatch,
   verifyKeyLive,
 } from "./indexnow-submit.mjs";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Where each submittable host's key file must live in the repo to be served at that host's root. */
+const KEY_FILE_DIRS = new Map([
+  ["www.webhook.co", "apps/www/public"],
+  ["docs.webhook.co", "apps/docs"],
+]);
 
 // A fetch that must never be called: any invocation fails loudly. This is how the "refuses before the
 // network" guards prove they short-circuit rather than erroring after a request has already gone out.
@@ -153,4 +166,45 @@ test("submitBatch: refuses a host outside webhook.co before any network call", a
     () => submitBatch("evil.com", ["https://evil.com/"], { fetchImpl: neverFetch }),
     /webhook\.co/,
   );
+});
+
+test("parseSitemapLocs: extracts every <loc>, trimming surrounding whitespace", () => {
+  const xml = `<?xml version="1.0"?>
+    <urlset>
+      <url><loc>https://www.webhook.co/</loc><lastmod>2026-07-22</lastmod></url>
+      <url><loc>
+        https://www.webhook.co/pricing
+      </loc></url>
+    </urlset>`;
+  assert.deepEqual(parseSitemapLocs(xml), [
+    "https://www.webhook.co/",
+    "https://www.webhook.co/pricing",
+  ]);
+});
+
+test("parseSitemapLocs: unwraps CDATA so a submitted URL never carries the markers", () => {
+  const xml = `<urlset><url><loc><![CDATA[https://www.webhook.co/pricing]]></loc></url></urlset>`;
+  assert.deepEqual(parseSitemapLocs(xml), ["https://www.webhook.co/pricing"]);
+});
+
+test("parseSitemapLocs: drops empty locs and returns [] when there are none", () => {
+  assert.deepEqual(parseSitemapLocs("<urlset></urlset>"), []);
+  assert.deepEqual(parseSitemapLocs("<urlset><url><loc>   </loc></url></urlset>"), []);
+});
+
+test("the deployed key FILES stay in sync with INDEXNOW_KEY", () => {
+  // The drift that would break this silently: rotating INDEXNOW_KEY without renaming the files. The
+  // submitter's verifyKeyLive would then refuse every submission against a key location that 404s,
+  // and nothing else in CI would notice — the files are inert static assets.
+  for (const [host, dir] of KEY_FILE_DIRS) {
+    const file = path.join(REPO_ROOT, dir, `${INDEXNOW_KEY}.txt`);
+    assert.ok(existsSync(file), `no key file for ${host} at ${dir}/${INDEXNOW_KEY}.txt`);
+    assert.equal(readFileSync(file, "utf8").trim(), INDEXNOW_KEY, `${file} body must be the key`);
+  }
+});
+
+test("every host we can submit for has a key file directory declared", () => {
+  // Adding a host to SITEMAP_FOR_HOST without shipping its key file would produce a run that always
+  // refuses at verifyKeyLive. Keeping the two maps aligned is what makes that a CI failure instead.
+  assert.deepEqual([...SITEMAP_FOR_HOST.keys()].sort(), [...KEY_FILE_DIRS.keys()].sort());
 });
