@@ -216,8 +216,17 @@ export const TUTORIALS: readonly Tutorial[] = [
         heading: "Five minutes of clock tolerance",
         body: "Stripe's signature libraries default to a five-minute tolerance between the Stripe-Signature timestamp and the current time, so a machine with a drifted clock will reject perfectly good payloads. Worth ruling out before you go hunting for a wrong signing secret.",
       },
+      {
+        heading: "A 401 is usually the secret, not the signature",
+        body: "When verification fails, the two acute causes are a wrong secret and a mangled body. The stripe listen CLI prints its own signing secret, distinct from the one on a dashboard-registered endpoint — use the CLI's secret against the CLI and the dashboard's against the dashboard, and the 401 clears. The other cause is a framework that parsed and re-serialised the JSON before you verified: verify against the raw request body, exactly as Stripe sent it, or the computed signature won't match.",
+      },
     ],
     faq: [
+      {
+        question: "Why does Stripe webhook signature verification fail with a 401?",
+        answer:
+          "Almost always the signing secret or the body. A secret from stripe listen is not the secret on your dashboard endpoint, so crossing the two fails against a real delivery. And a framework that parses the request body before you verify has already re-serialised it — different whitespace, different key order — so you have to read the raw body Stripe signed. Rule out a drifted clock too, since the signature carries a timestamp checked against a tolerance window.",
+      },
       {
         question: "Does Stripe verify a webhook endpoint before it starts sending events?",
         answer:
