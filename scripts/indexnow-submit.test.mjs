@@ -20,11 +20,11 @@ import {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Where each submittable host's key file must live in the repo to be served at that host's root. */
-const KEY_FILE_DIRS = new Map([
-  ["www.webhook.co", "apps/www/public"],
-  ["docs.webhook.co", "apps/docs"],
-]);
+/**
+ * Where each submittable host's key file must live in the repo to be served at that host's root.
+ * `docs.webhook.co` is absent by measurement, not oversight — see SITEMAP_FOR_HOST's note.
+ */
+const KEY_FILE_DIRS = new Map([["www.webhook.co", "apps/www/public"]]);
 
 // A fetch that must never be called: any invocation fails loudly. This is how the "refuses before the
 // network" guards prove they short-circuit rather than erroring after a request has already gone out.

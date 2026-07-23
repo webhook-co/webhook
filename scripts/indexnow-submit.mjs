@@ -9,14 +9,13 @@
 //   - The key is 8-128 chars from [a-zA-Z0-9-] and is PUBLIC BY DESIGN: it is published as a text file
 //     at the root of each host. It is not a credential and carries no privilege beyond "may submit URLs
 //     for this host" — which is why it is committed rather than kept in a secret store.
-//   - Each HOST is a separate property. A key on the apex does NOT cover subdomains, so www.webhook.co
-//     and docs.webhook.co each need their own copy of the key file at their own root.
+//   - Each HOST is a separate property, with its own key file at its own root. A key on the apex does
+//     NOT cover subdomains. Only www.webhook.co participates — see SITEMAP_FOR_HOST for why docs cannot.
 //   - `host` must match every URL in `urlList`; a mismatch is answered with 422.
 //   - Up to 10,000 URLs per request.
 //
 // Usage (host is required; URLs are read from that host's sitemap):
 //   pnpm indexnow www.webhook.co
-//   pnpm indexnow docs.webhook.co
 //   pnpm indexnow www.webhook.co --dry-run     # print the payload, submit nothing
 
 import { isMain } from "./lib/docs-lib.mjs";
@@ -28,10 +27,13 @@ export const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
  * Our IndexNow key. Public by design — served at `https://<host>/<key>.txt` on every host we submit
  * for. Changing it means re-deploying every key file first, or submissions start failing verification.
  */
-// gitleaks:allow — generic-api-key fires on the name "KEY" plus entropy alone. This value is
-// PUBLISHED at https://<host>/<key>.txt on every host we submit for; a scanner finding it in the repo
-// has found nothing that isn't already served to the open internet.
-export const INDEXNOW_KEY = "b6e87fae-5113-40e1-91ad-694f702bf028";
+// generic-api-key fires on the name "KEY" plus entropy alone. This value is PUBLISHED at
+// https://<host>/<key>.txt on every host we submit for; a scanner finding it in the repo has found
+// nothing that is not already served to the open internet.
+//
+// ⚠️ The directive MUST sit on the SAME LINE as the finding. A `// gitleaks:allow` comment on the
+// lines ABOVE does nothing — that is how this shipped broken in #782 and turned main red.
+export const INDEXNOW_KEY = "b6e87fae-5113-40e1-91ad-694f702bf028"; // gitleaks:allow
 
 /** Protocol ceiling for a single POST. */
 export const MAX_URLS_PER_REQUEST = 10_000;
@@ -39,14 +41,17 @@ export const MAX_URLS_PER_REQUEST = 10_000;
 /** The registrable domain we may submit for. */
 const ALLOWED_APEX = "webhook.co";
 
-/** Where each host's sitemap lives, so a run enumerates what we actually publish. */
-export const SITEMAP_FOR_HOST = new Map([
-  ["www.webhook.co", "https://www.webhook.co/sitemap.xml"],
-  // The bare docs sitemap URL is unfetchable for Google (a stuck Search Console record); the `?x=1`
-  // alias serves byte-identical content. IndexNow is unaffected either way — this just reuses the URL
-  // we know is good. See internal/marketing/seo-indexation-diagnosis.md.
-  ["docs.webhook.co", "https://docs.webhook.co/sitemap.xml"],
-]);
+/**
+ * Where each submittable host's sitemap lives, so a run enumerates what we actually publish.
+ *
+ * `docs.webhook.co` is deliberately ABSENT and should not be re-added. It cannot participate:
+ * IndexNow requires a key file at the host's root, docs is served by Mintlify, and Mintlify serves
+ * `.txt` on Enterprise plans only. Measured 2026-07-23 — the key file was deployed to `apps/docs/` and
+ * `https://docs.webhook.co/<key>.txt` returned `404 Asset not found`, so the file was removed rather
+ * than left as dead weight. Bing coverage for the docs host comes from Bing Webmaster Tools' Search
+ * Console import instead, which needs no key file.
+ */
+export const SITEMAP_FOR_HOST = new Map([["www.webhook.co", "https://www.webhook.co/sitemap.xml"]]);
 
 /** The public URL of the key file for `host` (pure). Root of the host, per the protocol. */
 export function keyLocationFor(host) {
