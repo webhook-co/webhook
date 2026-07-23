@@ -168,6 +168,45 @@ test("submitBatch: refuses a host outside webhook.co before any network call", a
   );
 });
 
+test("submitBatch: refuses a URL that is off-host before any network call", async () => {
+  // Sibling of the host guard above: the host is allowed but a URL in the batch is not on it.
+  // IndexNow would answer 422; we must never spend the request finding that out.
+  await assert.rejects(
+    () => submitBatch("www.webhook.co", ["https://evil.com/"], { fetchImpl: neverFetch }),
+    /evil\.com/,
+  );
+});
+
+test("verifyKeyLive: refuses a host outside webhook.co before any network call", async () => {
+  // verifyKeyLive issues an outbound GET built from `host`, so it must not be a request primitive
+  // that can be pointed at an arbitrary origin.
+  await assert.rejects(() => verifyKeyLive("evil.com", { fetchImpl: neverFetch }), /webhook\.co/);
+});
+
+test("assertUrlsMatchHost: rejects malformed and empty entries, naming them", () => {
+  assert.throws(
+    () => assertUrlsMatchHost("www.webhook.co", ["https://www.webhook.co/", "not-a-url", ""]),
+    /not-a-url/,
+  );
+});
+
+test("assertUrlsMatchHost: rejects relative and non-http(s) URLs", () => {
+  // A relative path has no host to compare, and `javascript:` parses with an EMPTY hostname — both
+  // must fail rather than slip through as "matching".
+  for (const bad of [
+    "/pricing",
+    "javascript:alert(1)",
+    "data:text/plain,hi",
+    "//www.webhook.co/",
+  ]) {
+    assert.throws(
+      () => assertUrlsMatchHost("www.webhook.co", [bad]),
+      /not on host/,
+      `expected ${bad} refused`,
+    );
+  }
+});
+
 test("parseSitemapLocs: extracts every <loc>, trimming surrounding whitespace", () => {
   const xml = `<?xml version="1.0"?>
     <urlset>

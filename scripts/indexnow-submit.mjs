@@ -126,6 +126,9 @@ export function parseSitemapLocs(xml) {
  * host that 200s everything would look verified.
  */
 export async function verifyKeyLive(host, { fetchImpl = fetch } = {}) {
+  // Guarded here too, not just in submitBatch: this function is exported and issues an outbound GET
+  // to `https://<host>/…`, so an unchecked host would make it a request primitive pointed anywhere.
+  assertHostAllowed(host);
   const location = keyLocationFor(host);
   const res = await fetchImpl(location);
   if (!res.ok) {
