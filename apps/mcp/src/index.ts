@@ -44,6 +44,20 @@ import type { McpEnv } from "./env";
 const PRM_PATH = "/.well-known/oauth-protected-resource";
 const HEALTH_PATH = "/healthz";
 const READY_PATH = "/readyz";
+const ROOT_PATH = "/";
+
+/**
+ * Where someone who pasted the bare host into a browser should land.
+ *
+ * Nothing is mounted at `/` — `/mcp` is the endpoint — but both our docs and the public MCP Registry
+ * listing name the bare host (`mcp.webhook.co`), so arriving at the root is a normal thing to do and
+ * a 404 reads as "the service is down" when it is not.
+ *
+ * This MUST equal `websiteUrl` in `apps/mcp/server.json`, which is the page every MCP client and
+ * aggregator shows for us; a test in `test/resource-server.test.ts` pins the two together so the
+ * root and the listing can't drift to different pages.
+ */
+const DOCS_URL = "https://docs.webhook.co/mcp/overview";
 
 /**
  * mcp resolves every bearer through webhook_authn, so that binding is its readiness.
@@ -174,6 +188,12 @@ export default {
         status: 200,
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
+    }
+    // GET/HEAD only, and the root only. A client that POSTs JSON-RPC here has the wrong URL, and
+    // redirecting it to an HTML page would turn a clear 404 into a confusing parse error — so those
+    // fall through to the resource handler, which answers honestly.
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname === ROOT_PATH) {
+      return Response.redirect(DOCS_URL, 302);
     }
 
     // buildResourceDeps is inside the try so a config/connection fault returns a graceful 500 (not an
