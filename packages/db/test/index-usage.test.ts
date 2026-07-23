@@ -106,7 +106,7 @@ beforeAll(async () => {
     for (let i = 0; i < 300; i++) {
       await tx`
         insert into delivery_attempts (id, org_id, event_id, destination_id, subscription_id, target, status)
-        values (${newId()}, ${orgId}, ${eventIds[i]}, ${destinationId}, ${subscriptionId}, ${"auto"}, ${"delivered"})`;
+        values (${newId()}, ${orgId}, ${eventIds[i]!}, ${destinationId}, ${subscriptionId}, ${"auto"}, ${"delivered"})`;
     }
     for (let i = 0; i < 60; i++) {
       await tx`insert into endpoints (id, org_id, ingest_token_hash, name)

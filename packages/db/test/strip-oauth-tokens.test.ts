@@ -28,7 +28,7 @@ const MIGRATION = join(
 /** The executable `-- migrate:up` body of the migration file (everything before `-- migrate:down`). */
 function migrationUpSql(): string {
   const text = readFileSync(MIGRATION, "utf8");
-  const up = text.split("-- migrate:down")[0].replace("-- migrate:up", "");
+  const up = text.split("-- migrate:down")[0]!.replace("-- migrate:up", "");
   return up.trim();
 }
 
@@ -66,14 +66,14 @@ describe("migration 0061 — strip unused OAuth tokens", () => {
     const [row] = await owner`
       select "accessToken", "refreshToken", "idToken", "accountId", "providerId", "userId", "scope"
       from "account" where "id" = ${accountId}`;
-    expect(row.accessToken).toBeNull();
-    expect(row.refreshToken).toBeNull();
-    expect(row.idToken).toBeNull();
+    expect(row!.accessToken).toBeNull();
+    expect(row!.refreshToken).toBeNull();
+    expect(row!.idToken).toBeNull();
     // Identity linkage + scope untouched — the account still resolves the same provider identity.
-    expect(row.accountId).toBe("google-sub-9");
-    expect(row.providerId).toBe("google");
-    expect(row.userId).toBe(userId);
-    expect(row.scope).toBe("openid email");
+    expect(row!.accountId).toBe("google-sub-9");
+    expect(row!.providerId).toBe("google");
+    expect(row!.userId).toBe(userId);
+    expect(row!.scope).toBe("openid email");
   });
 
   it("is idempotent — a second run over already-null tokens is a no-op (no error, still null)", async () => {
@@ -93,9 +93,9 @@ describe("migration 0061 — strip unused OAuth tokens", () => {
     const [row] = await owner`
       select "accessToken", "refreshToken", "idToken", "providerId" from "account"
       where "id" = ${accountId}`;
-    expect(row.accessToken).toBeNull();
-    expect(row.refreshToken).toBeNull();
-    expect(row.idToken).toBeNull();
-    expect(row.providerId).toBe("credential");
+    expect(row!.accessToken).toBeNull();
+    expect(row!.refreshToken).toBeNull();
+    expect(row!.idToken).toBeNull();
+    expect(row!.providerId).toBe("credential");
   });
 });

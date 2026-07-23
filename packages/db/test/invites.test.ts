@@ -139,9 +139,9 @@ describe("audit", () => {
       "invite_revoked",
     ]);
     // Each invite event links to its invite by target_id (offset by the leading org_created).
-    expect(events[0].target_id).toBe(orgId);
-    expect(events[1].target_id).toBe(a.id);
-    expect(events[4].target_id).toBe(b.id);
+    expect(events[0]!.target_id).toBe(orgId);
+    expect(events[1]!.target_id).toBe(a.id);
+    expect(events[4]!.target_id).toBe(b.id);
   });
 });
 

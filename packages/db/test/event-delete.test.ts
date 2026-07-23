@@ -233,22 +233,22 @@ describe("in-tx PII redaction + R2 purge enqueue", () => {
       }[]
     >`select headers, verification, external_id, provider_event_id, content_hash, content_type,
              dedup_key, payload_r2_key from events where id = ${eventId}`;
-    expect(row.headers).toEqual([]); // the Authorization header is gone
-    expect(row.verification).toBeNull();
-    expect(row.external_id).toBeNull();
-    expect(row.provider_event_id).toBeNull();
-    expect(row.content_hash).toBeNull();
-    expect(row.content_type).toBeNull();
-    expect(row.dedup_key).not.toBeNull(); // KEPT — anti-re-bill
-    expect(row.payload_r2_key).not.toBeNull(); // KEPT — needed to enqueue the purge
+    expect(row!.headers).toEqual([]); // the Authorization header is gone
+    expect(row!.verification).toBeNull();
+    expect(row!.external_id).toBeNull();
+    expect(row!.provider_event_id).toBeNull();
+    expect(row!.content_hash).toBeNull();
+    expect(row!.content_type).toBeNull();
+    expect(row!.dedup_key).not.toBeNull(); // KEPT — anti-re-bill
+    expect(row!.payload_r2_key).not.toBeNull(); // KEPT — needed to enqueue the purge
 
     const [purge] = await provider<
       { payload_r2_key: string; status: string; endpoint_id: string }[]
     >`
       select payload_r2_key, status, endpoint_id from event_payload_purge where event_id = ${eventId}`;
-    expect(purge.status).toBe("purging");
-    expect(purge.endpoint_id).toBe(endpointId);
-    expect(purge.payload_r2_key).toBe(row.payload_r2_key); // the exact object to delete
+    expect(purge!.status).toBe("purging");
+    expect(purge!.endpoint_id).toBe(endpointId);
+    expect(purge!.payload_r2_key).toBe(row!.payload_r2_key); // the exact object to delete
   });
 });
 
@@ -293,7 +293,7 @@ describe("audit + idempotency + not-found", () => {
     expect(chain.filter((r) => r.action === "event.deleted")).toHaveLength(1); // audited once
     const [purgeCount] = await provider<{ n: number }[]>`
       select count(*)::int as n from event_payload_purge where event_id = ${eventId}`;
-    expect(purgeCount.n).toBe(1); // no duplicate purge job
+    expect(purgeCount!.n).toBe(1); // no duplicate purge job
   });
 
   it("throws NOT_FOUND for an unknown or cross-org id", async () => {
@@ -359,7 +359,7 @@ describe("event_payload_purge RLS boundary (the anti-forgery gate — it drives 
     ).rejects.toThrow();
     const [row] = await provider<{ n: number }[]>`
       select count(*)::int as n from event_payload_purge where org_id = ${orgB}`;
-    expect(row.n).toBe(0);
+    expect(row!.n).toBe(0);
   });
 
   it("a tenant cannot read another org's purge job", async () => {

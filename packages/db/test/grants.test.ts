@@ -248,7 +248,7 @@ describe("mintScopedKey — approval ON", () => {
     expect(res.status).toBe("pending_approval");
     if (res.status !== "pending_approval") throw new Error("unreachable");
     expect(await grantStatus(orgId, res.grantId)).toBe("pending_approval");
-    const [{ n }] = await withTenant(
+    const rows = await withTenant(
       app,
       orgId,
       (tx) =>
@@ -256,7 +256,7 @@ describe("mintScopedKey — approval ON", () => {
           { n: number }[]
         >`select count(*)::int as n from api_keys where grant_id = ${res.grantId}`,
     );
-    expect(n).toBe(0); // no key minted
+    expect(rows[0]!.n).toBe(0); // no key minted
     expect(await auditTypes(orgId)).toEqual(["grant_created"]);
   });
 
@@ -357,7 +357,7 @@ describe("mintKeyForGrant — refresh", () => {
     expect((await makeResolver().resolve(second.plaintext))?.orgId).toBe(orgId);
 
     // Same grant reused — both keys hang off first.grantId; no new grant created.
-    const [{ n }] = await withTenant(
+    const rows = await withTenant(
       app,
       orgId,
       (tx) =>
@@ -365,14 +365,14 @@ describe("mintKeyForGrant — refresh", () => {
           { n: number }[]
         >`select count(*)::int as n from api_keys where grant_id = ${first.grantId}`,
     );
-    expect(n).toBe(2);
-    const [{ g }] = await withTenant(
+    expect(rows[0]!.n).toBe(2);
+    const grantRows = await withTenant(
       app,
       orgId,
       (tx) =>
         tx<{ g: number }[]>`select count(*)::int as g from auth_grant where org_id = ${orgId}`,
     );
-    expect(g).toBe(1);
+    expect(grantRows[0]!.g).toBe(1);
   });
 
   it("refuses to mint on a non-active (pending) grant", async () => {
@@ -436,7 +436,7 @@ describe("mintKeyForGrant — refresh", () => {
     ).rejects.toThrow(/not active/i);
 
     // No second key was minted — the grant still has exactly the one key from the initial mint.
-    const [{ n }] = await withTenant(
+    const rows = await withTenant(
       app,
       orgId,
       (tx) =>
@@ -444,7 +444,7 @@ describe("mintKeyForGrant — refresh", () => {
           { n: number }[]
         >`select count(*)::int as n from api_keys where grant_id = ${minted.grantId}`,
     );
-    expect(n).toBe(1);
+    expect(rows[0]!.n).toBe(1);
   });
 });
 
@@ -774,8 +774,8 @@ describe("read helpers", () => {
     );
     const aGrants = await listGrants(app, orgA);
     expect(aGrants).toHaveLength(1); // only org A's grant (RLS)
-    expect(aGrants[0].status).toBe("active");
-    expect(aGrants[0].authMethod).toBe("pkce_loopback");
+    expect(aGrants[0]!.status).toBe("active");
+    expect(aGrants[0]!.authMethod).toBe("pkce_loopback");
     expect(JSON.stringify(aGrants)).not.toContain("key_hash");
   });
 

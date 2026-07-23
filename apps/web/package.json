@@ -10,7 +10,7 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy:dry": "opennextjs-cloudflare build && wrangler deploy --dry-run",
     "start": "next start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.playwright.json",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.pg.config.ts",
     "test:e2e": "playwright test"

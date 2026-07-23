@@ -233,15 +233,17 @@ describe("cross-org isolation (every tenant table)", () => {
   for (const { table, col } of TENANT_TABLES) {
     it(`org A context cannot read org B rows in ${table}`, async () => {
       const visibleB = await withTenant(app, orgA.orgId, async (tx) => {
-        const [{ n }] = await tx<{ n: number }[]>`
-          select count(*)::int as n from ${tx(table)} where ${tx(col)} = ${orgB.orgId}`;
+        const { n } = (
+          await tx<{ n: number }[]>`
+          select count(*)::int as n from ${tx(table)} where ${tx(col)} = ${orgB.orgId}`
+        )[0]!;
         return n;
       });
       expect(visibleB).toBe(0);
     });
 
     it(`no tenant context yields zero rows from ${table} (deny-by-default)`, async () => {
-      const [{ n }] = await app<{ n: number }[]>`select count(*)::int as n from ${app(table)}`;
+      const { n } = (await app<{ n: number }[]>`select count(*)::int as n from ${app(table)}`)[0]!;
       expect(n).toBe(0);
     });
   }
@@ -311,11 +313,11 @@ describe("cross-org isolation (every tenant table)", () => {
     for (const priv of ["UPDATE", "DELETE"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_table_privilege(${DB_ROLES.app}, 'usage_alerts', ${priv}) as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     const [ins] = await owner<{ ok: boolean }[]>`
       select has_table_privilege(${DB_ROLES.app}, 'usage_alerts', 'INSERT') as ok`;
-    expect(ins.ok).toBe(true);
+    expect(ins!.ok).toBe(true);
   });
 
   it("stripe_meter_reports is an outbox for webhook_app (SELECT+INSERT+UPDATE, but NO DELETE)", async () => {
@@ -325,11 +327,11 @@ describe("cross-org isolation (every tenant table)", () => {
     for (const priv of ["SELECT", "INSERT", "UPDATE"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_table_privilege(${DB_ROLES.app}, 'stripe_meter_reports', ${priv}) as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     const [del] = await owner<{ ok: boolean }[]>`
       select has_table_privilege(${DB_ROLES.app}, 'stripe_meter_reports', 'DELETE') as ok`;
-    expect(del.ok).toBe(false);
+    expect(del!.ok).toBe(false);
   });
 
   it("billing_customers + billing_subscriptions are SELECT-ONLY for webhook_app (no tenant writes)", async () => {
@@ -339,11 +341,11 @@ describe("cross-org isolation (every tenant table)", () => {
     for (const table of ["billing_customers", "billing_subscriptions"] as const) {
       const [sel] = await owner<{ ok: boolean }[]>`
         select has_table_privilege(${DB_ROLES.app}, ${table}, 'SELECT') as ok`;
-      expect(sel.ok).toBe(true);
+      expect(sel!.ok).toBe(true);
       for (const priv of ["INSERT", "UPDATE", "DELETE"] as const) {
         const [p] = await owner<{ ok: boolean }[]>`
           select has_table_privilege(${DB_ROLES.app}, ${table}, ${priv}) as ok`;
-        expect(p.ok).toBe(false);
+        expect(p!.ok).toBe(false);
       }
     }
   });
@@ -356,12 +358,12 @@ describe("pooled-connection leak", () => {
     const single = createClient(pg.urlFor({ role: DB_ROLES.app }), { max: 1 });
     try {
       const seen = await withTenant(single, orgA.orgId, async (tx) => {
-        const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from events`;
+        const { n } = (await tx<{ n: number }[]>`select count(*)::int as n from events`)[0]!;
         return n;
       });
       expect(seen).toBe(1); // sees its own org inside the context
 
-      const [{ n }] = await single<{ n: number }[]>`select count(*)::int as n from events`;
+      const { n } = (await single<{ n: number }[]>`select count(*)::int as n from events`)[0]!;
       expect(n).toBe(0); // no leak after the transaction returned the connection
     } finally {
       await single.end();
@@ -373,13 +375,15 @@ describe("owner / FORCE RLS negative control", () => {
   it("the table owner with no context is still denied reads (FORCE row level security)", async () => {
     // Without FORCE RLS the owner would bypass policies and see ALL orgs' rows. This
     // is the regression guard for a missing FORCE / an owner connection on the path.
-    const [{ n }] = await owner<{ n: number }[]>`select count(*)::int as n from events`;
+    const { n } = (await owner<{ n: number }[]>`select count(*)::int as n from events`)[0]!;
     expect(n).toBe(0);
   });
 
   it("the table owner is not a superuser and cannot bypass RLS", async () => {
-    const [{ super: isSuper, bypass }] = await owner<{ super: boolean; bypass: boolean }[]>`
-      select rolsuper as super, rolbypassrls as bypass from pg_roles where rolname = ${DB_ROLES.owner}`;
+    const { super: isSuper, bypass } = (
+      await owner<{ super: boolean; bypass: boolean }[]>`
+      select rolsuper as super, rolbypassrls as bypass from pg_roles where rolname = ${DB_ROLES.owner}`
+    )[0]!;
     expect(isSuper).toBe(false);
     expect(bypass).toBe(false);
   });
@@ -408,8 +412,8 @@ describe("ingest_event() single-statement hot path", () => {
     const [evt] = await withTenant(app, orgA.orgId, async (tx) => {
       return tx<{ received_at: Date }[]>`select received_at from events where id = ${id}`;
     });
-    expect(evt.received_at.getTime()).toBeGreaterThanOrEqual(before - TIMESTAMP_TOLERANCE_MS);
-    expect(evt.received_at.getTime()).toBeLessThanOrEqual(Date.now() + TIMESTAMP_TOLERANCE_MS);
+    expect(evt!.received_at.getTime()).toBeGreaterThanOrEqual(before - TIMESTAMP_TOLERANCE_MS);
+    expect(evt!.received_at.getTime()).toBeLessThanOrEqual(Date.now() + TIMESTAMP_TOLERANCE_MS);
   });
 
   it("dedups on (endpoint_id, dedup_key): a repeat is a no-op success", async () => {
@@ -429,11 +433,13 @@ describe("ingest_event() single-statement hot path", () => {
     // webhook_ingest holds SELECT on events (required by ON CONFLICT's arbiter) but is
     // a non-owner, RLS-enforced role — so a context-less read still returns nothing,
     // and it can only ever see its own org's rows.
-    const [{ n }] = await ingest<{ n: number }[]>`select count(*)::int as n from events`;
+    const { n } = (await ingest<{ n: number }[]>`select count(*)::int as n from events`)[0]!;
     expect(n).toBe(0);
     const scoped = await withTenant(ingest, orgB.orgId, async (tx) => {
-      const [{ m }] = await tx<{ m: number }[]>`
-        select count(*)::int as m from events where org_id = ${orgA.orgId}`;
+      const { m } = (
+        await tx<{ m: number }[]>`
+        select count(*)::int as m from events where org_id = ${orgA.orgId}`
+      )[0]!;
       return m;
     });
     expect(scoped).toBe(0);
@@ -444,8 +450,10 @@ describe("ingest_event() single-statement hot path", () => {
   });
 
   it("the ingest role has a bounded statement_timeout (watermark invariant)", async () => {
-    const [{ cfg }] = await owner<{ cfg: string[] | null }[]>`
-      select rolconfig as cfg from pg_roles where rolname = ${DB_ROLES.ingest}`;
+    const { cfg } = (
+      await owner<{ cfg: string[] | null }[]>`
+      select rolconfig as cfg from pg_roles where rolname = ${DB_ROLES.ingest}`
+    )[0]!;
     expect(cfg ?? []).toContain(`statement_timeout=${INGEST_ROLE_STATEMENT_TIMEOUT}`);
   });
 });
@@ -628,9 +636,9 @@ describe("api_keys credential extension (0014)", () => {
       return tx<{ owner_type: string; grant_id: string | null; audience: string | null }[]>`
         select owner_type, grant_id, audience from api_keys where id = ${id}`;
     });
-    expect(row.owner_type).toBe("user");
-    expect(row.grant_id).toBeNull();
-    expect(row.audience).toBeNull();
+    expect(row!.owner_type).toBe("user");
+    expect(row!.grant_id).toBeNull();
+    expect(row!.audience).toBeNull();
   });
 
   it("a key can be minted under an existing grant (grant_id FK + per-key audience)", async () => {
@@ -638,9 +646,11 @@ describe("api_keys credential extension (0014)", () => {
       const [grant] = await tx<{ id: string }[]>`
         select id from auth_grant where org_id = ${orgA.orgId} limit 1`;
       await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes, grant_id, audience)
-               values (${randomUUID()}, ${orgA.orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_g"}, ${"grant-key"}, ${tx.json(["events:read"])}, ${grant.id}, ${"https://api.webhook.co"})`;
-      const [{ c }] = await tx<{ c: number }[]>`
-        select count(*)::int as c from api_keys where grant_id = ${grant.id}`;
+               values (${randomUUID()}, ${orgA.orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_g"}, ${"grant-key"}, ${tx.json(["events:read"])}, ${grant!.id}, ${"https://api.webhook.co"})`;
+      const { c } = (
+        await tx<{ c: number }[]>`
+        select count(*)::int as c from api_keys where grant_id = ${grant!.id}`
+      )[0]!;
       return c;
     });
     expect(n).toBe(1);
@@ -670,11 +680,11 @@ describe("api_keys credential extension (0014)", () => {
              has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'grant_id', 'SELECT') as grant_id,
              has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'owner_type', 'SELECT') as owner_type,
              has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'sso_authorized', 'SELECT') as sso_authorized`;
-    expect(g.key_hash).toBe(true); // from 0009
-    expect(g.audience).toBe(true); // added by 0014
-    expect(g.grant_id).toBe(true); // added by 0018 (the /revoke whk_→grant cross-org lookup)
-    expect(g.owner_type).toBe(false);
-    expect(g.sso_authorized).toBe(false);
+    expect(g!.key_hash).toBe(true); // from 0009
+    expect(g!.audience).toBe(true); // added by 0014
+    expect(g!.grant_id).toBe(true); // added by 0018 (the /revoke whk_→grant cross-org lookup)
+    expect(g!.owner_type).toBe(false);
+    expect(g!.sso_authorized).toBe(false);
   });
 
   it("the authn last_used write grant (0072) is MINIMAL — update `last_used_at` ONLY, no other write", async () => {
@@ -703,15 +713,15 @@ describe("api_keys credential extension (0014)", () => {
              has_table_privilege(${DB_ROLES.authn}, 'api_keys', 'INSERT') as tbl_insert,
              has_table_privilege(${DB_ROLES.authn}, 'api_keys', 'DELETE') as tbl_delete,
              has_table_privilege(${DB_ROLES.authn}, 'api_keys', 'UPDATE') as tbl_update_all`;
-    expect(w.upd_last_used).toBe(true); // the one column it may write (0072)
-    expect(w.sel_last_used).toBe(true); // + read, needed for the throttle condition's WHERE
-    expect(w.upd_scopes).toBe(false); // and NOTHING else, in any direction:
-    expect(w.upd_revoked).toBe(false); // a key can't be un/revoked from the authn pool
-    expect(w.upd_org).toBe(false); // nor re-homed to another org
-    expect(w.upd_expires).toBe(false);
-    expect(w.tbl_insert).toBe(false); // can't forge a key
-    expect(w.tbl_delete).toBe(false);
-    expect(w.tbl_update_all).toBe(false); // NOT a table-wide UPDATE grant — column-scoped only
+    expect(w!.upd_last_used).toBe(true); // the one column it may write (0072)
+    expect(w!.sel_last_used).toBe(true); // + read, needed for the throttle condition's WHERE
+    expect(w!.upd_scopes).toBe(false); // and NOTHING else, in any direction:
+    expect(w!.upd_revoked).toBe(false); // a key can't be un/revoked from the authn pool
+    expect(w!.upd_org).toBe(false); // nor re-homed to another org
+    expect(w!.upd_expires).toBe(false);
+    expect(w!.tbl_insert).toBe(false); // can't forge a key
+    expect(w!.tbl_delete).toBe(false);
+    expect(w!.tbl_update_all).toBe(false); // NOT a table-wide UPDATE grant — column-scoped only
 
     // The enabling UPDATE policy is role-scoped to webhook_authn (not a global widening).
     const [p] = await owner<{ roles: string; cmd: string }[]>`
@@ -812,8 +822,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.authn}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedByAuthn = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -830,8 +840,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.anchor}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedByAnchor = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -846,12 +856,14 @@ describe("catalog-driven RLS coverage", () => {
     const [role] = await owner<{ super: boolean; bypass: boolean }[]>`
       select rolsuper as super, rolbypassrls as bypass from pg_roles where rolname = ${DB_ROLES.reaper}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
-    const [{ owned }] = await owner<{ owned: number }[]>`
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
+    const { owned } = (
+      await owner<{ owned: number }[]>`
       select count(*)::int as owned from pg_class
       where relkind = 'r' and relnamespace = 'public'::regnamespace
-        and pg_get_userbyid(relowner) = ${DB_ROLES.reaper}`;
+        and pg_get_userbyid(relowner) = ${DB_ROLES.reaper}`
+    )[0]!;
     expect(owned).toBe(0);
 
     // DELETE on orgs + events only. NOT delivery_attempts (that cascades via the composite FK — no grant),
@@ -871,19 +883,19 @@ describe("catalog-driven RLS coverage", () => {
         has_table_privilege(${DB_ROLES.reaper}, 'delivery_attempts', 'DELETE') as "daDel",
         has_table_privilege(${DB_ROLES.reaper}, 'memberships', 'SELECT') as "membersSel",
         has_table_privilege(${DB_ROLES.reaper}, 'api_keys', 'DELETE') as "keysDel"`;
-    expect(priv.orgsDel).toBe(true);
-    expect(priv.eventsDel).toBe(true);
-    expect(priv.daDel).toBe(false);
-    expect(priv.membersSel).toBe(false);
-    expect(priv.keysDel).toBe(false);
+    expect(priv!.orgsDel).toBe(true);
+    expect(priv!.eventsDel).toBe(true);
+    expect(priv!.daDel).toBe(false);
+    expect(priv!.membersSel).toBe(false);
+    expect(priv!.keysDel).toBe(false);
 
     // Column-scoped SELECT on events: it can read `id` (to pick a chunk) but NOT the payload key/headers.
     const [col] = await owner<{ idSel: boolean; keySel: boolean }[]>`
       select
         has_column_privilege(${DB_ROLES.reaper}, 'events', 'id', 'SELECT') as "idSel",
         has_column_privilege(${DB_ROLES.reaper}, 'events', 'payload_r2_key', 'SELECT') as "keySel"`;
-    expect(col.idSel).toBe(true);
-    expect(col.keySel).toBe(false);
+    expect(col!.idSel).toBe(true);
+    expect(col!.keySel).toBe(false);
   });
 
   it("the auth role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
@@ -894,8 +906,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.auth}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedByAuth = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -912,8 +924,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.sweeper}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedBySweeper = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -930,8 +942,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.reconciler}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedByReconciler = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -947,7 +959,7 @@ describe("catalog-driven RLS coverage", () => {
     for (const c of daGranted) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.reconciler}, 'delivery_attempts', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // These columns exist on delivery_attempts but are NOT granted — the reconciler never sees the delivery
     // target, the upstream response code/body, or the idempotency key.
@@ -955,7 +967,7 @@ describe("catalog-driven RLS coverage", () => {
     for (const c of daForbidden) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.reconciler}, 'delivery_attempts', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // The destination's URL + failure counter exist but are NOT granted (signing config lives in a separate
     // table the role has no privilege on at all).
@@ -963,7 +975,7 @@ describe("catalog-driven RLS coverage", () => {
     for (const c of rdForbidden) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.reconciler}, 'replay_destinations', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // No write on either table (INSERT/UPDATE/DELETE) — every mutation stays inside the DO under webhook_app.
     for (const t of ["delivery_attempts", "replay_destinations"] as const) {
@@ -971,7 +983,7 @@ describe("catalog-driven RLS coverage", () => {
         select (has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
   });
 
@@ -983,8 +995,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.capReconciler}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedByCapReconciler = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -1016,7 +1028,7 @@ describe("catalog-driven RLS coverage", () => {
       for (const c of cols) {
         const [p] = await owner<{ ok: boolean }[]>`
           select has_column_privilege(${DB_ROLES.capReconciler}, ${table}, ${c}, 'SELECT') as ok`;
-        expect(p.ok).toBe(true);
+        expect(p!.ok).toBe(true);
       }
     }
     // Never granted SELECT — no Stripe identifiers, no plan, no org name/slug.
@@ -1028,7 +1040,7 @@ describe("catalog-driven RLS coverage", () => {
       for (const c of cols) {
         const [p] = await owner<{ ok: boolean }[]>`
           select has_column_privilege(${DB_ROLES.capReconciler}, ${table}, ${c}, 'SELECT') as ok`;
-        expect(p.ok).toBe(false);
+        expect(p!.ok).toBe(false);
       }
     }
     // UPDATE granted ONLY on the org suspend-lifecycle columns…
@@ -1045,30 +1057,30 @@ describe("catalog-driven RLS coverage", () => {
     const [keepUpd] = await owner<{ ok: boolean }[]>`
       select has_column_privilege(${DB_ROLES.capReconciler}, 'orgs', 'free_org_cap_keep_requested_at',
                                   'UPDATE') as ok`;
-    expect(keepUpd.ok).toBe(false);
+    expect(keepUpd!.ok).toBe(false);
     for (const c of orgsUpdatable) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.capReconciler}, 'orgs', ${c}, 'UPDATE') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // …NEVER on the org's identity fields (it can suspend an org, never rename or re-slug it).
     for (const c of ["name", "slug", "region"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.capReconciler}, 'orgs', ${c}, 'UPDATE') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // No INSERT/DELETE on orgs (suspend is an UPDATE only), and NO write at all on the read-only tables.
     for (const cmd of ["INSERT", "DELETE"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_table_privilege(${DB_ROLES.capReconciler}, 'orgs', ${cmd}) as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     for (const t of ["memberships", "billing_subscriptions"] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
     // ingest_paused: INSERT + UPDATE granted at the COLUMN level (upsert the pause) — asserted per-column
     // since a column grant doesn't confer table-level privilege — but NEVER DELETE (a resume flips the flag,
@@ -1076,11 +1088,11 @@ describe("catalog-driven RLS coverage", () => {
     for (const cmd of ["INSERT", "UPDATE"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.capReconciler}, 'ingest_paused', 'paused', ${cmd}) as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     const [del] = await owner<{ ok: boolean }[]>`
       select has_table_privilege(${DB_ROLES.capReconciler}, 'ingest_paused', 'DELETE') as ok`;
-    expect(del.ok).toBe(false);
+    expect(del!.ok).toBe(false);
   });
 
   it("the cap reconciler can ENQUEUE a notification intent but never read, re-open, or delete one", async () => {
@@ -1091,17 +1103,17 @@ describe("catalog-driven RLS coverage", () => {
     for (const c of ["id", "org_id", "kind", "destination_id", "context"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.capReconciler}, 'notification_intents', ${c}, 'INSERT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // Deliberately NOT granted `status` — the reconciler cannot mint an already-'sent' intent and thereby
     // suppress its own notification. The column default ('pending') is the only value it can produce.
     const [status] = await owner<{ ok: boolean }[]>`
       select has_column_privilege(${DB_ROLES.capReconciler}, 'notification_intents', 'status', 'INSERT') as ok`;
-    expect(status.ok).toBe(false);
+    expect(status!.ok).toBe(false);
     for (const cmd of ["SELECT", "UPDATE", "DELETE"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_table_privilege(${DB_ROLES.capReconciler}, 'notification_intents', ${cmd}) as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
   });
 
@@ -1113,8 +1125,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.notifier}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedByNotifier = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -1135,7 +1147,7 @@ describe("catalog-driven RLS coverage", () => {
     for (const [t, c] of selects) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.notifier}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // It must NOT read the owner's name, nor any destination config (it links to the dashboard by id).
     for (const [t, c] of [
@@ -1144,21 +1156,21 @@ describe("catalog-driven RLS coverage", () => {
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.notifier}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // UPDATE: only (status, sent_at) on notification_intents, and no write on memberships / user.
     const [upStatus] = await owner<{ ok: boolean }[]>`
       select has_column_privilege(${DB_ROLES.notifier}, 'notification_intents', 'status', 'UPDATE') as ok`;
-    expect(upStatus.ok).toBe(true);
+    expect(upStatus!.ok).toBe(true);
     const [upKind] = await owner<{ ok: boolean }[]>`
       select has_column_privilege(${DB_ROLES.notifier}, 'notification_intents', 'kind', 'UPDATE') as ok`;
-    expect(upKind.ok).toBe(false);
+    expect(upKind!.ok).toBe(false);
     for (const t of ["memberships", "user"] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.notifier}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.notifier}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.notifier}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
   });
 
@@ -1171,7 +1183,7 @@ describe("catalog-driven RLS coverage", () => {
     for (const c of ["id", "name", "slug"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.notifier}, 'orgs', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // Everything else on orgs stays fenced — the notifier renders emails, it does not observe org state.
     for (const c of [
@@ -1185,14 +1197,14 @@ describe("catalog-driven RLS coverage", () => {
     ] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.notifier}, 'orgs', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // And it can never write an org.
     const [w] = await owner<{ any: boolean }[]>`
       select (has_table_privilege(${DB_ROLES.notifier}, 'orgs', 'INSERT')
            or has_table_privilege(${DB_ROLES.notifier}, 'orgs', 'UPDATE')
            or has_table_privilege(${DB_ROLES.notifier}, 'orgs', 'DELETE')) as any`;
-    expect(w.any).toBe(false);
+    expect(w!.any).toBe(false);
   });
 
   it("the meter role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
@@ -1203,8 +1215,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.meter}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const ownedByMeter = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -1243,7 +1255,7 @@ describe("catalog-driven RLS coverage", () => {
     for (const [t, c] of selects) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // It must NEVER read a payload / header / dedup column, nor the usage count itself, nor the
     // pause NARRATIVE columns (reason/since), nor the sensitive billing_subscriptions columns (the
@@ -1268,7 +1280,7 @@ describe("catalog-driven RLS coverage", () => {
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // No write anywhere: not on events/usage, not on the pause/limits tables. The producer READS the
     // cap + usage as webhook_meter and flips ingest_paused only as webhook_app under withTenant.
@@ -1284,7 +1296,7 @@ describe("catalog-driven RLS coverage", () => {
         select (has_table_privilege(${DB_ROLES.meter}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.meter}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.meter}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
     // The role-targeted policies must be FOR SELECT (not ALL) — a stray ALL policy would extend
     // the role's reach to writes the column grants happen not to cover.
@@ -1311,8 +1323,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.meterAudit}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
     const owned = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
       where relkind = 'r' and relnamespace = 'public'::regnamespace
@@ -1337,7 +1349,7 @@ describe("catalog-driven RLS coverage", () => {
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meterAudit}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // Never a payload / header / dedup column — it counts rows, it must not read content.
     for (const [t, c] of [
@@ -1352,7 +1364,7 @@ describe("catalog-driven RLS coverage", () => {
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meterAudit}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // No write anywhere on events/usage; the role-targeted policies are FOR SELECT only.
     for (const t of ["events", "usage", "delivery_attempts"] as const) {
@@ -1360,7 +1372,7 @@ describe("catalog-driven RLS coverage", () => {
         select (has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
     const auditPolicies = await owner<{ cmd: string }[]>`
       select cmd from pg_policies where schemaname = 'public'
@@ -1377,8 +1389,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.meterTransport}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
     const owned = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
       where relkind = 'r' and relnamespace = 'public'::regnamespace
@@ -1397,7 +1409,7 @@ describe("catalog-driven RLS coverage", () => {
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meterTransport}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     // NEVER the internal identifier / echoed stripe id, and never billing_customers.created_at.
     for (const [t, c] of [
@@ -1408,7 +1420,7 @@ describe("catalog-driven RLS coverage", () => {
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meterTransport}, ${t}, ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     // No write anywhere; the role-targeted policies are FOR SELECT only.
     for (const t of ["stripe_meter_reports", "billing_customers"] as const) {
@@ -1416,7 +1428,7 @@ describe("catalog-driven RLS coverage", () => {
         select (has_table_privilege(${DB_ROLES.meterTransport}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.meterTransport}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.meterTransport}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
     const transportPolicies = await owner<{ cmd: string }[]>`
       select cmd from pg_policies where schemaname = 'public'
@@ -1432,8 +1444,8 @@ describe("catalog-driven RLS coverage", () => {
       select rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.billing}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
     const owned = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
       where relkind = 'r' and relnamespace = 'public'::regnamespace
@@ -1455,7 +1467,7 @@ describe("catalog-driven RLS coverage", () => {
       for (const priv of ["SELECT", "INSERT", "UPDATE", "DELETE"] as const) {
         const [p] = await owner<{ ok: boolean }[]>`
           select has_table_privilege(${DB_ROLES.billing}, ${t}, ${priv}) as ok`;
-        if (p.ok) got.push(priv);
+        if (p!.ok) got.push(priv);
       }
       expect(got.sort()).toEqual(want);
     }
@@ -1466,7 +1478,7 @@ describe("catalog-driven RLS coverage", () => {
              or has_table_privilege(${DB_ROLES.billing}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.billing}, ${t}, 'SELECT')
              or has_table_privilege(${DB_ROLES.billing}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
   });
 
@@ -1477,22 +1489,22 @@ describe("catalog-driven RLS coverage", () => {
     for (const c of ["org_id", "paused"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.authn}, 'ingest_paused', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(true);
+      expect(p!.ok).toBe(true);
     }
     for (const c of ["reason", "since", "updated_at"] as const) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.authn}, 'ingest_paused', ${c}, 'SELECT') as ok`;
-      expect(p.ok).toBe(false);
+      expect(p!.ok).toBe(false);
     }
     const [w] = await owner<{ any: boolean }[]>`
       select (has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'INSERT')
            or has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'UPDATE')
            or has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'DELETE')) as any`;
-    expect(w.any).toBe(false);
+    expect(w!.any).toBe(false);
     const [pol] = await owner<{ cmd: string }[]>`
       select cmd from pg_policies
       where schemaname = 'public' and policyname = 'ingest_paused_authn_select'`;
-    expect(pol.cmd).toBe("SELECT");
+    expect(pol!.cmd).toBe("SELECT");
   });
 
   it("the sweeper role holds DELETE — and ONLY delete — on the two token tables, nothing elsewhere", async () => {
@@ -1506,7 +1518,7 @@ describe("catalog-driven RLS coverage", () => {
                has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'INSERT') as i,
                has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'UPDATE') as u,
                has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'DELETE') as d`;
-      expect([p.s, p.i, p.u, p.d]).toEqual([false, false, false, true]);
+      expect([p!.s, p!.i, p!.u, p!.d]).toEqual([false, false, false, true]);
     }
     const forbidden = ["orgs", "api_keys", "events", "audit_log", "auth_grant"] as const;
     for (const t of forbidden) {
@@ -1515,7 +1527,7 @@ describe("catalog-driven RLS coverage", () => {
              or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
   });
 
@@ -1530,7 +1542,7 @@ describe("catalog-driven RLS coverage", () => {
                has_table_privilege(${DB_ROLES.auth}, ${t}, 'INSERT') as i,
                has_table_privilege(${DB_ROLES.auth}, ${t}, 'UPDATE') as u,
                has_table_privilege(${DB_ROLES.auth}, ${t}, 'DELETE') as d`;
-      expect([p.s, p.i, p.u, p.d]).toEqual([true, true, true, true]);
+      expect([p!.s, p!.i, p!.u, p!.d]).toEqual([true, true, true, true]);
     }
     const forbidden = ["orgs", "api_keys", "events", "apikey"] as const;
     for (const t of forbidden) {
@@ -1539,7 +1551,7 @@ describe("catalog-driven RLS coverage", () => {
              or has_table_privilege(${DB_ROLES.auth}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.auth}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.auth}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
   });
 });

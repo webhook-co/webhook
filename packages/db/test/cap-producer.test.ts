@@ -427,9 +427,9 @@ describe("runCapProducer", () => {
       ]);
       expect((await run()).thresholdAlerts).toBe(0); // same lifetime period → deduped
       expect((await run({ now: AUG })).thresholdAlerts).toBe(0); // a new MONTH does not re-arm it
-      const [{ n }] = await admin<{ n: number }[]>`
+      const [nRow1] = await admin<{ n: number }[]>`
         select count(*)::int as n from usage_alerts where org_id = ${orgId} and threshold = 80`;
-      expect(n).toBe(1); // exactly one 80% alert, ever
+      expect(nRow1!.n).toBe(1); // exactly one 80% alert, ever
     });
 
     it("a PAID org re-alerts when its billing CYCLE advances (per-cycle dedup, not permanent)", async () => {
@@ -460,9 +460,9 @@ describe("runCapProducer", () => {
                   where org_id = ${orgId}`;
       await seedUsageAt(orgId, "2026-08-10T00:00:00.000Z", 90);
       expect((await run({ now: AUG })).thresholdAlerts).toBe(1); // new cycle → fresh alert
-      const [{ n }] = await admin<{ n: number }[]>`
+      const [nRow2] = await admin<{ n: number }[]>`
         select count(*)::int as n from usage_alerts where org_id = ${orgId} and threshold = 80`;
-      expect(n).toBe(2); // (July cycle, 80) and (August cycle, 80)
+      expect(nRow2!.n).toBe(2); // (July cycle, 80) and (August cycle, 80)
     });
   });
 

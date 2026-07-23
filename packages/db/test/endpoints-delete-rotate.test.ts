@@ -413,7 +413,7 @@ describe("createWriteHandlers — endpoints.delete + endpoints.rotate", () => {
       (tx) => tx<{ n: number }[]>`
         select count(*)::int as n from event_payload_purge where event_id = ${eventId}`,
     );
-    expect(purge.n).toBe(1);
+    expect(purge!.n).toBe(1);
 
     // A non-uuid is VALIDATION_ERROR.
     await expect(

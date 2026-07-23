@@ -115,7 +115,7 @@ describe("candidates — pepper rotation", () => {
   it("with no previous pepper, there is exactly one candidate (the current hash)", () => {
     const cands = hasherA.candidates("whk_x");
     expect(cands.length).toBe(1);
-    expect(Buffer.compare(cands[0], hasherA.hash("whk_x"))).toBe(0);
+    expect(Buffer.compare(cands[0]!, hasherA.hash("whk_x"))).toBe(0);
   });
 
   it("during rotation, candidates cover current THEN previous peppers", () => {
@@ -123,8 +123,8 @@ describe("candidates — pepper rotation", () => {
     const cands = rotating.candidates("whk_y");
     expect(cands.length).toBe(2);
     // current pepper first (B), then the previous one (A) so old keys still verify.
-    expect(Buffer.compare(cands[0], hasherB.hash("whk_y"))).toBe(0);
-    expect(Buffer.compare(cands[1], hasherA.hash("whk_y"))).toBe(0);
+    expect(Buffer.compare(cands[0]!, hasherB.hash("whk_y"))).toBe(0);
+    expect(Buffer.compare(cands[1]!, hasherA.hash("whk_y"))).toBe(0);
     // mint() always uses the CURRENT pepper.
     expect(Buffer.compare(rotating.hash("whk_y"), hasherB.hash("whk_y"))).toBe(0);
   });

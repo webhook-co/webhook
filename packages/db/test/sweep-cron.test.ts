@@ -215,8 +215,8 @@ describe("webhook_sweeper least privilege", () => {
       select rolname, rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.sweeper}`;
     expect(role).toBeDefined();
-    expect(role.super).toBe(false);
-    expect(role.bypass).toBe(false);
+    expect(role!.super).toBe(false);
+    expect(role!.bypass).toBe(false);
 
     const owned = await owner<{ n: number }[]>`
       select count(*)::int as n from pg_class
@@ -233,7 +233,7 @@ describe("webhook_sweeper least privilege", () => {
                has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'INSERT') as i,
                has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'UPDATE') as u,
                has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'DELETE') as d`;
-      expect([p.s, p.i, p.u, p.d]).toEqual([false, false, false, true]);
+      expect([p!.s, p!.i, p!.u, p!.d]).toEqual([false, false, false, true]);
     }
     // No privilege on any other tenant table.
     const forbidden = ["orgs", "api_keys", "events", "audit_log", "auth_grant"] as const;
@@ -243,7 +243,7 @@ describe("webhook_sweeper least privilege", () => {
              or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'DELETE')) as any`;
-      expect(p.any).toBe(false);
+      expect(p!.any).toBe(false);
     }
   });
 });

@@ -39,7 +39,7 @@ describe("createCredentialResolver — hot/cold path", () => {
       coldLookup: async () => principal(),
     });
     await resolver.resolve("whk_secret");
-    const [key, value] = putSpy.mock.calls[0];
+    const [key, value] = putSpy.mock.calls[0]!;
     expect(key).toBe(credentialCacheKey(hasher.hash("whk_secret")));
     expect(value).not.toContain("whk_secret");
   });

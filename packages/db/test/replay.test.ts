@@ -42,7 +42,7 @@ let evA: string; // an event on epA
 let evPaused: string; // an event on epPaused
 let evB: string; // an event in org B (cross-org)
 
-const ctxA: AuthContext = { orgId: "", scopes: ["events:replay"] };
+let ctxA: AuthContext;
 const TARGET = { kind: "localhost-tunnel", sessionId: "sess-1" } as const;
 
 async function seedEvent(orgId: string, endpointId: string): Promise<string> {
@@ -89,7 +89,7 @@ beforeAll(async () => {
 
   orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
-  ctxA.orgId = orgA;
+  ctxA = { orgId: orgA, scopes: ["events:replay"] };
 
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   epPaused = (await createEndpoint(app, { orgId: orgA, name: "ep-paused" }, hasher)).id;

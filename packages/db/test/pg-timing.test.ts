@@ -192,7 +192,7 @@ describe("waitForDatabase", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(3);
     expect(onRetry).toHaveBeenCalledTimes(2);
-    expect(onRetry.mock.calls[0][0]).toMatchObject({ attempt: 1, attempts: 5 });
+    expect(onRetry.mock.calls[0]![0]).toMatchObject({ attempt: 1, attempts: 5 });
   });
 
   it("throws after exhausting all attempts, surfacing the last error, and does not sleep after the final attempt", async () => {

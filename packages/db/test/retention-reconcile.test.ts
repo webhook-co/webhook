@@ -123,7 +123,7 @@ describe("reconcileRetentionFromStripe — the safe auto-repair", () => {
     const org = await seedOrg(7);
     const [before] = await admin<{ n: number }[]>`
       select count(*)::int as n from billing_subscriptions where org_id = ${org}`;
-    expect(before.n).toBe(0); // genuinely un-mirrored
+    expect(before!.n).toBe(0); // genuinely un-mirrored
 
     const result = await reconcile(listerOf(stripeSub(org, { retentionDays: 90 })));
 
@@ -131,7 +131,7 @@ describe("reconcileRetentionFromStripe — the safe auto-repair", () => {
     expect(result.repaired).toHaveLength(1);
     const [after] = await admin<{ n: number }[]>`
       select count(*)::int as n from billing_subscriptions where org_id = ${org}`;
-    expect(after.n).toBe(0); // and the reconciler never touches billing_subscriptions
+    expect(after!.n).toBe(0); // and the reconciler never touches billing_subscriptions
   });
 
   it("repairs a finite window UP to UNLIMITED when the plan says unlimited", async () => {

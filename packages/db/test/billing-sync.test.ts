@@ -226,7 +226,7 @@ describe("applyCustomerLink (integration)", () => {
     await applyCustomerLink(billing, { orgId: org, customerId: "cus_A" });
     const [row1] = await admin<{ stripe_customer_id: string }[]>`
       select stripe_customer_id from billing_customers where org_id = ${org}`;
-    expect(row1.stripe_customer_id).toBe("cus_A");
+    expect(row1!.stripe_customer_id).toBe("cus_A");
     // A re-link (same org) updates in place, no duplicate.
     await applyCustomerLink(billing, { orgId: org, customerId: "cus_A2" });
     const rows = await admin<{ stripe_customer_id: string }[]>`
@@ -254,7 +254,7 @@ describe("applySubscriptionUpsert (integration)", () => {
     // A stale 'canceled' with an older created must NOT overwrite the newer 'active'.
     const stale = await applySubscriptionUpsert(billing, sub(org, { status: "canceled" }), 1500);
     expect(stale).toBe("stale");
-    expect((await readSub(org)).status).toBe("active");
+    expect((await readSub(org))!.status).toBe("active");
   });
 
   it("APPLIES a same-second (equal created) event — last-write-wins (created is second-granular)", async () => {
@@ -263,7 +263,7 @@ describe("applySubscriptionUpsert (integration)", () => {
     // A distinct event in the same second (e.g. trialing→active) must still apply, not be dropped as stale.
     const res = await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 1000);
     expect(res).toBe("applied");
-    expect((await readSub(org)).status).toBe("active");
+    expect((await readSub(org))!.status).toBe("active");
   });
 
   it("REJECTS a subscription whose Stripe customer ≠ the org's linked customer (identity binding)", async () => {
@@ -300,7 +300,7 @@ describe("applySubscriptionUpsert (integration)", () => {
     // even though billing_subscriptions.event_cap reflects the new lower plan.
     await applySubscriptionUpsert(billing, sub(org, { eventCap: 100000 }), 3000);
     expect(await readCap(org)).toBe(500000);
-    expect((await readSub(org)).event_cap).toBe("100000");
+    expect((await readSub(org))!.event_cap).toBe("100000");
   });
 
   it("applies the DEFERRED decrease at the period boundary (a renewal advances the period)", async () => {
@@ -331,7 +331,7 @@ describe("applySubscriptionDeleted (integration)", () => {
     expect(await readCap(org)).toBe(500000);
     const res = await applySubscriptionDeleted(billing, { orgId: org, eventCreated: 2000 });
     expect(res).toBe("applied");
-    expect((await readSub(org)).status).toBe("canceled");
+    expect((await readSub(org))!.status).toBe("canceled");
     expect(await readCap(org)).toBeUndefined(); // org_limits row gone → falls back to Free default
   });
 
@@ -340,7 +340,7 @@ describe("applySubscriptionDeleted (integration)", () => {
     await applySubscriptionUpsert(billing, sub(org), 5000);
     const res = await applySubscriptionDeleted(billing, { orgId: org, eventCreated: 4000 });
     expect(res).toBe("stale");
-    expect((await readSub(org)).status).toBe("active"); // untouched
+    expect((await readSub(org))!.status).toBe("active"); // untouched
   });
 
   it("is idempotent when the org has no subscription", async () => {
@@ -394,7 +394,7 @@ describe("webhook_billing cross-tenant write rejection (behavioral RLS WITH CHEC
     expect(hijack).toHaveLength(0);
     const [victim] = await admin<{ retention_days: number | null }[]>`
       select retention_days from orgs where id = ${b}`;
-    expect(victim.retention_days).toBe(7); // org B's window is untouched
+    expect(victim!.retention_days).toBe(7); // org B's window is untouched
     // And an UPDATE of org B's existing row from org A's context is a silent no-op (RLS hides the row), not a
     // cross-tenant mutation: seed B's customer as root, then try to overwrite it as billing under A.
     await admin`insert into billing_customers (org_id, stripe_customer_id) values (${b}, ${"cus_owned"})`;
@@ -404,9 +404,9 @@ describe("webhook_billing cross-tenant write rejection (behavioral RLS WITH CHEC
       (tx) =>
         tx`update billing_customers set stripe_customer_id = ${"cus_HIJACK"} where org_id = ${b}`,
     );
-    const [{ stripe_customer_id }] = await admin<{ stripe_customer_id: string }[]>`
+    const [row2] = await admin<{ stripe_customer_id: string }[]>`
       select stripe_customer_id from billing_customers where org_id = ${b}`;
-    expect(stripe_customer_id).toBe("cus_owned"); // untouched
+    expect(row2!.stripe_customer_id).toBe("cus_owned"); // untouched
   });
 });
 
@@ -429,7 +429,7 @@ describe("applySubscriptionUpsert — a NON-ENTITLED status drops the paid cap m
       const r = await applySubscriptionUpsert(billing, sub(org, { status }), 2000);
       expect(r).toBe("applied");
       expect(await readCap(org)).toBeUndefined(); // no org_limits row → injected Free default
-      expect((await readSub(org)).status).toBe(status); // the status itself is still mirrored
+      expect((await readSub(org))!.status).toBe(status); // the status itself is still mirrored
     });
   }
 
@@ -633,7 +633,7 @@ describe("retention vs the cap's fail-closed early return", () => {
     const org = await seedOrg();
     const [before] = await admin<{ retention_days: number | null }[]>`
       select retention_days from orgs where id = ${org}`;
-    expect(before.retention_days).toBe(7); // starts on Free
+    expect(before!.retention_days).toBe(7); // starts on Free
 
     await applySubscriptionUpsert(
       billing,
@@ -648,6 +648,6 @@ describe("retention vs the cap's fail-closed early return", () => {
     // Retention: landed anyway. Their data is now kept for 30 days, not 7.
     const [after] = await admin<{ retention_days: number | null }[]>`
       select retention_days from orgs where id = ${org}`;
-    expect(after.retention_days).toBe(30);
+    expect(after!.retention_days).toBe(30);
   });
 });

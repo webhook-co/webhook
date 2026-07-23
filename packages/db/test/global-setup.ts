@@ -46,7 +46,8 @@ export async function setup(): Promise<void> {
     // and can block this run's migration-down DROP ROLE. The concurrency group serializes
     // nightly runs and this run's own per-file databases are created later, so every match
     // here is stale. Best-effort: a drop that races another connection must not fail setup.
-    const [{ current }] = await sql<{ current: string }[]>`select current_database() as current`;
+    const [currentRow] = await sql<{ current: string }[]>`select current_database() as current`;
+    const { current } = currentRow!;
     const rows = await sql<{ datname: string }[]>`select datname from pg_database`;
     for (const datname of orphanTestDatabases(
       rows.map((r) => r.datname),
