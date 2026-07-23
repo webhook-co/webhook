@@ -41,6 +41,7 @@
     "docs-live-structured-data-check": "node scripts/docs-live-structured-data-check.mjs",
     "gsc-ranking": "node scripts/gsc-provider-ranking.mjs",
     "gsc-coverage": "node scripts/gsc-index-coverage.mjs",
+    "gsc-sitemap": "node scripts/gsc-sitemap-write.mjs",
     "test:scripts": "node --test 'scripts/**/*.test.mjs' 'apps/*/scripts/**/*.test.mjs'",
     "prepare": "husky",
     "no-early-db-close": "node scripts/no-early-db-close.mjs",
