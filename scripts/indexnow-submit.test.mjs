@@ -32,6 +32,9 @@ const neverFetch = () => {
   throw new Error("network was contacted");
 };
 
+/** A host we must never submit for. Kept as a bare hostname so no URL literal is ever compared. */
+const OFF_HOST = "evil.com";
+
 test("INDEXNOW_KEY satisfies the protocol's format rules", () => {
   // indexnow.org: 8-128 characters, from a-z A-Z 0-9 and dashes.
   assert.ok(INDEXNOW_KEY.length >= 8 && INDEXNOW_KEY.length <= 128, "length out of range");
@@ -172,14 +175,20 @@ test("submitBatch: refuses a URL that is off-host before any network call", asyn
   // Sibling of the host guard above: the host is allowed but a URL in the batch is not on it.
   // IndexNow would answer 422; we must never spend the request finding that out.
   //
-  // Matched with an ANCHORED regex on the message shape plus a literal `includes` for the offending
-  // URL, rather than a bare /evil\.com/. An unanchored regex tested against URL-ish text is exactly
-  // the shape of a broken host check (js/regex/missing-regexp-anchor), and a test should not model
-  // one even where it is only reading an error string.
+  // The offender is asserted by EXACT EQUALITY on the message's trailing URL list, not by a substring
+  // or regex test. Both of those forms — /evil\.com/ and .includes("https://evil.com/") — are the
+  // shape of a broken host check (js/regex/missing-regexp-anchor and
+  // js/incomplete-url-substring-sanitization respectively), because a substring can match anywhere in
+  // a URL, with arbitrary hosts before or after it. A test should not model that shape even when it
+  // is only reading an error string; equality says precisely what is meant.
+  const offHostUrl = `https://${OFF_HOST}/`;
   await assert.rejects(
-    () => submitBatch("www.webhook.co", ["https://evil.com/"], { fetchImpl: neverFetch }),
-    (e) =>
-      /^\d+ URL\(s\) are not on host/.test(e.message) && e.message.includes("https://evil.com/"),
+    () => submitBatch("www.webhook.co", [offHostUrl], { fetchImpl: neverFetch }),
+    (e) => {
+      assert.match(e.message, /^1 URL\(s\) are not on host "www\.webhook\.co"/);
+      assert.equal(e.message.slice(e.message.lastIndexOf(": ") + 2), offHostUrl);
+      return true;
+    },
   );
 });
 
