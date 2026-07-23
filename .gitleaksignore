@@ -41,3 +41,14 @@ ab468a7ab46bceb7503a4d2f1bb823bd58b11148:docs/superpowers/plans/2026-07-14-invit
 ab468a7ab46bceb7503a4d2f1bb823bd58b11148:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:139
 ec7c840f1a1dd0022714bd51b2d05009f34ac39d:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:136
 ec7c840f1a1dd0022714bd51b2d05009f34ac39d:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:139
+
+# The IndexNow key (scripts/indexnow-submit.mjs). generic-api-key fires on the name "KEY" plus entropy
+# alone. This value is PUBLISHED by design at `https://<host>/<key>.txt` on every host we submit for —
+# the protocol requires it to be world-readable so search engines can verify domain ownership. A
+# scanner finding it in the repo has found nothing that is not already served to the open internet,
+# and it grants nothing beyond "may submit URLs for this host".
+#
+# The CURRENT tree suppresses it inline (`// gitleaks:allow`), so this fingerprint covers only the
+# FROZEN occurrence in this branch's history — the commit that added the line before the inline
+# suppression existed.
+df16cdf1f536403d8ccc770df927d0b15ed35b3e:scripts/indexnow-submit.mjs:generic-api-key:31

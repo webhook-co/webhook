@@ -1,0 +1,264 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  assertHostAllowed,
+  assertUrlsMatchHost,
+  buildPayload,
+  chunk,
+  INDEXNOW_KEY,
+  keyLocationFor,
+  MAX_URLS_PER_REQUEST,
+  parseSitemapLocs,
+  SITEMAP_FOR_HOST,
+  submitBatch,
+  verifyKeyLive,
+} from "./indexnow-submit.mjs";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Where each submittable host's key file must live in the repo to be served at that host's root. */
+const KEY_FILE_DIRS = new Map([
+  ["www.webhook.co", "apps/www/public"],
+  ["docs.webhook.co", "apps/docs"],
+]);
+
+// A fetch that must never be called: any invocation fails loudly. This is how the "refuses before the
+// network" guards prove they short-circuit rather than erroring after a request has already gone out.
+const neverFetch = () => {
+  throw new Error("network was contacted");
+};
+
+/** A host we must never submit for. Kept as a bare hostname so no URL literal is ever compared. */
+const OFF_HOST = "evil.com";
+
+test("INDEXNOW_KEY satisfies the protocol's format rules", () => {
+  // indexnow.org: 8-128 characters, from a-z A-Z 0-9 and dashes.
+  assert.ok(INDEXNOW_KEY.length >= 8 && INDEXNOW_KEY.length <= 128, "length out of range");
+  assert.match(INDEXNOW_KEY, /^[a-zA-Z0-9-]+$/);
+});
+
+test("keyLocationFor: the key file lives at the ROOT of each host", () => {
+  // Each host is a separate IndexNow property and needs its own copy of the file; a key on the apex
+  // does NOT cover subdomains.
+  assert.equal(keyLocationFor("www.webhook.co"), `https://www.webhook.co/${INDEXNOW_KEY}.txt`);
+  assert.equal(keyLocationFor("docs.webhook.co"), `https://docs.webhook.co/${INDEXNOW_KEY}.txt`);
+});
+
+test("assertHostAllowed: accepts webhook.co and its subdomains", () => {
+  for (const h of ["webhook.co", "www.webhook.co", "docs.webhook.co"]) {
+    assert.equal(assertHostAllowed(h), h);
+  }
+});
+
+test("assertHostAllowed: rejects other hosts, including lookalikes", () => {
+  for (const h of ["example.com", "evilwebhook.co", "webhook.co.evil.com"]) {
+    assert.throws(() => assertHostAllowed(h), /webhook\.co/, `expected ${h} refused`);
+  }
+});
+
+test("assertUrlsMatchHost: passes when every URL is on the host", () => {
+  const urls = ["https://www.webhook.co/", "https://www.webhook.co/pricing"];
+  assert.equal(assertUrlsMatchHost("www.webhook.co", urls), urls);
+});
+
+test("assertUrlsMatchHost: throws and NAMES the offender on a host mismatch", () => {
+  // IndexNow answers a host/urlList mismatch with 422, so catching it here turns a rejected batch
+  // into a precise local error.
+  assert.throws(
+    () =>
+      assertUrlsMatchHost("www.webhook.co", [
+        "https://www.webhook.co/",
+        "https://docs.webhook.co/introduction",
+      ]),
+    /docs\.webhook\.co\/introduction/,
+  );
+});
+
+test("buildPayload: emits exactly the four protocol fields", () => {
+  const p = buildPayload("www.webhook.co", ["https://www.webhook.co/"]);
+  assert.deepEqual(Object.keys(p).sort(), ["host", "key", "keyLocation", "urlList"]);
+  assert.equal(p.host, "www.webhook.co");
+  assert.equal(p.key, INDEXNOW_KEY);
+  assert.equal(p.keyLocation, keyLocationFor("www.webhook.co"));
+  assert.deepEqual(p.urlList, ["https://www.webhook.co/"]);
+});
+
+test("chunk: splits at the protocol's per-request ceiling", () => {
+  assert.equal(MAX_URLS_PER_REQUEST, 10_000);
+  const many = Array.from({ length: 25_000 }, (_, i) => `https://www.webhook.co/${i}`);
+  const parts = chunk(many, MAX_URLS_PER_REQUEST);
+  assert.deepEqual(
+    parts.map((p) => p.length),
+    [10_000, 10_000, 5_000],
+  );
+  assert.deepEqual(chunk([], 10).length, 0);
+});
+
+test("verifyKeyLive: succeeds when the file serves the key verbatim", async () => {
+  const fetchImpl = async (url) => {
+    assert.equal(url, keyLocationFor("www.webhook.co"));
+    return { ok: true, status: 200, text: async () => INDEXNOW_KEY };
+  };
+  assert.equal(await verifyKeyLive("www.webhook.co", { fetchImpl }), true);
+});
+
+test("verifyKeyLive: tolerates a trailing newline in the served file", async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => `${INDEXNOW_KEY}\n` });
+  assert.equal(await verifyKeyLive("www.webhook.co", { fetchImpl }), true);
+});
+
+test("verifyKeyLive: throws when the key file is not deployed (404)", async () => {
+  const fetchImpl = async () => ({ ok: false, status: 404, text: async () => "not found" });
+  await assert.rejects(() => verifyKeyLive("docs.webhook.co", { fetchImpl }), /404/);
+});
+
+test("verifyKeyLive: throws when the file serves something other than the key", async () => {
+  // A host that returns a soft-404 HTML page would otherwise look like a live key file.
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => "<!doctype html>" });
+  await assert.rejects(() => verifyKeyLive("docs.webhook.co", { fetchImpl }), /does not contain/i);
+});
+
+test("submitBatch: refuses to POST when the key file is not live", async () => {
+  // The load-bearing guard: submitting against an unverified key wastes a submission and can get the
+  // key rejected, so the check must happen BEFORE any POST.
+  const fetchImpl = async (url) => {
+    if (url.endsWith(".txt")) return { ok: false, status: 404, text: async () => "" };
+    throw new Error("POSTed despite an unverified key");
+  };
+  await assert.rejects(
+    () => submitBatch("www.webhook.co", ["https://www.webhook.co/"], { fetchImpl }),
+    /404/,
+  );
+});
+
+test("submitBatch: POSTs the payload as JSON once the key verifies", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    if (url.endsWith(".txt")) return { ok: true, status: 200, text: async () => INDEXNOW_KEY };
+    calls.push({ url, init });
+    return { ok: true, status: 200, text: async () => "" };
+  };
+  const res = await submitBatch("www.webhook.co", ["https://www.webhook.co/"], { fetchImpl });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.method, "POST");
+  assert.match(calls[0].init.headers["content-type"], /application\/json/);
+  assert.deepEqual(
+    JSON.parse(calls[0].init.body),
+    buildPayload("www.webhook.co", ["https://www.webhook.co/"]),
+  );
+  assert.equal(res.status, 200);
+});
+
+test("submitBatch: surfaces a rejected submission instead of reporting success", async () => {
+  const fetchImpl = async (url) => {
+    if (url.endsWith(".txt")) return { ok: true, status: 200, text: async () => INDEXNOW_KEY };
+    return { ok: false, status: 422, text: async () => "Unprocessable Entity" };
+  };
+  await assert.rejects(
+    () => submitBatch("www.webhook.co", ["https://www.webhook.co/"], { fetchImpl }),
+    /422/,
+  );
+});
+
+test("submitBatch: refuses a host outside webhook.co before any network call", async () => {
+  await assert.rejects(
+    () => submitBatch("evil.com", ["https://evil.com/"], { fetchImpl: neverFetch }),
+    /webhook\.co/,
+  );
+});
+
+test("submitBatch: refuses a URL that is off-host before any network call", async () => {
+  // Sibling of the host guard above: the host is allowed but a URL in the batch is not on it.
+  // IndexNow would answer 422; we must never spend the request finding that out.
+  //
+  // The offender is asserted by EXACT EQUALITY on the message's trailing URL list, not by a substring
+  // or regex test. Both of those forms — /evil\.com/ and .includes("https://evil.com/") — are the
+  // shape of a broken host check (js/regex/missing-regexp-anchor and
+  // js/incomplete-url-substring-sanitization respectively), because a substring can match anywhere in
+  // a URL, with arbitrary hosts before or after it. A test should not model that shape even when it
+  // is only reading an error string; equality says precisely what is meant.
+  const offHostUrl = `https://${OFF_HOST}/`;
+  await assert.rejects(
+    () => submitBatch("www.webhook.co", [offHostUrl], { fetchImpl: neverFetch }),
+    (e) => {
+      assert.match(e.message, /^1 URL\(s\) are not on host "www\.webhook\.co"/);
+      assert.equal(e.message.slice(e.message.lastIndexOf(": ") + 2), offHostUrl);
+      return true;
+    },
+  );
+});
+
+test("verifyKeyLive: refuses a host outside webhook.co before any network call", async () => {
+  // verifyKeyLive issues an outbound GET built from `host`, so it must not be a request primitive
+  // that can be pointed at an arbitrary origin.
+  await assert.rejects(() => verifyKeyLive("evil.com", { fetchImpl: neverFetch }), /webhook\.co/);
+});
+
+test("assertUrlsMatchHost: rejects malformed and empty entries, naming them", () => {
+  assert.throws(
+    () => assertUrlsMatchHost("www.webhook.co", ["https://www.webhook.co/", "not-a-url", ""]),
+    /not-a-url/,
+  );
+});
+
+test("assertUrlsMatchHost: rejects relative and non-http(s) URLs", () => {
+  // A relative path has no host to compare, and `javascript:` parses with an EMPTY hostname — both
+  // must fail rather than slip through as "matching".
+  for (const bad of [
+    "/pricing",
+    "javascript:alert(1)",
+    "data:text/plain,hi",
+    "//www.webhook.co/",
+  ]) {
+    assert.throws(
+      () => assertUrlsMatchHost("www.webhook.co", [bad]),
+      /not on host/,
+      `expected ${bad} refused`,
+    );
+  }
+});
+
+test("parseSitemapLocs: extracts every <loc>, trimming surrounding whitespace", () => {
+  const xml = `<?xml version="1.0"?>
+    <urlset>
+      <url><loc>https://www.webhook.co/</loc><lastmod>2026-07-22</lastmod></url>
+      <url><loc>
+        https://www.webhook.co/pricing
+      </loc></url>
+    </urlset>`;
+  assert.deepEqual(parseSitemapLocs(xml), [
+    "https://www.webhook.co/",
+    "https://www.webhook.co/pricing",
+  ]);
+});
+
+test("parseSitemapLocs: unwraps CDATA so a submitted URL never carries the markers", () => {
+  const xml = `<urlset><url><loc><![CDATA[https://www.webhook.co/pricing]]></loc></url></urlset>`;
+  assert.deepEqual(parseSitemapLocs(xml), ["https://www.webhook.co/pricing"]);
+});
+
+test("parseSitemapLocs: drops empty locs and returns [] when there are none", () => {
+  assert.deepEqual(parseSitemapLocs("<urlset></urlset>"), []);
+  assert.deepEqual(parseSitemapLocs("<urlset><url><loc>   </loc></url></urlset>"), []);
+});
+
+test("the deployed key FILES stay in sync with INDEXNOW_KEY", () => {
+  // The drift that would break this silently: rotating INDEXNOW_KEY without renaming the files. The
+  // submitter's verifyKeyLive would then refuse every submission against a key location that 404s,
+  // and nothing else in CI would notice — the files are inert static assets.
+  for (const [host, dir] of KEY_FILE_DIRS) {
+    const file = path.join(REPO_ROOT, dir, `${INDEXNOW_KEY}.txt`);
+    assert.ok(existsSync(file), `no key file for ${host} at ${dir}/${INDEXNOW_KEY}.txt`);
+    assert.equal(readFileSync(file, "utf8").trim(), INDEXNOW_KEY, `${file} body must be the key`);
+  }
+});
+
+test("every host we can submit for has a key file directory declared", () => {
+  // Adding a host to SITEMAP_FOR_HOST without shipping its key file would produce a run that always
+  // refuses at verifyKeyLive. Keeping the two maps aligned is what makes that a CI failure instead.
+  assert.deepEqual([...SITEMAP_FOR_HOST.keys()].sort(), [...KEY_FILE_DIRS.keys()].sort());
+});
