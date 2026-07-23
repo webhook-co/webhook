@@ -108,6 +108,48 @@ try {
     }
   }
 
+  // llms.txt MUST declare `charset=utf-8`, and it is the one file on the site that cannot declare its
+  // own. HTML carries `<meta charset>` and XML carries `<?xml encoding?>`, both of which a browser
+  // reads out of the bytes; `text/plain` has NO in-band equivalent. Workers Static Assets infers a
+  // bare `Content-Type: text/plain` from the .txt extension, so with no charset parameter the client
+  // falls back to its locale default — windows-1252 in most of the West — and every UTF-8 multi-byte
+  // sequence renders as mojibake. The em dashes in the summary (`E2 80 94`) came out as `â€”` in
+  // production against a byte-perfect UTF-8 file: nothing upstream was wrong, only the label.
+  //
+  // Uncatchable anywhere else, and THIS FILE IS THE ONLY PLACE IT CAN BE CAUGHT. The bytes are valid at
+  // every layer, so the content test on public/llms.txt passes, the export copies it verbatim, and curl
+  // downloads it clean (curl writes bytes, it never decodes). The a11y/Lighthouse jobs serve out/
+  // without applying _headers at all. And `wrangler dev` is actively misleading: its asset server
+  // appends `charset=utf-8` to text/* by DEFAULT, so the bug is INVISIBLE locally — /llms.txt looks
+  // correct there with no rule whatsoever, while production served a bare `text/plain`. A static check
+  // on the emitted _headers is the only thing standing between this and a silent regression.
+  //
+  // The `!` mirrors /bimi/logo.svg: unset the extension-inferred type before setting ours, so exactly
+  // one Content-Type ships regardless of how Cloudflare resolves the collision. That is a determinism
+  // guarantee, not a duplicate-header rescue — omitting it locally still produced a single correct
+  // header — but local is not authoritative for this header, and the global `nosniff` means a
+  // Content-Type that ever does come through malformed cannot be recovered client-side.
+  const llmsBlock = headers.split(/^\/(?=\S)/m).find((b) => b.startsWith("llms.txt\n"));
+  if (!llmsBlock) {
+    failures.push(
+      "out/_headers has no /llms.txt block (text/plain cannot declare its own charset)",
+    );
+  } else {
+    if (!/^\s*!\s*Content-Type\s*$/im.test(llmsBlock)) {
+      failures.push(
+        "out/_headers /llms.txt does not UNSET the inherited Content-Type (`! Content-Type`) — " +
+          "unset before set so exactly one Content-Type ships, however Workers resolves the " +
+          "collision with the type it infers from the .txt extension",
+      );
+    }
+    if (!/Content-Type:\s*text\/plain;\s*charset=utf-8/i.test(llmsBlock)) {
+      failures.push(
+        "out/_headers /llms.txt must set Content-Type: text/plain; charset=utf-8 — without the " +
+          "charset the client decodes UTF-8 as windows-1252 and every em dash renders as `â€”`",
+      );
+    }
+  }
+
   // /play MUST unset the inherited CSP before setting its own. This shipped broken to production:
   // without the `!` line /play is served with TWO Content-Security-Policy headers — and a browser
   // enforces their INTERSECTION, not "most specific wins". The global `script-src 'self'` therefore
