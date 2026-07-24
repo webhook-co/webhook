@@ -1,11 +1,11 @@
 ---
 title: "Provider directory"
 sidebarTitle: "Provider directory"
-description: "All 141 providers webhook.co verifies, grouped by scheme, with each provider's slug, signature scheme, header, and handshake support."
+description: "All 144 providers webhook.co verifies, grouped by scheme, with each provider's slug, signature scheme, header, and handshake support."
 icon: "table-list"
 ---
 
-The **141 providers** webhook.co verifies, generated from the same registry the engine runs. Find your sender, register a **provider secret** under its **slug**, and verification runs automatically — see [how verification works](/providers/verifying-provider-webhooks).
+The **144 providers** webhook.co verifies, generated from the same registry the engine runs. Find your sender, register a **provider secret** under its **slug**, and verification runs automatically — see [how verification works](/providers/verifying-provider-webhooks).
 
 Columns: the provider, the `slug` you register the secret under, the signature scheme (HMAC digest is SHA-256 unless noted), the exact signature header, and whether the provider uses a setup **handshake** (answered automatically). A handful of providers carry the signature in the request body or a form field rather than a header — noted inline.
 
@@ -102,6 +102,9 @@ The signature is computed over the exact request body verbatim — the most comm
 | Paystack                        | `paystack`          | HMAC-SHA512 | `x-paystack-signature`                      | —         |
 | Authorize.Net                   | `authorize_net`     | HMAC-SHA512 | `x-anet-signature`                          | —         |
 | Typeform                        | `typeform`          | HMAC-SHA256 | `typeform-signature`                        | —         |
+| Checkr                          | `checkr`            | HMAC-SHA256 | `x-checkr-signature`                        | —         |
+| Doppler                         | `doppler`           | HMAC-SHA256 | `x-doppler-signature`                       | —         |
+| Sendbird                        | `sendbird`          | HMAC-SHA256 | `x-sendbird-signature`                      | —         |
 
 ## HMAC with a signed timestamp
 

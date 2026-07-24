@@ -22,9 +22,9 @@ Every event carries exactly one of these:
 
 That last distinction matters downstream: an `unattempted` event is delivered **unsigned** even to a destination configured for signing. webhook.co signs the events whose source it authenticated — `verified` and `authenticated` — and nothing weaker.
 
-## 141 providers from one registry
+## 144 providers from one registry
 
-Verification adapters come from a single registry covering 141 providers. Most — 108 — are config-driven HMAC variants that differ only in header names, encodings, and what exactly goes into the signed string. The remaining 33 are bespoke: JWT-based schemes, asymmetric signatures (Ed25519, ECDSA, RSA), providers that require fetching a rotating public key, request-context signing, and the non-cryptographic token/Basic schemes that land in the `authenticated` state.
+Verification adapters come from a single registry covering 144 providers. Most — 111 — are config-driven HMAC variants that differ only in header names, encodings, and what exactly goes into the signed string. The remaining 33 are bespoke: JWT-based schemes, asymmetric signatures (Ed25519, ECDSA, RSA), providers that require fetching a rotating public key, request-context signing, and the non-cryptographic token/Basic schemes that land in the `authenticated` state.
 
 Browse the full list in the [provider directory](/providers/directory). If a provider isn't there, its events simply stay `unattempted` — captured and usable, just unsigned by us.
 

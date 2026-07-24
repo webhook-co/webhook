@@ -39,23 +39,32 @@ const MIN_BYTES = 100;
 const MAX_BYTES = 512 * 1024;
 /** The 8-byte PNG signature (RFC 2083 §3.1). */
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+/**
+ * The JPEG start-of-image + APP0 marker. Google's favicon service answers in JPEG for some domains
+ * (doppler.com among them), and refusing those left a real provider with no icon at all. `cwebp`
+ * decodes JPEG natively, so this is a second accepted INPUT format, not a weaker check — an HTML
+ * error page, the thing the sniff exists to keep off disk, still fails both.
+ */
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 
 /**
  * Is this response body an icon we are willing to put on disk? The bytes come off the network, and
  * `cwebp` is then handed the file — so we sniff CONTENT rather than trusting the declared type or
- * the URL: an oversized or non-PNG body is refused before it is ever written. Pure; returns the
+ * the URL: an oversized body, or one that is neither PNG nor JPEG, is refused before it is ever written. Pure; returns the
  * reason it was refused, or null when the buffer is acceptable.
  */
 export function rejectIcon(buf, status) {
   if (status !== 200) return `HTTP ${status}`;
   if (buf.length < MIN_BYTES) return `too small (${buf.length}B)`;
   if (buf.length > MAX_BYTES) return `too large (${buf.length}B)`;
-  if (!buf.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) return "not a PNG";
+  const isPng = buf.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC);
+  const isJpeg = buf.subarray(0, JPEG_MAGIC.length).equals(JPEG_MAGIC);
+  if (!isPng && !isJpeg) return "not a PNG or JPEG";
   return null;
 }
 
-/** Google returns PNG; cwebp reads PNG. `-metadata none` strips anything the source carried. */
-function toWebp(pngPath, outPath) {
+/** Google returns PNG or JPEG; cwebp reads both. `-metadata none` strips anything the source carried. */
+function toWebp(srcPath, outPath) {
   execFileSync("cwebp", [
     "-quiet",
     "-q",
@@ -65,7 +74,7 @@ function toWebp(pngPath, outPath) {
     String(SIZE),
     "-metadata",
     "none",
-    pngPath,
+    srcPath,
     "-o",
     outPath,
   ]);

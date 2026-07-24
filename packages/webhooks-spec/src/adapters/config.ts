@@ -231,6 +231,12 @@ export const PROVIDERS = [
   "bigcommerce",
   "datadog",
   "brevo",
+  // Contributed in response to issue #788 (doc-verified 2026-07-24). Appended, not interleaved:
+  // `detectScheme` is first-match in this order, so adding at the end cannot change which scheme any
+  // existing request resolves to. All three carry a vendor-prefixed header, so they cannot collide.
+  "checkr",
+  "doppler",
+  "sendbird",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -671,6 +677,12 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
   // S8 coverage PR3 — Bucket B quirk-HMAC (doc-verified 2026-07-01).
   // Simple raw-body: Xero (sha256/b64), Segment (SHA1/hex), AfterShip (sha256/b64), Onfleet (SHA512/hex,
   // hex-DECODED key — its secret is a hex string).
+  // Issue #788 — raw-body HMAC-SHA256/hex, each doc-verified against the provider's own
+  // documentation (citations + the deliberately-deferred providers: contributed-raw-body-hmac.test.ts).
+  // Doppler's `sha256=` prefix is REQUIRED, so a bare digest is MALFORMED_SIGNATURE, not a mismatch.
+  checkr: rawBodyHmacConfig("checkr", "x-checkr-signature", "hex"),
+  doppler: rawBodyHmacConfig("doppler", "x-doppler-signature", "hex", "sha256="),
+  sendbird: rawBodyHmacConfig("sendbird", "x-sendbird-signature", "hex"),
   xero: rawBodyHmacConfig("xero", "x-xero-signature", "base64"),
   segment: rawBodyHmacConfig("segment", "x-signature", "hex", undefined, "sha1"),
   aftership: rawBodyHmacConfig("aftership", "aftership-hmac-sha256", "base64"),

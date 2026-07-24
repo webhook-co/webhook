@@ -4520,5 +4520,90 @@ export const RECIPES: readonly RecipeDescriptor[] = [
       "Authenticated, not cryptographically verified — there is no payload signature.",
       "The signature header NAME is operator-configured (registered secret is JSON `{header, token}`), so there is no fixed header to pin."
     ]
+  },
+  {
+    "slug": "checkr",
+    "archetype": "raw-body-hmac",
+    "source": "config",
+    "signatureLocation": "header",
+    "signatureHeader": "x-checkr-signature",
+    "signatureFormat": "the bare encoded MAC",
+    "algorithm": "HMAC-SHA256",
+    "encoding": "hex",
+    "keyDerivation": "the signing secret used verbatim (its UTF-8 bytes)",
+    "signedMessage": "the raw request body",
+    "signedMessageParts": [
+      "body"
+    ],
+    "timestamp": null,
+    "replayWindow": {
+      "enforced": false,
+      "toleranceSeconds": 300
+    },
+    "rotation": false,
+    "clientVerifiable": true,
+    "verifierInputs": [
+      "secret",
+      "payload",
+      "signatureHeader"
+    ],
+    "quirks": []
+  },
+  {
+    "slug": "doppler",
+    "archetype": "raw-body-hmac",
+    "source": "config",
+    "signatureLocation": "header",
+    "signatureHeader": "x-doppler-signature",
+    "signatureValuePrefix": "sha256=",
+    "signatureFormat": "the encoded MAC behind a required `sha256=` prefix",
+    "algorithm": "HMAC-SHA256",
+    "encoding": "hex",
+    "keyDerivation": "the signing secret used verbatim (its UTF-8 bytes)",
+    "signedMessage": "the raw request body",
+    "signedMessageParts": [
+      "body"
+    ],
+    "timestamp": null,
+    "replayWindow": {
+      "enforced": false,
+      "toleranceSeconds": 300
+    },
+    "rotation": false,
+    "clientVerifiable": true,
+    "verifierInputs": [
+      "secret",
+      "payload",
+      "signatureHeader"
+    ],
+    "quirks": []
+  },
+  {
+    "slug": "sendbird",
+    "archetype": "raw-body-hmac",
+    "source": "config",
+    "signatureLocation": "header",
+    "signatureHeader": "x-sendbird-signature",
+    "signatureFormat": "the bare encoded MAC",
+    "algorithm": "HMAC-SHA256",
+    "encoding": "hex",
+    "keyDerivation": "the signing secret used verbatim (its UTF-8 bytes)",
+    "signedMessage": "the raw request body",
+    "signedMessageParts": [
+      "body"
+    ],
+    "timestamp": null,
+    "replayWindow": {
+      "enforced": false,
+      "toleranceSeconds": 300
+    },
+    "rotation": false,
+    "clientVerifiable": true,
+    "verifierInputs": [
+      "secret",
+      "payload",
+      "signatureHeader"
+    ],
+    "quirks": []
   }
 ];
