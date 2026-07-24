@@ -43,6 +43,7 @@
     "gsc-coverage": "node scripts/gsc-index-coverage.mjs",
     "gsc-sitemap": "node scripts/gsc-sitemap-write.mjs",
     "indexnow": "node scripts/indexnow-submit.mjs",
+    "bing": "node scripts/bing-webmaster.mjs",
     "test:scripts": "node --test 'scripts/**/*.test.mjs' 'apps/*/scripts/**/*.test.mjs'",
     "prepare": "husky",
     "no-early-db-close": "node scripts/no-early-db-close.mjs",
