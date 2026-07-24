@@ -390,5 +390,13 @@ test("the real docs.json links the repo, not the org", async () => {
   assert.deepEqual(collectRepoLinkIssues(config), []);
   // Non-vacuous: prove the chrome actually carries a GitHub link at all, so the check above is not
   // passing because there was nothing to check.
-  assert.match(JSON.stringify(config.navbar), /github\.com\/webhook-co\/webhook/);
+  //
+  // A SUBSTRING check, not a regex. This asserts "the serialized navbar contains this text"; it is not
+  // validating a URL, and writing it as an unanchored `/github\.com\/…/` said the opposite — CodeQL
+  // read it as a host check that arbitrary hosts could straddle (js/regex/missing-regexp-anchor, high).
+  // The guard's own URL matcher IS anchored (`/^https?:\/\/…/`), which is where anchoring matters.
+  assert.ok(
+    JSON.stringify(config.navbar).includes("github.com/webhook-co/webhook"),
+    "the docs navbar must carry a link to the repo",
+  );
 });
