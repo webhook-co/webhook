@@ -20,7 +20,12 @@ const neverFetch = () => {
   throw new Error("network was contacted");
 };
 
-const KEY = "0123456789abcdef0123456789abcdef";
+// Deliberately a low-entropy, self-describing string rather than a realistic 32-char hex key.
+// A hex fixture reads as a credential to gitleaks' generic-api-key rule (it failed CI on exactly
+// that), and the honest fix is a fixture that is not secret-shaped — not an allow-comment that
+// teaches the next reader to suppress the scanner. redact() matches on the `apikey=` parameter,
+// not on the value's shape, so nothing here is weakened by the swap.
+const KEY = "bing-test-key-not-a-real-secret";
 
 test("bingUrl: builds the documented JSON endpoint with the key and site as query params", () => {
   const u = bingUrl("GetUserSites", KEY, { siteUrl: "https://webhook.co/" });
