@@ -140,9 +140,9 @@ export const INTRODUCES = [
   "apps/web/src/app/(app)/org/[slug]/triggers/page.tsx",
   "apps/web/src/components/agent-triggers-manager.tsx",
   "apps/www/src/app/product/agent-triggers/page.tsx",
-  "apps/docs/mcp/wake-an-agent.mdx",
+  "apps/docs/mcp/agent-triggers.mdx",
   "apps/docs/mcp/trigger-semantics.mdx",
-  "apps/docs/recipes/wake-an-agent.mdx",
+  "apps/docs/recipes/agent-triggers.mdx",
 ];
 
 /** Walk the roots and return every user-facing file that mentions the trigger primitive. */

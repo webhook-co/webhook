@@ -5,7 +5,7 @@ description: "The exact triggers.wait contract — short-poll cursor pull, at-le
 icon: "book"
 ---
 
-`triggers.wait` is the consumption half of a webhook-to-agent trigger. This is its precise contract — read it once and the agent loop on [wake an agent](/mcp/wake-an-agent) stops being magic.
+`triggers.wait` is the consumption half of a webhook-to-agent trigger. This is its precise contract — read it once and the agent loop on [agent triggers](/mcp/agent-triggers) stops being magic.
 
 ## Input
 
@@ -80,6 +80,6 @@ Per endpoint, by capture-completion time (`received_at`) — the order events we
 
 Everything here is reachable over HTTP too. `triggers.wait` mirrors to `GET /v1/triggers/{triggerId}/wait`, and full CRUD lives at `/v1/triggers`. Same contract, same cursors — pick the surface that fits your runtime.
 
-<Card title="Back to waking an agent" icon="bolt" href="/mcp/wake-an-agent">
+<Card title="Back to agent triggers" icon="bolt" href="/mcp/agent-triggers">
   The end-to-end flow and a working agent loop.
 </Card>

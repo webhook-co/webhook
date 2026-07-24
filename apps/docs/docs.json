@@ -93,7 +93,7 @@
             "icon": "book-sparkles",
             "pages": [
               "recipes/stripe-to-localhost",
-              "recipes/wake-an-agent",
+              "recipes/agent-triggers",
               "recipes/fan-in-to-one-service",
               "recipes/github-actions-trigger",
               "recipes/migrate-existing-receiver",
@@ -147,7 +147,7 @@
         "tab": "MCP & agents",
         "pages": [
           "mcp/overview",
-          "mcp/wake-an-agent",
+          "mcp/agent-triggers",
           "mcp/trigger-semantics",
           "mcp/using-from-a-client",
           "mcp/authorization",
@@ -286,6 +286,14 @@
       ]
     }
   },
+  "redirects": [
+    { "source": "/mcp/wake-an-agent", "destination": "/mcp/agent-triggers", "permanent": true },
+    {
+      "source": "/recipes/wake-an-agent",
+      "destination": "/recipes/agent-triggers",
+      "permanent": true
+    }
+  ],
   "contextual": {
     "options": ["copy", "view", "chatgpt", "claude", "cursor"]
   },

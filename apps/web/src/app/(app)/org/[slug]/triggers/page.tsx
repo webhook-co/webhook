@@ -28,10 +28,10 @@ export default async function TriggersPage({ params }: { params: Promise<{ slug:
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Triggers</h1>
         <p className="leading-snug text-fg-secondary">
-          Let an MCP agent act on the events an endpoint captures. Your agent drives the cadence: it
-          calls <code className="font-mono text-[0.8125rem]">triggers.wait</code>, gets everything
-          past its cursor, and acks by passing the cursor back. Events are held durably meanwhile —
-          but an agent that never calls is never woken.
+          Subscribe an MCP agent to an endpoint. It calls{" "}
+          <code className="font-mono text-[0.8125rem]">triggers.wait</code> for whatever it
+          hasn&apos;t seen yet, then passes the cursor back to mark its place. Events are held
+          durably until it asks — nothing reaches it until it does.
         </p>
       </div>
 
