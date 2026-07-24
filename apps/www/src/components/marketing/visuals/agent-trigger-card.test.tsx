@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { axeComponent } from "@/test/axe";
 
-import { AgentTriggerCard, TRIGGER_TOOLS } from "./agent-trigger-card";
+import { AgentTriggerCard, SHOWN_ARGS, TRIGGER_TOOLS } from "./agent-trigger-card";
 
 // The agent-trigger page is what makes the "built for the agent era" headline cashable, so what it
 // shows has to be what the product does. Two things are pinned here:
@@ -19,6 +19,9 @@ import { AgentTriggerCard, TRIGGER_TOOLS } from "./agent-trigger-card";
 // pass for the wrong reason, so the count check right after this is load-bearing.
 const REAL_TOOLS = new Set(CAPABILITY_REGISTRY.keys());
 
+/** A syntactically valid uuid for the id fields the card elides as "…". */
+const UUID = "9f2c8b1e-0d3a-4c5e-8f7a-1b2c3d4e5f60";
+
 describe("AgentTriggerCard", () => {
   it("names only capabilities that actually exist in the contract", () => {
     // Anti-vacuity: if REAL_TOOLS were empty (wrong registry API), a subset check would pass for free.
@@ -27,6 +30,47 @@ describe("AgentTriggerCard", () => {
     for (const tool of TRIGGER_TOOLS) {
       expect(REAL_TOOLS, `${tool} is not a real capability`).toContain(tool);
     }
+  });
+
+  // The name check above is necessary and was NOT sufficient. This card shipped
+  // `triggers.create { endpointId, eventTypes: [...] }` — both tool names real, the argument invented
+  // (it belongs to subscriptions.create). The input schema strips unknown keys instead of rejecting
+  // them, so following the card would have silently produced an UNFILTERED trigger. A guard that
+  // checks names while the lie lives in the arguments reports coverage it does not have.
+  it("shows only arguments that exist on the real capability input schema", () => {
+    for (const tool of TRIGGER_TOOLS) {
+      const capability = CAPABILITY_REGISTRY.get(tool);
+      expect(capability, `${tool} missing from registry`).toBeDefined();
+
+      const shown = SHOWN_ARGS[tool];
+      expect(Object.keys(shown).length, `${tool} pins no arguments`).toBeGreaterThan(0);
+
+      // parse() throws on a bad field only if the schema is strict; it is not. So assert on the
+      // schema's OWN key set — the only thing that distinguishes "accepted" from "silently dropped".
+      const accepted = new Set(Object.keys(capability!.input.shape));
+      expect(accepted.size, `${tool} input schema looks empty`).toBeGreaterThan(0);
+      for (const field of Object.keys(shown)) {
+        expect(
+          accepted,
+          `${tool} has no "${field}" input — it would be silently ignored`,
+        ).toContain(field);
+      }
+      // And the values we show must actually satisfy it (uuid fields excepted — the card elides them).
+      expect(() =>
+        capability!.input.parse({ ...shown, endpointId: UUID, triggerId: UUID }),
+      ).not.toThrow();
+    }
+  });
+
+  it("renders the pinned arguments, so the pin tracks what a reader sees", () => {
+    const { container } = render(<AgentTriggerCard />);
+    const text = container.textContent ?? "";
+    for (const shown of Object.values(SHOWN_ARGS)) {
+      for (const field of Object.keys(shown)) expect(text).toContain(field);
+    }
+    expect(text, "eventTypes is a subscriptions field, never a trigger field").not.toContain(
+      "eventTypes",
+    );
   });
 
   it("shows the tools it claims to show", () => {

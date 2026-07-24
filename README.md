@@ -121,12 +121,13 @@ surface forgets one — so the surfaces don't drift.
 
 ## Built for agents
 
-An inbound webhook can wake an agent that's waiting on it. The
+An agent can act on inbound webhooks without you writing the plumbing. The
 [MCP server](https://docs.webhook.co/mcp/overview) at `mcp.webhook.co` is a first-class surface
 (remote HTTP on Cloudflare Workers, OAuth-authorized), and `triggers.wait` is the primitive: an agent
 registers a trigger on an endpoint and drains new events since its last cursor — at-least-once, in
 capture order per endpoint, held durably while the agent is offline, with the verified payload inline
-(up to 64 KiB). MCP itself has no native inbound trigger yet.
+(up to 64 KiB). It is a short poll the agent drives, not a push: MCP has no native inbound trigger,
+so nothing calls your agent — it calls us, and the durable log means an offline agent misses nothing.
 
 Egress-configuring capabilities (registering replay destinations and subscriptions) are deliberately
 kept off MCP, and localhost replay stays CLI-only — a confused-deputy and SSRF precaution, not a

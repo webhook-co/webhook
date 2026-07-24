@@ -11,7 +11,7 @@ export const metadata = pageMetadata({
   path: "/product/agent-triggers",
   title: "Agent triggers",
   description:
-    "Turn a webhook into an agent trigger: your agent subscribes to the events you capture and reads them with a durable, at-least-once, cursor-acked call — captured even when the agent isn't running.",
+    "Turn a webhook into an agent trigger: your agent subscribes to an endpoint and reads its events with a durable, at-least-once, cursor-acked call — captured even when the agent isn't running.",
 });
 
 export default function AgentTriggersPage() {
@@ -19,7 +19,7 @@ export default function AgentTriggersPage() {
     <ProductShell
       eyebrow="agent triggers"
       title="Give your agents an event they can act on"
-      lede="A webhook arrives whether or not your agent is awake. Subscribe to the events you care about and read them with a durable, at-least-once, cursor-acked call — reachable from MCP today, and from the same contract on every other surface."
+      lede="A webhook arrives whether or not your agent is awake. Subscribe to an endpoint and read what it captures with a durable, at-least-once, cursor-acked call — reachable from MCP today, and from the same contract on every other surface."
       path="/product/agent-triggers"
       name="Agent triggers"
       visual={<AgentTriggerCard />}
@@ -31,11 +31,11 @@ export default function AgentTriggersPage() {
           heading="A durable webhook subscription, not a polling loop you own"
         >
           <p>
-            Your agent creates a trigger for the events it cares about, then reads matching events
-            with a cursor it acknowledges as it goes. Delivery is at-least-once: the event is
-            durably captured the moment it arrives, whether or not your agent is up, and the cursor
-            only advances past events you&rsquo;ve acked. You drive the read cadence; we hold the
-            events and the position for you.
+            Your agent creates a trigger on an endpoint, then reads everything that endpoint
+            captures with a cursor it acknowledges as it goes. Delivery is at-least-once: the event
+            is durably captured the moment it arrives, whether or not your agent is up, and the
+            cursor only advances past events you&rsquo;ve acked. You drive the read cadence; we hold
+            the events and the position for you.
           </p>
         </ProductFeature>
 

@@ -182,7 +182,8 @@ const triggersRoute = buildRouteMap({
     wait: triggersWaitCommand,
   },
   docs: {
-    brief: "manage webhook→agent trigger subscriptions (get woken over MCP when an endpoint fires)",
+    brief:
+      "manage webhook→agent trigger subscriptions (poll `wait` to consume an endpoint's events)",
   },
 });
 

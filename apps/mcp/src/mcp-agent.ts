@@ -91,11 +91,11 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     "Get a single outbound delivery by id — its status, attempt, retry clock, HTTP statusCode/error, and the event (+ destination/subscription, when set) it links.",
   "audit.verify": "Verify the org's tamper-evident audit chain; reports the first break, if any.",
   "triggers.create":
-    "Register a webhook→agent trigger subscription for `endpointId` (optional `name` label): a durable subscription to be woken when that endpoint captures a new event. Returns the trigger id. Creates NO outbound delivery — it only subscribes you to events the org can already read.",
+    "Register a webhook→agent trigger subscription for `endpointId` (optional `name` label): a durable, cursor-tracked subscription to everything that endpoint captures. Returns the trigger id. Registering does NOT by itself deliver anything and nothing will call you — YOU must then call `triggers.wait` with the returned id, repeatedly, to receive events; a client that only creates a trigger receives nothing. A trigger covers the WHOLE endpoint and takes no event-type filter. Creates NO outbound delivery — it only subscribes you to events the org can already read.",
   "triggers.list":
     "List the org's active agent trigger subscriptions (optional `endpointId` filter). Each item is a trigger id + its endpoint, name, and created time.",
   "triggers.revoke":
-    "Revoke an agent trigger subscription by id — the subscription stops firing. Idempotent: revoking an already-revoked trigger succeeds.",
+    "Revoke an agent trigger subscription by id — subsequent `triggers.wait` calls for it fail with NOT_FOUND. Idempotent: revoking an already-revoked trigger succeeds.",
   "usage.get":
     "Get the org's metering usage — events used, included cap, and pause state. A billed EVENT is one captured request to an endpoint OR one delivery to a destination; retries never count. `capKind` says what the cap is measured over: `billing_cycle` (a paid plan's per-cycle volume, between periodStart and periodEnd) or `lifetime` (the Free tier's ONE-TIME allowance, counted since periodStart and never reset — periodEnd is null).",
   "triggers.wait":

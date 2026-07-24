@@ -210,9 +210,9 @@ export function AgentTriggersManager({ slug, initial, endpoints }: AgentTriggers
           <CardHeader>
             <CardTitle>No triggers yet</CardTitle>
             <CardDescription>
-              Create a trigger so an MCP agent is woken when an endpoint captures a new event. The
-              agent consumes events over MCP with{" "}
-              <code className="font-mono text-xs">triggers.wait</code>.
+              Create a trigger so an MCP agent can consume the events an endpoint captures. The
+              agent polls <code className="font-mono text-xs">triggers.wait</code> on its own
+              cadence and receives everything past its cursor.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -304,8 +304,9 @@ function RevokeTriggerDialog({
         <DialogHeader>
           <DialogTitle>Revoke trigger?</DialogTitle>
           <DialogDescription>
-            Revoke {which}? Its agent stops being woken for new events. This can&apos;t be undone —
-            create a new trigger to resume.
+            Revoke {which}? Its next <code className="font-mono text-xs">triggers.wait</code> call
+            fails and the agent stops receiving events. This can&apos;t be undone — create a new
+            trigger to resume.
           </DialogDescription>
         </DialogHeader>
         {error ? <Banner tone="danger">{error}</Banner> : null}

@@ -5,7 +5,7 @@ description: "A pure OAuth resource server exposing 21 scope-gated tools over st
 icon: "plug"
 ---
 
-webhook.co speaks the Model Context Protocol. Point an MCP-capable agent at `mcp.webhook.co`, authenticate with a bearer token, and it can manage endpoints, read events, inspect deliveries, verify your audit chain — and, uniquely, be _woken_ by an inbound webhook.
+webhook.co speaks the Model Context Protocol. Point an MCP-capable agent at `mcp.webhook.co`, authenticate with a bearer token, and it can manage endpoints, read events, inspect deliveries, verify your audit chain — and subscribe to an endpoint so it can act on what lands there, with a cursor that survives restarts.
 
 ## Connect
 
@@ -72,7 +72,7 @@ That last line is the whole safety story of the next page. Reading events an age
 
 <CardGroup cols={2}>
   <Card title="Wake an agent on a webhook" icon="bolt" href="/mcp/wake-an-agent">
-    The flagship: an inbound webhook wakes a waiting agent.
+    The flagship: a durable subscription your agent drains on its own cadence.
   </Card>
 
   <Card title="Connect from a client" icon="terminal" href="/mcp/using-from-a-client">

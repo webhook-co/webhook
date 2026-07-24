@@ -1,11 +1,16 @@
 ---
 title: "Wake an AI agent when a webhook arrives"
 sidebarTitle: "Wake an agent"
-description: "Register an endpoint as an MCP trigger and run an agent loop that acts on verified events the moment they land."
+description: "Register an endpoint as an MCP trigger and run an agent loop that acts on verified events, at a cadence your agent sets."
 icon: "robot"
 ---
 
-Turn an inbound webhook into an agent action. The agent subscribes to an endpoint over MCP, polls `triggers.wait`, and wakes with the event body the instant one is captured — acting only on events whose signature you verified.
+Turn an inbound webhook into an agent action. The agent subscribes to an endpoint over MCP and polls `triggers.wait`, which hands back every event past its cursor with the body inline — acting only on events whose signature you verified.
+
+<Note>
+  The loop is yours to run. `triggers.wait` returns immediately with whatever is already past your
+  cursor, so how quickly your agent reacts is set by how often it calls — nothing is pushed to it.
+</Note>
 
 <Steps>
   <Step title="Create an endpoint and verify its source">

@@ -1,13 +1,20 @@
 ---
 title: "Wake an agent on a webhook"
 sidebarTitle: "Wake an agent"
-description: "Register a webhook-to-agent trigger, then have your agent call triggers.wait to be woken when a matching event arrives — an event-driven primitive, not polling."
+description: "Register a webhook-to-agent trigger, then run an agent loop on triggers.wait — a caller-driven short poll over the durable event log, acked by cursor."
 icon: "bolt"
 ---
 
-Most webhook-over-MCP tooling is read-only _pull_: an agent asks "what happened?" and gets a snapshot. webhook.co adds the missing half — an **event-driven** primitive. An inbound webhook can wake an agent that's waiting on it.
+Most webhook-over-MCP tooling makes an agent ask "what happened?" and hands it a snapshot it has to diff. A trigger replaces that with a **durable subscription and a cursor**: your agent asks only for what it hasn't seen, gets the verified payload inline, and acknowledges by cursor — so an event is never processed twice and never silently skipped.
 
-Two steps: register a webhook-to-agent trigger for an endpoint, then have the agent consume events from it.
+Two steps: register a webhook-to-agent trigger for an endpoint, then run a loop that consumes events from it.
+
+<Warning>
+  **Your agent does the waking.** `triggers.wait` is a short poll: webhook.co never calls out to
+  your agent, opens a stream, or starts a session. An MCP client sitting idle is never woken, no
+  matter how many webhooks land — the events queue up durably and wait for a call. If you POST to
+  your ingest URL and nothing happens, this is why: something has to be running the loop below.
+</Warning>
 
 ## The model
 
@@ -15,9 +22,12 @@ Two steps: register a webhook-to-agent trigger for an endpoint, then have the ag
 flowchart LR
   P[provider] -->|POST| I[ingest URL<br/>wbhk.my/token]
   I --> E[endpoint<br/>captures event]
-  E --> T[agent trigger]
-  T -->|triggers.wait| A[your agent]
+  E --> L[(durable event log)]
+  A[your agent] -->|calls triggers.wait| L
+  L -->|events past your cursor| A
 ```
+
+Note which way the arrow points at the end: the last hop starts at **your agent**. Capture is ours and happens the instant a request lands; consumption is yours and happens when you call.
 
 A trigger is a durable webhook-to-agent subscription over an endpoint you can already read. Once it exists, an agent drains events from it with `triggers.wait` and acts on each one.
 

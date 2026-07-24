@@ -1,0 +1,8 @@
+---
+title: "Fixture: the honest sentences that must NOT trip the guard"
+description: "A caller-driven short poll over the durable log, acked by cursor."
+---
+
+Every request is captured the instant it arrives, before verification runs.
+`triggers.wait` does NOT block until an event shows up — it returns immediately
+with whatever is past your cursor. You drive the cadence.
