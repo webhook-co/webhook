@@ -1,8 +1,9 @@
 import { Button, cn, ThemeToggle, Wordmark } from "@webhook-co/ui";
 
 import { NavMenus } from "@/components/marketing/nav-menus";
-import { NAV_LINKS } from "@/components/marketing/nav-links";
+import { NAV_LINKS, REPO_LINK } from "@/components/marketing/nav-links";
 import { MobileNav } from "@/components/marketing/mobile-nav";
+import { GithubIcon } from "@/components/ui/brand-icons";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
@@ -35,6 +36,27 @@ export function Nav() {
               {link.label}
             </a>
           ))}
+
+          {/* The repo, as a mark. It sits INSIDE the nav rather than beside the theme toggle so it is
+              part of the navigation for a screen reader and for the mobile-parity guard, and it is an
+              icon rather than a word because it is the one item here that leaves for a third party —
+              a text "GitHub" would read as another page of ours.
+
+              NO STAR COUNT, and that is a decision rather than an omission. A count is social proof
+              only when it is flattering; a bar that announces a small number converts a neutral visit
+              into a negative one, on every page, for every visitor. Add the count when it is an asset. */}
+          <a
+            href={REPO_LINK.href}
+            aria-label={REPO_LINK.label}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              focusRing,
+              "ml-1 inline-flex h-[2.125rem] w-[2.125rem] items-center justify-center rounded-control text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+            )}
+          >
+            <GithubIcon size={18} aria-hidden="true" />
+          </a>
         </nav>
 
         {/* One CTA, not two. "Sign in" and "Start free" landed the same visitor in the same place —

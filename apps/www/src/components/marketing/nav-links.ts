@@ -53,9 +53,27 @@ export const NAV_LINKS: readonly NavLink[] = [
   { label: "Docs", href: LINKS.docs },
 ];
 
+/**
+ * The repository. Rendered as a mark in the desktop bar and as a labelled row at the end of the phone
+ * menu — one destination, two presentations, which is why it lives here rather than being inlined
+ * twice.
+ *
+ * It is separate from `NAV_LINKS` because it is the only nav item that leaves for a third party, and
+ * because the bar renders it as an icon rather than as text. It is still a member of
+ * `ALL_NAV_DESTINATIONS`, so the mobile-parity guard covers it like any other page.
+ *
+ * IT MUST POINT AT THE REPO, NOT THE ORG. `LINKS.openSource` is `…/webhook-co/webhook`; the bare org
+ * URL renders a repo list with no star button on it, so a link that stops there spends the click and
+ * returns nothing. The docs footer shipped with exactly that defect.
+ *
+ * No star count, deliberately — see the note in `nav.tsx`.
+ */
+export const REPO_LINK: NavLink = { label: "GitHub", href: LINKS.openSource };
+
 /** Every destination the navigation offers, in reading order. The drift guard checks against this. */
 export const ALL_NAV_DESTINATIONS: readonly NavLink[] = [
   ...PRODUCT_LINKS,
   ...RESOURCE_LINKS,
   ...NAV_LINKS,
+  REPO_LINK,
 ];

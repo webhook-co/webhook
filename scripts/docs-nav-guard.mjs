@@ -96,6 +96,77 @@ export function extractInternalLinks(src) {
   return [...targets];
 }
 
+/** Our GitHub org. A link that stops here is the defect this guard is about. */
+const GITHUB_ORG = "webhook-co";
+
+/**
+ * Every GitHub link in the docs chrome that points at our ORG rather than at a repo.
+ *
+ * THE DEFECT: `footer.socials.github` shipped as `https://github.com/webhook-co`. That page is a repo
+ * list — no README, no topics, and no star button. Docs is the only surface with measured search
+ * impressions, so the one GitHub link a reader could find sent them somewhere with nothing to do.
+ *
+ * It WALKS the config rather than checking the two fields we know about today. A curated list of
+ * places a link might hide only ever reports on the list (copy-guard-must-discover-not-list), and the
+ * next person to add a GitHub link to `navbar.links` or an anchor can make the identical mistake.
+ *
+ * Third-party GitHub URLs are ignored — linking `standard-webhooks/standard-webhooks` is normal and
+ * is not this guard's business. Only our own org is checked, because only our own org has a repo we
+ * meant to send people to.
+ *
+ * THE ONE EXEMPTION, and it is keyed on what the guard MEANS rather than on a field name that
+ * happened to trip it: this checks LINKS A READER CAN CLICK. `seo.organization.sameAs` is not a link,
+ * it is a structured-data identity claim — and there the ORG profile is the correct node, because the
+ * entity being described is the organisation, not one of its repositories. `apps/www`'s JSON-LD
+ * asserts the same URL for the same reason. Exempting the `seo` subtree keeps the guard honest;
+ * exempting "the field that failed" would have been the hole.
+ *
+ * Zero-input FLOOR: a missing config throws rather than returning `[]`. "Nothing was parsed" is a
+ * different answer from "nothing was wrong", and a guard that cannot fail is not a guard.
+ */
+export function collectRepoLinkIssues(config) {
+  if (!config || typeof config !== "object") {
+    throw new Error("collectRepoLinkIssues: no config to inspect");
+  }
+  const issues = [];
+  const seen = new Set();
+
+  const check = (value) => {
+    if (typeof value !== "string") return;
+    const m = /^https?:\/\/(?:www\.)?github\.com\/([^/?#\s]+)(\/[^?#\s]*)?/i.exec(value.trim());
+    if (!m) return;
+    if (m[1].toLowerCase() !== GITHUB_ORG) return; // someone else's org — not ours to police
+    const rest = (m[2] ?? "").replace(/\/+$/, "");
+    if (rest.length > 1) return; // …/webhook-co/<repo> — correct
+    if (seen.has(value)) return;
+    seen.add(value);
+    issues.push({
+      type: "github-org-link",
+      href: value,
+      detail: `${value} points at the ${GITHUB_ORG} ORG, not a repo — an org page has no star button. Use https://github.com/${GITHUB_ORG}/webhook`,
+    });
+  };
+
+  const visit = (node) => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if (typeof node === "string") {
+      check(node);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "seo") continue; // structured-data identity, not a clickable link — see above
+      visit(value);
+    }
+  };
+
+  visit(config);
+  return issues;
+}
+
 // Mintlify `snippets/` holds reusable fragments that are imported into pages — they are not nav pages
 // and carry no frontmatter, so the page-level orphan/frontmatter checks must skip them. (The claims
 // guard still scans them; a boast in a reused fragment ships just the same.)
@@ -141,6 +212,9 @@ export async function auditDocs({
   const orphanAllow = new Set(allowOrphans);
   const genPrefixes = new Set(generatedPrefixes);
   const issues = [];
+
+  // (0) Chrome links — a GitHub link that stops at the org instead of the repo.
+  issues.push(...collectRepoLinkIssues(config));
 
   // (1) Dangling nav — a nav entry with no backing file.
   for (const page of navPages) {

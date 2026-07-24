@@ -114,10 +114,17 @@ jobs:
           else
             gh release create "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt \
               --draft \
+              --latest \
               --title "wbhk $VERSION" \
               --notes "Draft built by release-cli — darwin arm64/x64, linux x64/arm64, windows x64 + checksums.txt. The npm package (@webhook-co/cli) publishes automatically when NPM_TOKEN is configured (with provenance); signing lands in a later distribution phase. Review + publish manually."
           fi
           echo "Draft release ready for $TAG — review + publish from the Releases page."
+          # `--latest` is explicit, not decorative. Releases here are created as DRAFTS and published by
+          # hand, and the publish dialog carries its own "Set as the latest release" checkbox — so the
+          # flag is a human decision on every release rather than a consequence of the version number.
+          # It went wrong exactly once and silently: the repo sidebar advertised wbhk 0.4.0 as Latest
+          # for six days while npm served 0.6.0, which reads to a first-time visitor as an abandoned
+          # project. Pinning it at creation makes the default correct and the checkbox redundant.
 
       # Publish gate: only on a real tag PUSH and only when NPM_TOKEN is configured (inert otherwise — the
       # build + smoke above still run every time), so the first npm publish is a deliberate human action.
