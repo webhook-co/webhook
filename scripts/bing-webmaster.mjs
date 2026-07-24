@@ -36,8 +36,21 @@ const ALLOWED_APEX = "webhook.co";
  * operator's scrollback and in this session's transcript. Redaction is applied at the boundary
  * (logging/throwing) rather than trusting each call site to remember.
  */
+const SECRETS = new Set();
+
+/**
+ * Register a literal secret so redact() scrubs it wherever it appears, not only in an `apikey=`
+ * parameter. Defence in depth: an upstream error body that echoes the key back, or any future call
+ * site that interpolates it outside a query string, would otherwise print it in full.
+ */
+export function registerSecret(value) {
+  if (typeof value === "string" && value.length >= 8) SECRETS.add(value);
+}
+
 export function redact(text) {
-  return String(text).replace(/(apikey=)[^&\s]+/gi, "$1REDACTED");
+  let out = String(text).replace(/(apikey=)[^&\s]+/gi, "$1REDACTED");
+  for (const s of SECRETS) out = out.split(s).join("REDACTED");
+  return out;
 }
 
 /** Build a JSON-endpoint URL. Never log the return value directly — pass it through redact(). */
@@ -146,6 +159,12 @@ export function parseArgs(argv) {
 }
 
 function loadApiKey(env = process.env) {
+  const key = readKey(env);
+  registerSecret(key);
+  return key;
+}
+
+function readKey(env) {
   if (env.BING_WEBMASTER_API_KEY) return env.BING_WEBMASTER_API_KEY.trim();
   if (env.BING_WEBMASTER_API_KEY_FILE) {
     return readFileSync(env.BING_WEBMASTER_API_KEY_FILE, "utf8").trim();
@@ -155,9 +174,16 @@ function loadApiKey(env = process.env) {
   );
 }
 
+/**
+ * Request options shared by every call. `redirect: "error"` is load-bearing rather than tidiness:
+ * the API key rides in the QUERY STRING, so following a redirect would hand the full URL — key
+ * included — to whatever host the redirect names.
+ */
+const REQUEST_INIT = { redirect: "error", referrerPolicy: "no-referrer" };
+
 async function getJson(method, apiKey, params, fetchImpl = fetch) {
   const url = bingUrl(method, apiKey, params);
-  const res = await fetchImpl(url);
+  const res = await fetchImpl(url, { ...REQUEST_INIT });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(redact(`${method} failed (HTTP ${res.status}): ${text}`));
@@ -194,6 +220,7 @@ export async function submitUrlBatch(apiKey, siteUrl, urls, { fetchImpl = fetch 
   if (!urls?.length) throw new Error("no URLs to submit");
   for (const u of urls) assertSiteAllowed(u);
   const res = await fetchImpl(bingUrl("SubmitUrlbatch", apiKey, {}), {
+    ...REQUEST_INIT,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ siteUrl, urlList: urls }),
@@ -203,21 +230,26 @@ export async function submitUrlBatch(apiKey, siteUrl, urls, { fetchImpl = fetch 
   return { submitted: urls.length };
 }
 
-async function main() {
-  const apiKey = loadApiKey();
-  const { command, siteUrl, confirm, urls } = parseArgs(process.argv.slice(2));
+/**
+ * The CLI body, with its dependencies injected so the SAFETY BEHAVIOUR is testable — not just the
+ * argument parser. `--confirm` gating the write was previously asserted only on parseArgs, which
+ * would have stayed green through a regression that submitted unconditionally.
+ */
+export async function run(argv, { fetchImpl = fetch, env = process.env, log = console.log } = {}) {
+  const apiKey = loadApiKey(env);
+  const { command, siteUrl, confirm, urls } = parseArgs(argv);
 
   if (command === "sites") {
-    for (const s of await fetchSites(apiKey)) {
-      console.log(`  ${s.verified ? "verified" : "UNVERIFIED"}  ${s.url}`);
+    for (const s of await fetchSites(apiKey, { fetchImpl })) {
+      log(`  ${s.verified ? "verified" : "UNVERIFIED"}  ${s.url}`);
     }
     return 0;
   }
 
   if (command === "feeds") {
-    console.log(`# Submitted sitemaps — ${siteUrl}\n`);
-    for (const f of await fetchFeeds(apiKey, siteUrl)) {
-      console.log(
+    log(`# Submitted sitemaps — ${siteUrl}\n`);
+    for (const f of await fetchFeeds(apiKey, siteUrl, { fetchImpl })) {
+      log(
         `  ${f.url}\n    status=${f.status} urls=${f.urlCount} submitted=${f.submitted ?? "?"} lastCrawled=${f.lastCrawled ?? "NEVER"}`,
       );
     }
@@ -225,41 +257,41 @@ async function main() {
   }
 
   if (command === "quota") {
-    const q = await fetchQuota(apiKey, siteUrl);
-    console.log(`  daily=${q.daily} monthly=${q.monthly}`);
+    const q = await fetchQuota(apiKey, siteUrl, { fetchImpl });
+    log(`  daily=${q.daily} monthly=${q.monthly}`);
     return 0;
   }
 
   if (command === "submit") {
-    const q = await fetchQuota(apiKey, siteUrl);
+    const q = await fetchQuota(apiKey, siteUrl, { fetchImpl });
     if (!confirm) {
-      console.log(`# DRY RUN — ${urls.length} URL(s) would be submitted to ${siteUrl}`);
-      for (const u of urls) console.log(`  · ${u}`);
-      console.log(`\n  quota: daily=${q.daily} monthly=${q.monthly}`);
-      console.log("  Re-run with --confirm to actually submit.");
+      log(`# DRY RUN — ${urls.length} URL(s) would be submitted to ${siteUrl}`);
+      for (const u of urls) log(`  · ${u}`);
+      log(`\n  quota: daily=${q.daily} monthly=${q.monthly}`);
+      log("  Re-run with --confirm to actually submit.");
       return 0;
     }
-    const out = await submitUrlBatch(apiKey, siteUrl, urls);
-    console.log(`  submitted ${out.submitted} URL(s); remaining quota daily=${q.daily}`);
+    const out = await submitUrlBatch(apiKey, siteUrl, urls, { fetchImpl });
+    log(`  submitted ${out.submitted} URL(s); remaining quota daily=${q.daily}`);
     return 0;
   }
 
   // Default: the crawl/index report — the second opinion on the indexation diagnosis.
-  const rows = await fetchCrawlStats(apiKey, siteUrl);
+  const rows = await fetchCrawlStats(apiKey, siteUrl, { fetchImpl });
   const latest = latestCrawlRow(rows);
-  console.log(`# Bing crawl + index — ${siteUrl}\n`);
+  log(`# Bing crawl + index — ${siteUrl}\n`);
   if (!latest) {
-    console.log("  no crawl stats returned");
+    log("  no crawl stats returned");
     return 0;
   }
-  console.log(
+  log(
     `  latest ${latest.date}: crawled=${latest.crawledPages} inIndex=${latest.inIndex} inLinks=${latest.inLinks}` +
       ` 4xx=${latest.code4xx} 5xx=${latest.code5xx} robotsBlocked=${latest.blockedByRobots}`,
   );
   const totalCrawled = rows.reduce((n, r) => n + (r.CrawledPages ?? 0), 0);
-  console.log(`  ${rows.length}-day window: ${totalCrawled} pages crawled`);
+  log(`  ${rows.length}-day window: ${totalCrawled} pages crawled`);
   if (latest.inLinks === 0) {
-    console.log(
+    log(
       "\n  ⚠️ inLinks=0 — Bing reports ZERO inbound links. This is the authority constraint stated\n" +
         "     directly rather than inferred; no on-site change moves it. See\n" +
         "     internal/marketing/seo-indexation-diagnosis.md.",
@@ -269,7 +301,7 @@ async function main() {
 }
 
 if (isMain(import.meta.url)) {
-  main()
+  run(process.argv.slice(2))
     .then((code) => process.exit(code))
     .catch((e) => {
       console.error(redact(e.message));

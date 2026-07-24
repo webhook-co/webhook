@@ -9,6 +9,9 @@ import {
   parseArgs,
   parseDotNetDate,
   redact,
+  fetchFeeds,
+  registerSecret,
+  run,
   submitUrlBatch,
   summarizeFeeds,
   summarizeSites,
@@ -209,4 +212,86 @@ test("submitUrlBatch: a failed request throws with the key redacted from the mes
       return true;
     },
   );
+});
+
+// ─── Findings from the PR #786 AI review ────────────────────────────────────────────────────────
+// The first two are the load-bearing ones: the dry-run safety property was asserted on the ARGUMENT
+// PARSER, not on the behaviour it is supposed to govern. A regression that always submitted would
+// have passed the old suite — the exact failure mode of "a guard's tests must run the guard."
+
+// The property is "performs no WRITE", not "performs no I/O" — the dry run deliberately reads the
+// quota so the operator sees the budget before confirming. So the fake serves reads and detonates
+// on any POST, which is the thing that must never happen without --confirm.
+const readsOnlyFetch = (calls) => async (url, init) => {
+  calls.push({ url, method: init?.method ?? "GET" });
+  if ((init?.method ?? "GET") !== "GET") throw new Error(`WROTE without --confirm: ${init.method}`);
+  return { ok: true, status: 200, text: async () => JSON.stringify({ d: { DailyQuota: 100 } }) };
+};
+
+test("run: `submit` without --confirm performs no write", async () => {
+  const out = [];
+  const calls = [];
+  const code = await run(["submit", "https://www.webhook.co/vs"], {
+    fetchImpl: readsOnlyFetch(calls),
+    env: { BING_WEBMASTER_API_KEY: KEY },
+    log: (m) => out.push(m),
+  });
+  assert.equal(code, 0);
+  assert.match(out.join("\n"), /DRY RUN/);
+  assert.equal(
+    calls.filter((c) => c.method !== "GET").length,
+    0,
+    "dry run issued a non-GET request",
+  );
+  assert.equal(
+    calls.filter((c) => /SubmitUrlbatch/.test(c.url)).length,
+    0,
+    "dry run hit the submission endpoint",
+  );
+});
+
+test("run: `submit --confirm` POSTs exactly once to SubmitUrlbatch", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, method: init?.method ?? "GET" });
+    return { ok: true, status: 200, text: async () => JSON.stringify({ d: { DailyQuota: 100 } }) };
+  };
+  const code = await run(["submit", "--confirm", "https://www.webhook.co/vs"], {
+    fetchImpl,
+    env: { BING_WEBMASTER_API_KEY: KEY },
+    log: () => {},
+  });
+  assert.equal(code, 0);
+  const posts = calls.filter((c) => c.method === "POST");
+  assert.equal(posts.length, 1, "expected exactly one POST");
+  assert.match(posts[0].url, /SubmitUrlbatch/);
+});
+
+test("submitUrlBatch: refuses a foreign siteUrl on the WRITE path, before the network", async () => {
+  await assert.rejects(
+    () =>
+      submitUrlBatch(KEY, "https://evil.com/", ["https://www.webhook.co/vs"], {
+        fetchImpl: neverFetch,
+      }),
+    /not an allowed site/,
+  );
+});
+
+// Defence in depth. redact() keyed only on the `apikey=` parameter, so a key echoed back in a
+// response body — or interpolated anywhere that is not a query string — would print in full.
+test("redact: scrubs a registered key value even when it is not in an apikey= parameter", () => {
+  registerSecret(KEY);
+  assert.ok(!redact(`upstream said: your key ${KEY} is invalid`).includes(KEY));
+});
+
+// The key rides in the query string, so following a redirect would hand it to the redirect target.
+test("getJson-family requests refuse to follow redirects", async () => {
+  let init;
+  const fetchImpl = async (_u, i) => {
+    init = i;
+    return { ok: true, status: 200, text: async () => JSON.stringify({ d: [] }) };
+  };
+  await fetchFeeds(KEY, "https://webhook.co/", { fetchImpl });
+  assert.equal(init.redirect, "error");
+  assert.equal(init.referrerPolicy, "no-referrer");
 });
