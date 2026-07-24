@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -68,15 +69,35 @@ export function deepestAppRoute(dir?: string): readonly string[] {
 }
 
 /**
- * A placeholder for a dynamic segment. Deliberately a uuid: every id-shaped segment we route on is a uuid
- * column, so this reaches the route's own gate rather than being rejected by a shape check first.
+ * Turn a route's segments into a concrete URL, substituting a FRESH uuid for each dynamic segment.
+ *
+ * A uuid deliberately: every id-shaped segment we route on is a uuid column, so this reaches the route's
+ * own gate rather than being rejected by a shape check first.
+ *
+ * ── Why a fresh one per call, and not a constant ───────────────────────────────────────────────────────
+ *
+ * `next dev` resolves a URL to a route on its FIRST request and caches that binding per URL. A poll that
+ * lands before the filesystem scan has registered the deep route is therefore claimed by the catch-all
+ * `(app)/[...legacy]`, which compiles, calls `notFound()` — and then answers every LATER poll for that
+ * same URL straight from the cached match. Re-asking one constant URL can never observe the route table
+ * completing, because nothing re-resolves it.
+ *
+ * That is not hypothetical: it is exactly how CI went red on a commit whose `apps/web` tree was
+ * byte-identical to the green one before it — a single `○ Compiling /[...legacy]`, then 542 identical
+ * 404s served in ~2ms of Next time apiece, then the 180s boot timeout blaming `next dev` for never
+ * answering while it was answering the whole time. The green run on the same tree got its 307 on the
+ * first request and never compiled the catch-all at all. Which side of that race a run lands on is the
+ * only difference between them.
+ *
+ * A new uuid makes every poll a URL `next dev` has never resolved before, so each one is matched against
+ * the route table as it stands AT THAT MOMENT — which is the question the probe means to ask.
+ *
+ * Generating it in here rather than accepting it as a parameter is the point: a caller cannot hoist it
+ * out of the poll loop and quietly restore the constant, so this cannot regress with every test green.
  */
-const PLACEHOLDER = "00000000-0000-4000-8000-000000000000";
-
-/** Turn a route's segments into a concrete URL, substituting a placeholder for each dynamic segment. */
 export function probeUrlFor(route: readonly string[]): string {
   const path = urlSegments(route)
-    .map((s) => (s.startsWith("[") ? PLACEHOLDER : s))
+    .map((s) => (s.startsWith("[") ? randomUUID() : s))
     .join("/");
   return `/${path}`;
 }
