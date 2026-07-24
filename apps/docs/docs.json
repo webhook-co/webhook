@@ -262,6 +262,10 @@
   "navbar": {
     "links": [
       {
+        "type": "github",
+        "href": "https://github.com/webhook-co/webhook"
+      },
+      {
         "label": "Dashboard",
         "href": "https://app.webhook.co"
       }
@@ -269,7 +273,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/webhook-co"
+      "github": "https://github.com/webhook-co/webhook"
     }
   },
   "description": "webhook.co documentation — a free, permanent, signed webhook URL with payload inspection, replay-to-localhost, inbound verification across 141 providers, outbound delivery, and an MCP webhook→agent trigger. Identical across CLI, API, dashboard, and MCP.",
@@ -287,7 +291,11 @@
     }
   },
   "redirects": [
-    { "source": "/mcp/wake-an-agent", "destination": "/mcp/agent-triggers", "permanent": true },
+    {
+      "source": "/mcp/wake-an-agent",
+      "destination": "/mcp/agent-triggers",
+      "permanent": true
+    },
     {
       "source": "/recipes/wake-an-agent",
       "destination": "/recipes/agent-triggers",

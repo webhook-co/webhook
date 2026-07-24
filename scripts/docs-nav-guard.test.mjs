@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +9,7 @@ import {
   parseFrontmatter,
   extractInternalLinks,
   auditDocs,
+  collectRepoLinkIssues,
 } from "./docs-nav-guard.mjs";
 
 /**
@@ -295,4 +296,99 @@ test("auditDocs floor: throws when docs.json parses zero nav pages", async () =>
   });
   await assert.rejects(() => auditDocs({ docsRoot: root }), /zero nav pages/i);
   await rm(root, { recursive: true, force: true });
+});
+
+// ── collectRepoLinkIssues: the docs chrome must link the REPO, not the org ─────
+//
+// THE DEFECT THIS EXISTS FOR: `docs.json` shipped with `footer.socials.github` pointing at
+// `https://github.com/webhook-co` — the ORG page. An org page is a repo list; it carries no star
+// button, no README, no topics. Every reader who followed the only GitHub link in the docs landed
+// somewhere they could not star, and docs is the only surface with measured search impressions.
+//
+// A string equality test in the guard would be worthless here — it has to catch the SHAPE of the
+// mistake (an org-level URL) rather than one known-bad value, because the next person to add a
+// GitHub link to the navbar can make the identical mistake with a different field.
+
+test("collectRepoLinkIssues flags an org-level GitHub URL in the footer socials", () => {
+  const issues = collectRepoLinkIssues({
+    footer: { socials: { github: "https://github.com/webhook-co" } },
+  });
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].type, "github-org-link");
+  assert.match(issues[0].detail, /webhook-co/);
+});
+
+test("collectRepoLinkIssues flags an org-level GitHub URL in a navbar link", () => {
+  const issues = collectRepoLinkIssues({
+    navbar: { links: [{ type: "github", href: "https://github.com/webhook-co" }] },
+  });
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].type, "github-org-link");
+});
+
+test("collectRepoLinkIssues accepts a repo-level URL anywhere in the chrome", () => {
+  const issues = collectRepoLinkIssues({
+    navbar: {
+      links: [
+        { type: "github", href: "https://github.com/webhook-co/webhook" },
+        { label: "Dashboard", href: "https://app.webhook.co" },
+      ],
+    },
+    footer: { socials: { github: "https://github.com/webhook-co/webhook" } },
+  });
+  assert.deepEqual(issues, []);
+});
+
+test("collectRepoLinkIssues finds GitHub links nested anywhere, not just the two known fields", () => {
+  // The guard must not enumerate a curated list of places a link may hide — a curated list only ever
+  // reports on the list. It walks the config.
+  const issues = collectRepoLinkIssues({
+    navigation: { anchors: [{ anchor: "Source", href: "https://github.com/webhook-co" }] },
+  });
+  assert.equal(issues.length, 1);
+});
+
+test("collectRepoLinkIssues ignores third-party GitHub URLs", () => {
+  // Linking someone else's repo or org is normal and is not this guard's business.
+  const issues = collectRepoLinkIssues({
+    footer: { socials: { github: "https://github.com/standard-webhooks/standard-webhooks" } },
+  });
+  assert.deepEqual(issues, []);
+});
+
+test("collectRepoLinkIssues has a zero-input floor — an empty config yields no false pass", () => {
+  // A guard that reports "clean" on nothing is a guard that cannot fail. `null` means "nothing was
+  // parsed", which is a different answer from "nothing was wrong".
+  assert.throws(() => collectRepoLinkIssues(null), /no config/i);
+});
+
+test("collectRepoLinkIssues exempts seo.organization.sameAs — identity, not a clickable link", () => {
+  // The org profile is the CORRECT node for an Organization's sameAs: the entity being described is
+  // the organisation, not one of its repositories. apps/www's JSON-LD asserts the same URL.
+  const issues = collectRepoLinkIssues({
+    seo: { organization: { sameAs: ["https://github.com/webhook-co"] } },
+  });
+  assert.deepEqual(issues, []);
+});
+
+test("the seo exemption is narrow — an org link in the chrome still fails", () => {
+  // Keyed on what the guard MEANS (clickable links), not on "the field that tripped it". If the
+  // exemption leaked, this is the case that would silently start passing.
+  const issues = collectRepoLinkIssues({
+    seo: { organization: { sameAs: ["https://github.com/webhook-co"] } },
+    navbar: { links: [{ type: "github", href: "https://github.com/webhook-co" }] },
+  });
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].href, "https://github.com/webhook-co");
+});
+
+test("the real docs.json links the repo, not the org", async () => {
+  // The end-to-end assertion: whatever the shipped config says today, it must pass its own guard.
+  const config = JSON.parse(
+    await readFile(new URL("../apps/docs/docs.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(collectRepoLinkIssues(config), []);
+  // Non-vacuous: prove the chrome actually carries a GitHub link at all, so the check above is not
+  // passing because there was nothing to check.
+  assert.match(JSON.stringify(config.navbar), /github\.com\/webhook-co\/webhook/);
 });

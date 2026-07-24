@@ -4,7 +4,13 @@ import { Button, cn } from "@webhook-co/ui";
 import { Menu, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
-import { NAV_LINKS, PRODUCT_LINKS, RESOURCE_LINKS } from "@/components/marketing/nav-links";
+import {
+  NAV_LINKS,
+  PRODUCT_LINKS,
+  REPO_LINK,
+  RESOURCE_LINKS,
+} from "@/components/marketing/nav-links";
+import { GithubIcon } from "@/components/ui/brand-icons";
 import { LINKS } from "@/lib/links";
 import { focusRing } from "@/lib/styles";
 
@@ -117,6 +123,22 @@ export function MobileNav() {
                 </a>
               </li>
             ))}
+
+            {/* The repo. A labelled row here, a bare mark in the desktop bar — same destination, and
+                `REPO_LINK` is the one source, so the parity guard above covers it. On a phone there is
+                room for the word, and an unlabelled octocat in a list of words would be a puzzle. */}
+            <li key={REPO_LINK.href}>
+              <a
+                href={REPO_LINK.href}
+                target="_blank"
+                rel="noreferrer"
+                className={linkClass}
+                onClick={() => close()}
+              >
+                <GithubIcon size={16} aria-hidden="true" className="mr-2" />
+                {REPO_LINK.label}
+              </a>
+            </li>
           </ul>
         </nav>
 

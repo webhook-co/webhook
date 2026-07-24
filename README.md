@@ -214,6 +214,9 @@ the Standard-Webhooks signing implementation — is **Apache-2.0**. Proprietary 
 Open source exists here for transparency and trust; an open, shared webhook interop standard — not a
 restrictive license — is the point.
 
+**If this is useful to you, a ⭐ helps.** It is the signal other developers use to decide whether a
+webhook tool is worth their afternoon, and it is the only one we can't write ourselves.
+
 ## Contributing
 
 Setup is `pnpm install` (Node 24, pinned in [`.nvmrc`](.nvmrc); pnpm via `corepack enable`). The
@@ -229,7 +232,12 @@ pnpm build         # turbo build
 
 Changes land via pull request to `main` behind required CI checks and a review. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full setup, the check gate, and the merge model. Issues
-and discussions are welcome.
+and discussions are welcome, and everyone taking part is held to the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+Looking for somewhere to start? The
+[`good first issue`](https://github.com/webhook-co/webhook/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+label is where we park the small, self-contained ones.
 
 ## Security
 
