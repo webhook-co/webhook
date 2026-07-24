@@ -67,6 +67,25 @@ jobs:
       - run: pnpm --filter @webhook-co/sdk build
       - run: node scripts/sdk-packaged-smoke.mjs
 
+  webhooks-spec-packaged-smoke:
+    name: webhooks-spec packaged-artifact smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: install
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      # Same reasoning as the SDK above, plus one this package has already been bitten by: its `dist/` was
+      # unloadable by Node for its whole private life (tsc emits extensionless relative specifiers), because
+      # every workspace consumer imports src/ and nothing ever loaded the build. Running this on PRs — not
+      # only at release — is what keeps that from coming back.
+      #
+      # It also asserts the PACKED manifest points at dist/ rather than at TypeScript source. That rewrite
+      # comes from `publishConfig` and is applied by PNPM only; `npm publish` ignores it. If the release
+      # path is ever switched to plain npm, this check fails instead of TypeScript reaching the registry.
+      - run: pnpm --filter @webhook-co/webhooks-spec build
+      - run: node scripts/webhooks-spec-packaged-smoke.mjs
+
   client-versions-current:
     name: CLIENT_LATEST matches the registries
     runs-on: ubuntu-latest
