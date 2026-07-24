@@ -196,19 +196,52 @@ test("submitUrlBatch: POSTs the documented body shape and reports success", asyn
   const body = JSON.parse(seen.init.body);
   assert.equal(body.siteUrl, "https://webhook.co/");
   assert.deepEqual(body.urlList, urls);
+  // The WRITE path needs the redirect refusal as much as the reads — arguably more, since it carries
+  // a body. Asserting it only on the GET path let a POST-only regression leak the query-string key.
+  assert.equal(seen.init.redirect, "error");
+  assert.equal(seen.init.referrerPolicy, "no-referrer");
 });
 
+// ⚠️ This test previously could not fail. Its fixture body never contained the key and the thrown
+// message never included the request URL, so `!message.includes(KEY)` was true by construction —
+// green even with redact() stubbed to the identity. The fixture now ECHOES the key back, the way a
+// real upstream 4xx quoting the request would, so the assertion has something to catch.
 test("submitUrlBatch: a failed request throws with the key redacted from the message", async () => {
   const fetchImpl = async () => ({
     ok: false,
     status: 400,
-    text: async () => JSON.stringify({ ErrorCode: 14, Message: "ERROR!!! NotAuthorized" }),
+    text: async () =>
+      JSON.stringify({
+        ErrorCode: 14,
+        Message: `ERROR!!! NotAuthorized for apikey=${KEY}`,
+        echoedKey: KEY,
+      }),
   });
   await assert.rejects(
     () => submitUrlBatch(KEY, "https://webhook.co/", ["https://www.webhook.co/vs"], { fetchImpl }),
     (e) => {
       assert.ok(!e.message.includes(KEY), "error message leaked the API key");
+      assert.match(e.message, /REDACTED/);
       assert.match(e.message, /NotAuthorized/);
+      return true;
+    },
+  );
+});
+
+// Same vacuity check on the READ path: getJson builds a URL containing the key, and a non-ok
+// response interpolates the body into the thrown message.
+test("a failed READ throws with the key redacted, even when upstream echoes it back", async () => {
+  registerSecret(KEY);
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 401,
+    text: async () => `denied for apikey=${KEY}`,
+  });
+  await assert.rejects(
+    () => fetchFeeds(KEY, "https://webhook.co/", { fetchImpl }),
+    (e) => {
+      assert.ok(!e.message.includes(KEY), "read-path error leaked the API key");
+      assert.match(e.message, /REDACTED/);
       return true;
     },
   );
