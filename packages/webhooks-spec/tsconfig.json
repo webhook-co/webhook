@@ -3,7 +3,10 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    // tsup's declaration bundler injects a (now-deprecated in TS 6) `baseUrl`; silence that one
+    // warning. Same reason as packages/sdk-ts, which builds the same way for the same registry.
+    "ignoreDeprecations": "6.0"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", ".turbo", "src/**/*.test.ts"]

@@ -98,6 +98,24 @@ was checked and rejected), or **unattempted** — and a failure names the likely
 stopping at "no signatures found." Signing and verification follow the
 [Standard Webhooks](https://www.standardwebhooks.com/) spec, for both receive and send.
 
+That registry is also a standalone library, usable without an account — or this product:
+
+```sh
+npm install @webhook-co/webhooks-spec
+```
+
+```js
+import { detectScheme, getAdapterForScheme } from "@webhook-co/webhooks-spec";
+
+const adapter = getAdapterForScheme(detectScheme(headers));
+const result = await adapter.verify({ rawBody, headers, secrets: [process.env.WEBHOOK_SECRET] });
+// result.ok, or result.reason.code — WRONG_SECRET vs RAW_BODY_MODIFIED vs TIMESTAMP_TOO_OLD
+```
+
+See [`packages/webhooks-spec`](packages/webhooks-spec) for the full API. A provider it doesn't cover
+yet is usually one config row — that's a
+[good first issue](https://github.com/webhook-co/webhook/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+
 **Reliable outbound delivery.** Forward captured events to your own destinations with strict FIFO
 ordering (one Durable Object per destination), at-least-once delivery, retries on exponential backoff,
 and dead-lettering once a destination exhausts its retries. Deliveries carry a fresh signature only
