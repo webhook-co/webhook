@@ -89,10 +89,31 @@ describe("deepestAppRoute", () => {
 });
 
 describe("probeUrlFor", () => {
-  it("substitutes a placeholder for every dynamic segment and drops groups", () => {
-    expect(probeUrlFor(["(app)", "org", "[slug]", "endpoints", "[id]"])).toBe(
-      "/org/00000000-0000-4000-8000-000000000000/endpoints/00000000-0000-4000-8000-000000000000",
+  const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+
+  it("substitutes a uuid for every dynamic segment, keeps statics and drops groups", () => {
+    expect(probeUrlFor(["(app)", "org", "[slug]", "endpoints", "[id]"])).toMatch(
+      new RegExp(`^/org/${UUID}/endpoints/${UUID}$`),
     );
+  });
+
+  // THE FIX. `next dev` resolves a URL to a route on the FIRST request and caches that binding per URL:
+  // a poll that lands before the scan has registered the deep route is claimed by `(app)/[...legacy]`,
+  // which compiles, 404s, and then answers every later poll for that same URL from the cached match
+  // (`next.js: 2ms`, and no second "Compiling" line) — so re-asking a CONSTANT url can never observe the
+  // route table completing. That is the whole failure: one `Compiling /[...legacy]`, 542 identical 404s,
+  // then the 180s boot timeout, on a commit whose apps/web tree was byte-identical to a green one.
+  //
+  // Generating the uuid HERE rather than taking it as a parameter is deliberate: a caller cannot hoist it
+  // out of the poll loop and silently restore the constant, so the fix cannot evaporate with tests green.
+  it("returns a DIFFERENT url each call, so no poll reuses a poisoned route binding", () => {
+    const route = ["(app)", "org", "[slug]", "endpoints", "[id]"];
+    const urls = new Set(Array.from({ length: 20 }, () => probeUrlFor(route)));
+    expect(urls.size).toBe(20);
+  });
+
+  it("is stable for a route with no dynamic segments — there is nothing to vary", () => {
+    expect(probeUrlFor(["(app)", "org", "settings"])).toBe("/org/settings");
   });
 });
 

@@ -118,6 +118,9 @@ async function seed(appUrl: string, ownerUrl: string): Promise<Fixture> {
 /** Where the gate sends an unauthenticated request — see `AUTH_BASE_URL` below. */
 const AUTH_ORIGIN = "http://127.0.0.1:3199";
 
+/** What the probe saw, so a timeout can report it instead of guessing. */
+type ProbeResult = { ready: boolean; status: number; location: string | null };
+
 /**
  * Is the route `probe` addresses actually IN `next dev`'s route table yet?
  *
@@ -155,9 +158,14 @@ const AUTH_ORIGIN = "http://127.0.0.1:3199";
  * `next start` and `@opennextjs/cloudflare` alike — so the window does not exist there. It is `next dev`'s
  * alone, and it is the harness's job not to start testing in the middle of it.
  */
-async function routeTableIsComplete(probe: string): Promise<boolean> {
+async function routeTableIsComplete(probe: string): Promise<ProbeResult> {
   const res = await fetch(`${BASE_URL}${probe}`, { redirect: "manual" });
-  return isRouteTableReady(res.status, res.headers.get("location"), AUTH_ORIGIN);
+  const location = res.headers.get("location");
+  return {
+    ready: isRouteTableReady(res.status, location, AUTH_ORIGIN),
+    status: res.status,
+    location,
+  };
 }
 
 /** Boot `next dev` against the seeded database and resolve once it answers. */
@@ -190,11 +198,18 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
     },
   });
 
-  // Resolve the probe target BEFORE the poll loop. Inside it, any throw is indistinguishable from "not
-  // listening yet" and would burn the full boot timeout reporting that `next dev` never answered — a
-  // diagnosis pointing at the wrong subsystem. This also stops re-walking src/app every 250ms.
-  const probe = probeUrlFor(deepestAppRoute());
+  // Walk src/app for the probe's target route BEFORE the poll loop. Inside it, any throw is
+  // indistinguishable from "not listening yet" and would burn the full boot timeout reporting that
+  // `next dev` never answered — a diagnosis pointing at the wrong subsystem. This also stops re-walking
+  // src/app every 250ms.
+  //
+  // The ROUTE is hoisted; the URL is not. `probeUrlFor` mints fresh uuids for the dynamic segments on
+  // every call, and each poll below must use a URL `next dev` has not resolved before — see the long note
+  // on `probeUrlFor`. Hoisting the url here instead would reinstate the exact bug this loop exists to
+  // survive, and every test would stay green while it did.
+  const deepestRoute = deepestAppRoute();
 
+  let lastProbe: ProbeResult | undefined;
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
@@ -211,7 +226,8 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
           `e2e: /dev-session answered ${res.status}, expected 307 — the dev server booted but is not healthy`,
         );
       }
-      if (await routeTableIsComplete(probe)) return child;
+      lastProbe = await routeTableIsComplete(probeUrlFor(deepestRoute));
+      if (lastProbe.ready) return child;
       /* serving, but the route table is still partial — keep polling */
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("e2e:")) {
@@ -224,7 +240,19 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
   }
 
   killTree(child);
-  throw new Error(`e2e: next dev did not answer on ${BASE_URL} within ${BOOT_TIMEOUT_MS}ms`);
+  // Say WHICH of the two failures this was. "did not answer" was the old message for both, and it is a lie
+  // in the case that actually happens: the server answers every probe, promptly, and it is the deepest
+  // route that never enters the table. Reading that message costs you a trip through the wrong subsystem —
+  // process spawning, port binding, the database — before the logs reveal a healthy server the whole time.
+  if (lastProbe === undefined) {
+    throw new Error(`e2e: next dev did not answer on ${BASE_URL} within ${BOOT_TIMEOUT_MS}ms`);
+  }
+  throw new Error(
+    `e2e: next dev answered on ${BASE_URL} but ${probeUrlFor(deepestRoute)} never entered its route ` +
+      `table within ${BOOT_TIMEOUT_MS}ms — last probe: ${lastProbe.status} ` +
+      `${lastProbe.location ?? "(no Location)"}, expected 307 to ${AUTH_ORIGIN}. The catch-all answered ` +
+      `instead, so next dev began serving before its scan of src/app reached the deepest route.`,
+  );
 }
 
 /** SIGTERM the child's whole process group — see `detached` above. */
