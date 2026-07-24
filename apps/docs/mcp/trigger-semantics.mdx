@@ -5,7 +5,7 @@ description: "The exact triggers.wait contract — short-poll cursor pull, at-le
 icon: "book"
 ---
 
-`triggers.wait` is the consumption half of a webhook-to-agent trigger. This is its precise contract — read it once and the agent loop on [wake an agent](/mcp/wake-an-agent) stops being magic.
+`triggers.wait` is the consumption half of a webhook-to-agent trigger. This is its precise contract — read it once and the agent loop on [agent triggers](/mcp/agent-triggers) stops being magic.
 
 ## Input
 
@@ -28,6 +28,19 @@ icon: "book"
 ```
 
 `nextCursor` is the position past every event scanned this call — pass it back on the next call. `caughtUp` is true once the page reaches the watermark head (nothing more, right now).
+
+## Scope: one endpoint, everything it captures
+
+A trigger binds to a single endpoint and yields **every** event that endpoint captures (minus
+failed-verification ones, below). There is no event-type filter on `triggers.create` — it takes
+`endpointId` and an optional `name` label, nothing else.
+
+<Note>
+  `eventTypes` belongs to [`subscriptions.create`](/guides/send-to-a-destination), which routes
+  events to a destination. Passing it to `triggers.create` does not error — unknown fields are
+  stripped — so a filter sent here is silently dropped and you receive the endpoint's full stream.
+  Filter in your agent, or give the agent its own endpoint.
+</Note>
 
 ## Short-poll pull, not push
 
@@ -67,6 +80,6 @@ Per endpoint, by capture-completion time (`received_at`) — the order events we
 
 Everything here is reachable over HTTP too. `triggers.wait` mirrors to `GET /v1/triggers/{triggerId}/wait`, and full CRUD lives at `/v1/triggers`. Same contract, same cursors — pick the surface that fits your runtime.
 
-<Card title="Back to waking an agent" icon="bolt" href="/mcp/wake-an-agent">
+<Card title="Back to agent triggers" icon="bolt" href="/mcp/agent-triggers">
   The end-to-end flow and a working agent loop.
 </Card>

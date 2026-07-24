@@ -2,15 +2,30 @@ import { Terminal, TerminalLine, Tok } from "@/components/ui/terminal";
 
 /**
  * What a webhook→agent trigger actually looks like, using the REAL capability names from the contract
- * (`triggers.create`, `triggers.wait`) and the REAL semantics.
+ * (`triggers.create`, `triggers.wait`), the REAL input fields, and the REAL semantics.
  *
  * The semantics matter more than the pixels here. `triggers.wait` is a SHORT-POLL: one fast scan per
  * call, at a cadence the caller drives, acknowledged by cursor. It does NOT "block until" an event
  * arrives and it does not push — that framing was wrong in three places in this repo and was
- * corrected; it must not come back in through a marketing visual. `agent-trigger-card.test.tsx` pins
- * the tool names to the capability registry and forbids the push wording.
+ * corrected; it must not come back in through a marketing visual.
+ *
+ * The ARGUMENTS are pinned too, and that is not belt-and-braces. This card previously showed
+ * `triggers.create` taking `{ endpointId, eventTypes: ["issue.updated"] }`. There is no `eventTypes`
+ * on a trigger — a trigger binds to ONE ENDPOINT and yields everything that endpoint captures. The
+ * field is real on `subscriptions.create`, which is where it was copied from, and the input schema
+ * does not reject unknown keys: zod strips them. So a developer following this card would have sent
+ * a filter, had it silently dropped, and received every event on the endpoint believing it was
+ * filtered — the worst kind of documentation bug, because nothing errors. The name-only guard passed
+ * it for a year; `agent-trigger-card.test.tsx` now validates the shown arguments against the
+ * capability input schema itself.
  */
 export const TRIGGER_TOOLS = ["triggers.create", "triggers.wait"] as const;
+
+/** The arguments this card SHOWS, pinned against the contract's input schemas by the test. */
+export const SHOWN_ARGS = {
+  "triggers.create": { endpointId: "…", name: "issue-triage" },
+  "triggers.wait": { triggerId: "…", cursor: "…" },
+} as const;
 
 export function AgentTriggerCard() {
   return (
@@ -22,7 +37,7 @@ export function AgentTriggerCard() {
       <TerminalLine>
         <Tok.Dim>input</Tok.Dim>
         {"  "}
-        <Tok.Mut>{`{ "endpointId": "…", "eventTypes": ["issue.updated"] }`}</Tok.Mut>
+        <Tok.Mut>{`{ "endpointId": "…", "name": "issue-triage" }`}</Tok.Mut>
       </TerminalLine>
       <TerminalLine aria-hidden="true"> </TerminalLine>
       <TerminalLine>

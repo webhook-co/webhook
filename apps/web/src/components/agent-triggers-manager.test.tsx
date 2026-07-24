@@ -38,9 +38,19 @@ beforeEach(() => {
 
 describe("AgentTriggersManager", () => {
   it("renders the empty state explaining what a trigger is when there are none", () => {
-    render(<AgentTriggersManager slug="acme" initial={[]} endpoints={endpoints} />);
+    const { container } = render(
+      <AgentTriggersManager slug="acme" initial={[]} endpoints={endpoints} />,
+    );
     expect(screen.getByText(/no triggers yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/woken when an endpoint captures a new event/i)).toBeInTheDocument();
+    // The empty state must name the MECHANISM, not just the outcome. "your agent is woken" is the
+    // description that sent a reader off debugging a working system: they POST to the ingest URL,
+    // no agent stirs, and nothing on screen told them a client has to CALL triggers.wait. Copy here
+    // is load-bearing (scripts/trigger-copy-guard.mjs pins the same contract across every surface).
+    // Asserted on container text because the inline <code> splits it across text nodes.
+    const text = container.textContent ?? "";
+    expect(text).toMatch(/polls/i);
+    expect(text).toMatch(/on its own cadence and receives everything past its cursor/i);
+    expect(text).not.toMatch(/\bpush(es|ed)?\b/i);
   });
 
   it("lists an existing trigger with its endpoint NAME (not the raw id) and label", () => {

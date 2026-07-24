@@ -1,0 +1,10 @@
+---
+title: "Fixture: the claims this guard exists to catch"
+description: "An event-driven primitive, not polling."
+---
+
+Wake an MCP agent when an endpoint captures a new event — a pushed trigger, not a poll.
+We push it to your agent and it wakes the instant one is captured, in real-time.
+The call blocks until something arrives, then streams it to your agent.
+
+Have an MCP agent block on `triggers.wait` until a matching webhook lands.
