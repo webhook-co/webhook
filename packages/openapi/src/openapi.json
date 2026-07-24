@@ -878,7 +878,10 @@
                   "okta",
                   "bigcommerce",
                   "datadog",
-                  "brevo"
+                  "brevo",
+                  "checkr",
+                  "doppler",
+                  "sendbird"
                 ]
               }
             }
@@ -1227,7 +1230,10 @@
                   "okta",
                   "bigcommerce",
                   "datadog",
-                  "brevo"
+                  "brevo",
+                  "checkr",
+                  "doppler",
+                  "sendbird"
                 ]
               }
             }
@@ -4018,7 +4024,10 @@
           "okta",
           "bigcommerce",
           "datadog",
-          "brevo"
+          "brevo",
+          "checkr",
+          "doppler",
+          "sendbird"
         ]
       },
       "VerificationState": {
@@ -4199,6 +4208,9 @@
                   "bigcommerce",
                   "datadog",
                   "brevo",
+                  "checkr",
+                  "doppler",
+                  "sendbird",
                   "unknown"
                 ]
               },
@@ -4380,6 +4392,9 @@
                           "bigcommerce",
                           "datadog",
                           "brevo",
+                          "checkr",
+                          "doppler",
+                          "sendbird",
                           "unknown"
                         ]
                       }
@@ -4545,6 +4560,9 @@
                           "bigcommerce",
                           "datadog",
                           "brevo",
+                          "checkr",
+                          "doppler",
+                          "sendbird",
                           "unknown"
                         ]
                       }
@@ -4727,6 +4745,9 @@
                           "bigcommerce",
                           "datadog",
                           "brevo",
+                          "checkr",
+                          "doppler",
+                          "sendbird",
                           "unknown"
                         ]
                       }
@@ -5791,7 +5812,10 @@
               "okta",
               "bigcommerce",
               "datadog",
-              "brevo"
+              "brevo",
+              "checkr",
+              "doppler",
+              "sendbird"
             ]
           },
           "label": {

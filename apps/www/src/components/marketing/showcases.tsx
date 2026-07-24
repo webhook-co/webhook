@@ -39,7 +39,7 @@ export function Showcases() {
         body={
           <>
             New scheme, new secret, new encoding, new way to fail. We check every event at the edge
-            across 141 providers, sort it into one of four states, and when a signature
+            across 144 providers, sort it into one of four states, and when a signature
             doesn&rsquo;t match we name the likely cause &mdash; wrong secret, mutated body, stale
             timestamp &mdash; with the fix, instead of the bare &ldquo;no signatures found&rdquo;
             most tooling stops at. It&rsquo;s{" "}

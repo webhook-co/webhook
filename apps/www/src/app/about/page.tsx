@@ -103,7 +103,7 @@ export default function AboutPage() {
             </p>
             <p className="text-md text-pretty text-fg-secondary">
               webhook.co exists to make that boring. One place to capture the webhooks you receive,
-              verify them against 141 providers, and replay them &mdash; with the failure reason
+              verify them against 144 providers, and replay them &mdash; with the failure reason
               named in plain language instead of a generic mismatch. It&rsquo;s the tool I wanted
               the last several times a webhook broke in production.
             </p>

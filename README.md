@@ -89,7 +89,7 @@ instant it lands — before verification or dedup run — so a bad signature, an
 downstream outage only changes what happens *next*, never whether you have the event. The ingest URL
 is a sealed credential you can re-read on demand and rotate in place, not a secret shown once.
 
-**Verification for 141 providers, built in.** One open registry
+**Verification for 144 providers, built in.** One open registry
 ([`packages/webhooks-spec`](packages/webhooks-spec)) covers Stripe, GitHub, Shopify, Slack, Twilio,
 Square, PayPal, Discord, Clerk, Supabase, and [many more](https://docs.webhook.co/providers/directory).
 Every event is sorted into one of four states — **verified** (a cryptographic signature checked),
@@ -210,7 +210,7 @@ apps/
   telemetry/   anonymous, opt-out CLI telemetry
 packages/
   cli/            the wbhk CLI + listen / replay-to-localhost
-  webhooks-spec/  Standard Webhooks signing + the 141-provider registry
+  webhooks-spec/  Standard Webhooks signing + the 144-provider registry
   contract/       the capability contract + cross-surface parity gate
   sdk-ts/         the TypeScript SDK (@webhook-co/sdk)
   shared/         shared types, the plan catalog, utilities

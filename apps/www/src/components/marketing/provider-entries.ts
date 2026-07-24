@@ -5,7 +5,7 @@
  * GENERATED — do not hand-edit. It is derived from `PROVIDERS` in `@webhook-co/webhooks-spec` (run
  * through the same `providerDisplayName` / `providerIconDomain` the dashboard uses), and
  * `provider-wall.test.tsx` re-derives all four fields from those packages and fails if they diverge.
- * Add the 142nd adapter and the test tells you to regenerate.
+ * Add the 145th adapter and the test tells you to regenerate.
  *
  * It is a flat literal rather than a live import because pulling `webhooks-spec` into this app's TS
  * program drags the whole crypto package in under DOM libs (the Workers-vs-DOM lib clash). Same
@@ -50,6 +50,7 @@ export const PROVIDER_ENTRIES: readonly ProviderEntry[] = [
   { slug: "calendly", name: "Calendly", domain: "", mark: true },
   { slug: "chargebee", name: "Chargebee", domain: "chargebee.com", mark: false },
   { slug: "checkout_com", name: "Checkout.com", domain: "checkout.com", mark: false },
+  { slug: "checkr", name: "Checkr", domain: "checkr.com", mark: false },
   { slug: "circleci", name: "CircleCI", domain: "", mark: true },
   { slug: "clerk", name: "Clerk", domain: "", mark: true },
   { slug: "clickup", name: "ClickUp", domain: "", mark: true },
@@ -68,6 +69,7 @@ export const PROVIDER_ENTRIES: readonly ProviderEntry[] = [
   { slug: "deel", name: "Deel", domain: "deel.com", mark: false },
   { slug: "discord", name: "Discord", domain: "", mark: true },
   { slug: "docusign", name: "DocuSign", domain: "docusign.com", mark: false },
+  { slug: "doppler", name: "Doppler", domain: "doppler.com", mark: false },
   { slug: "dropbox", name: "Dropbox", domain: "", mark: true },
   { slug: "dub", name: "Dub", domain: "dub.co", mark: false },
   { slug: "dwolla", name: "Dwolla", domain: "dwolla.com", mark: false },
@@ -139,6 +141,7 @@ export const PROVIDER_ENTRIES: readonly ProviderEntry[] = [
   { slug: "resend", name: "Resend", domain: "", mark: true },
   { slug: "sanity", name: "Sanity", domain: "", mark: true },
   { slug: "segment", name: "Segment", domain: "segment.com", mark: false },
+  { slug: "sendbird", name: "Sendbird", domain: "sendbird.com", mark: false },
   { slug: "sendgrid", name: "SendGrid", domain: "sendgrid.com", mark: false },
   { slug: "sentry", name: "Sentry", domain: "", mark: true },
   { slug: "shippo", name: "Shippo", domain: "goshippo.com", mark: false },

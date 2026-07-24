@@ -48,6 +48,10 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   // S8 coverage PR3 — Bucket B quirk-HMAC providers (2026-07-01).
   xero: { displayName: "Xero", brandColor: "#13B5EA" },
   segment: { displayName: "Segment", brandColor: "#52BD94" },
+  // Issue #788 — contributed providers (2026-07-24).
+  checkr: { displayName: "Checkr", brandColor: "#2C6EF2" },
+  doppler: { displayName: "Doppler", brandColor: "#3661EB" },
+  sendbird: { displayName: "Sendbird", brandColor: "#742DDD" },
   aftership: { displayName: "AfterShip", brandColor: "#A24BFF" },
   onfleet: { displayName: "Onfleet", brandColor: "#0A1F44" },
   webflow: { displayName: "Webflow", brandColor: "#146EF5" },
@@ -194,6 +198,9 @@ export const PROVIDER_DOMAINS: Record<string, string> = {
   launchdarkly: "launchdarkly.com",
   modern_treasury: "moderntreasury.com",
   segment: "segment.com",
+  checkr: "checkr.com",
+  doppler: "doppler.com",
+  sendbird: "sendbird.com",
   onfleet: "onfleet.com",
   klaviyo: "klaviyo.com",
   mux: "mux.com",

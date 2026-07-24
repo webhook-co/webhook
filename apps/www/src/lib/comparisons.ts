@@ -154,7 +154,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         id: "verification-coverage",
         heading: "Signature verification, and how far the lists go",
-        body: "This is a real comparison rather than a walkover. ngrok verifies at its edge, which is genuinely better placement than verifying in your own process — bad signatures never reach your compute. Their supported-provider table listed 69 entries when we counted it on the date below. Our registry covers 141 providers and is Apache-2.0, so you can read exactly how each one is verified rather than trusting that it is. The gap is the long tail: PayPal, Adyen, Salesforce, Discord, Vercel and Notion were all absent from ngrok's list on the date we checked. If your provider is on both lists, this row is a tie and you should decide on something else.",
+        body: "This is a real comparison rather than a walkover. ngrok verifies at its edge, which is genuinely better placement than verifying in your own process — bad signatures never reach your compute. Their supported-provider table listed 69 entries when we counted it on the date below. Our registry covers 144 providers and is Apache-2.0, so you can read exactly how each one is verified rather than trusting that it is. The gap is the long tail: PayPal, Adyen, Salesforce, Discord, Vercel and Notion were all absent from ngrok's list on the date we checked. If your provider is on both lists, this row is a tie and you should decide on something else.",
       },
     ],
     chooseThem: {
@@ -193,7 +193,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         label: "Provider signature verification",
         them: "69 providers listed; docs say 70+",
-        us: "141 providers",
+        us: "144 providers",
         sourceId: "ngrok-verify",
       },
       {
@@ -334,7 +334,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         id: "verification",
         heading: "Signature verification: written by you, or shipped with the tool",
-        body: "webhook.site can verify a signature, and we should be precise about how. Their documented path is a WebhookScript custom action calling hmac() with an algorithm and a secret, compared against a header you name yourself, returning 401 when it does not match. That is a real capability and a flexible one — but you are writing the verification, per URL, and custom actions are not available on the free tier at all. We ship verification for 141 providers as code you can read, and you can check a captured signature by hand in the browser without an account at all.",
+        body: "webhook.site can verify a signature, and we should be precise about how. Their documented path is a WebhookScript custom action calling hmac() with an algorithm and a secret, compared against a header you name yourself, returning 401 when it does not match. That is a real capability and a flexible one — but you are writing the verification, per URL, and custom actions are not available on the free tier at all. We ship verification for 144 providers as code you can read, and you can check a captured signature by hand in the browser without an account at all.",
       },
       {
         id: "automation",
@@ -372,7 +372,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         label: "Built-in per-provider signature verification",
         them: "No — hand-written in WebhookScript, and paid-only",
-        us: "141 providers, Apache-2.0",
+        us: "144 providers, Apache-2.0",
         sourceId: "whs-script",
       },
       {
@@ -495,7 +495,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         id: "verification-parity",
         heading: "Provider coverage is roughly a tie",
-        body: "We would rather say this than let a table imply otherwise. Their documentation lists 146 source types, of which 141 are named third-party platforms, and their public OpenAPI specification defines provider-specific verification configurations for 135 of them. Our registry covers 141 providers. Those numbers are close enough that provider coverage should not decide anything between us, and anyone telling you otherwise is counting selectively. The real difference is that ours is Apache-2.0 and readable, and that we ship an in-browser verifier you can paste a captured request into without an account.",
+        body: "We would rather say this than let a table imply otherwise. Their documentation lists 146 source types, of which 141 are named third-party platforms, and their public OpenAPI specification defines provider-specific verification configurations for 135 of them. Our registry covers 144 providers. Those numbers are close enough that provider coverage should not decide anything between us, and anyone telling you otherwise is counting selectively. The real difference is that ours is Apache-2.0 and readable, and that we ship an in-browser verifier you can paste a captured request into without an account.",
       },
       {
         id: "agents",
@@ -539,7 +539,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         label: "Provider signature verification",
         them: "135 provider-specific configs in their OpenAPI spec",
-        us: "141 providers",
+        us: "144 providers",
         sourceId: "hd-openapi",
       },
       {
@@ -621,7 +621,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         question: "Which one verifies more provider signatures?",
         answer:
-          "It is effectively a tie. Hookdeck documents 146 source types including 141 named platforms, with 135 provider-specific verification configurations in their public OpenAPI specification. Our registry covers 141 providers. Coverage should not be the deciding factor between these two products.",
+          "It is effectively a tie. Hookdeck documents 146 source types including 141 named platforms, with 135 provider-specific verification configurations in their public OpenAPI specification. Our registry covers 144 providers. Coverage should not be the deciding factor between these two products.",
       },
       {
         question: "Can I self-host either product?",
@@ -691,7 +691,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         id: "signature-verification",
         heading: "Signature verification is code you write",
-        body: "This one is a verified absence rather than an inference. Pipedream's own trigger documentation says HTTP triggers are public by default and require no authorization to invoke, and that they support two built-in authorization types: a static custom token, and OAuth. Neither of those is a provider signature check. So verifying that a request genuinely came from Stripe or GitHub means writing the HMAC comparison yourself in a workflow step, per source, and keeping it right as providers rotate schemes. We ship that for 141 providers as Apache-2.0 code you can read, and you can check a captured signature in the browser at our verifier without an account.",
+        body: "This one is a verified absence rather than an inference. Pipedream's own trigger documentation says HTTP triggers are public by default and require no authorization to invoke, and that they support two built-in authorization types: a static custom token, and OAuth. Neither of those is a provider signature check. So verifying that a request genuinely came from Stripe or GitHub means writing the HMAC comparison yourself in a workflow step, per source, and keeping it right as providers rotate schemes. We ship that for 144 providers as Apache-2.0 code you can read, and you can check a captured signature in the browser at our verifier without an account.",
       },
       {
         id: "no-signup",
@@ -735,7 +735,7 @@ export const COMPARISONS: readonly Comparison[] = [
       {
         label: "Built-in provider signature verification",
         them: "No — a static token or OAuth; HMAC is yours to write",
-        us: "141 providers, Apache-2.0",
+        us: "144 providers, Apache-2.0",
         sourceId: "pd-triggers",
       },
       {
