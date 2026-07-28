@@ -399,7 +399,11 @@ export function createReplayDestinationHandlers(
   handlers.set(replayDestinationsList.name, async (ctx, input) => {
     ensureScope(ctx, replayDestinationsList);
     const parsed = replayDestinationsList.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const items = await listReplayDestinations(deps.tenant, ctx.orgId);
     return { items };
   });
@@ -407,7 +411,11 @@ export function createReplayDestinationHandlers(
   handlers.set(replayDestinationsDelete.name, async (ctx, input) => {
     ensureScope(ctx, replayDestinationsDelete);
     const parsed = replayDestinationsDelete.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const removed = await softDeleteReplayDestination(
       deps.tenant,
       ctx.orgId,
@@ -421,7 +429,11 @@ export function createReplayDestinationHandlers(
   handlers.set(replayDestinationsEnable.name, async (ctx, input) => {
     ensureScope(ctx, replayDestinationsEnable);
     const parsed = replayDestinationsEnable.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const record = await enableReplayDestination(
       deps.tenant,
       ctx.orgId,
@@ -438,7 +450,11 @@ export function createReplayDestinationHandlers(
   handlers.set(replayDestinationsSetOrdered.name, async (ctx, input) => {
     ensureScope(ctx, replayDestinationsSetOrdered);
     const parsed = replayDestinationsSetOrdered.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const record = await setDestinationOrdered(
       deps.tenant,
       ctx.orgId,
@@ -453,7 +469,11 @@ export function createReplayDestinationHandlers(
   handlers.set(replayDestinationsRotateSigningSecret.name, async (ctx, input) => {
     ensureScope(ctx, replayDestinationsRotateSigningSecret);
     const parsed = replayDestinationsRotateSigningSecret.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     // Resolve the destination FIRST so an unknown / cross-org / soft-deleted id is NOT_FOUND (not a 500
     // from the signing_keys composite FK), and we never leak existence cross-org.
     const dest = await withTenant(deps.tenant, ctx.orgId, (tx) =>
@@ -476,7 +496,11 @@ export function createReplayDestinationHandlers(
   handlers.set(replayDestinationsListSigningSecrets.name, async (ctx, input) => {
     ensureScope(ctx, replayDestinationsListSigningSecrets);
     const parsed = replayDestinationsListSigningSecrets.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const dest = await withTenant(deps.tenant, ctx.orgId, (tx) =>
       getReplayDestination(tx, parsed.data.destinationId),
     );

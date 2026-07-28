@@ -150,9 +150,20 @@ export function resolveReceivedAfter(value: string | undefined): Date | undefine
 }
 
 export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
+  // Surface the failing issue's message rather than a bare "invalid input". Capability inputs are
+  // strict, so the most common failure is now `Unrecognized keys: "eventTypes"` — a message that tells
+  // the caller exactly what to remove. Collapsing that to "invalid input" leaves an agent unable to
+  // tell a malformed uuid from a field that does not exist, which is the whole point of rejecting it.
+  // Zod issue messages carry key names and constraint text, never the input VALUE, so this cannot
+  // echo a secret back; the write paths already surface the same field for the same reason.
   function parse<C extends AnyCapability>(cap: C, input: unknown): unknown {
     const result = cap.input.safeParse(input);
-    if (!result.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!result.success) {
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        result.error.issues[0]?.message ?? "invalid input",
+      );
+    }
     return result.data;
   }
 

@@ -21,7 +21,9 @@ Every session id is HMAC-bound to the principal that initialized it. Replaying a
 
 ## The 21 tools
 
-The catalog is _derived_ from the same capability contract the API, CLI, and dashboard bind — surfaces can't drift, because there's one definition per capability and one shared handler. Each tool is scope-gated by that handler (an MCP bearer has no edge to lean on, so the handler's scope check is the sole gate). Tools never throw: a fault becomes a clean, closed-taxonomy error result, and internals go to logs — never to the caller.
+The catalog is _derived_ from the same capability contract the API, CLI, and dashboard bind — surfaces can't drift, because there's one definition per capability and one shared handler. Each tool is scope-gated by that handler (an MCP bearer has no edge to lean on, so the handler's scope check is the sole gate). A fault becomes a clean, closed-taxonomy error result, and internals go to logs — never to the caller.
+
+One case is answered before the handler runs, and so sits outside that taxonomy: every tool advertises `additionalProperties: false`, so an argument the tool does not declare is rejected by the protocol layer as a JSON-RPC `-32602` (invalid params) naming the offending key, rather than as a `VALIDATION_ERROR` result. That is deliberate — you find out you invented a field before the call does anything, not after. On the REST API the same request is a `400 VALIDATION_ERROR`.
 
 <CardGroup cols={2}>
   <Card title="Endpoints (10)" icon="link">

@@ -61,6 +61,38 @@ try {
     JSON.stringify(packed.exports),
   );
 
+  // ── 2b. The legal files `files` promises must actually be IN the tarball ────
+  // `packages/webhooks-spec/LICENSE` does not exist on disk, yet `files` lists it and the manifest
+  // declares Apache-2.0. It ships anyway because `pnpm pack` hoists the workspace-root LICENSE — and
+  // `files` is a wish list, not a manifest: npm drops entries with no file behind them silently, with
+  // exit 0, so asserting the manifest field would prove nothing. Only the packed bytes can.
+  //
+  // Scope, stated honestly: this runs `pnpm pack`, so it can only prove the tarball WE publish carries
+  // a real licence. It cannot detect a switch to plain `npm publish` — npm does not hoist, and this
+  // check would never run on that path. Step 2's `main`/`exports` assertions are what catch that
+  // switch; this one catches the licence going missing, being emptied, or being replaced with
+  // something that is not Apache-2.0.
+  const packedFiles = execFileSync("tar", ["-tzf", join(scratch, tarball)], { encoding: "utf8" })
+    .split("\n")
+    .map((f) => f.trim())
+    .filter(Boolean);
+  for (const legal of ["LICENSE", "NOTICE"]) {
+    const present = packedFiles.includes(`package/${legal}`);
+    check(`tarball ships ${legal}`, present, `packed files: ${packedFiles.join(", ")}`);
+    if (!present) continue;
+    const body = execFileSync("tar", ["-xzOf", join(scratch, tarball), `package/${legal}`], {
+      encoding: "utf8",
+    });
+    check(`${legal} is non-empty`, body.trim().length > 0, `${body.length} bytes`);
+    if (legal === "LICENSE") {
+      check(
+        "LICENSE text matches the declared Apache-2.0",
+        body.includes("Apache License") && body.includes("Version 2.0"),
+        `declared "${packed.license}", first line: ${body.split("\n")[0]}`,
+      );
+    }
+  }
+
   // ── 3. Install it as a user would ───────────────────────────────────────────
   const app = join(scratch, "app");
   execFileSync("mkdir", ["-p", app]);

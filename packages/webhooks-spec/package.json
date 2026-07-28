@@ -1,7 +1,7 @@
 {
   "name": "@webhook-co/webhooks-spec",
   "version": "0.1.0",
-  "description": "Verify an inbound webhook signature from 141 providers \u2014 Stripe, GitHub, Shopify, Slack, and every Standard Webhooks adopter \u2014 behind one adapter interface.",
+  "description": "Verify an inbound webhook signature from 144 providers \u2014 Stripe, GitHub, Shopify, Slack, and every Standard Webhooks adopter \u2014 behind one adapter interface.",
   "type": "module",
   "license": "Apache-2.0",
   "homepage": "https://webhook.co",
