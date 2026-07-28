@@ -29,7 +29,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { getAdapterForScheme } from "../packages/webhooks-spec/dist/index.js";
 import { FIXTURES } from "../plugin/webhook-co/testing/fixtures.mjs";
 
 const REPO = fileURLToPath(new URL("../", import.meta.url));
@@ -65,19 +64,7 @@ function readOr(path, fallback = null) {
   }
 }
 
-/** Run one case's fixture through the real engine and report what actually happened. */
-export async function runFixture(fixture) {
-  const adapter = getAdapterForScheme(fixture.provider);
-  if (adapter === undefined) return { error: `no adapter for provider "${fixture.provider}"` };
-  return adapter.verify({
-    rawBody: new TextEncoder().encode(fixture.body),
-    headers: fixture.headers,
-    secrets: fixture.secrets,
-    now: new Date(fixture.nowUnix * 1000),
-  });
-}
-
-export async function check(opts = {}) {
+export function check(opts = {}) {
   const problems = [];
 
   const casesSource = "casesSource" in opts ? opts.casesSource : readOr(CASES);
@@ -134,40 +121,20 @@ export async function check(opts = {}) {
   }
   if (problems.length > 0) return problems;
 
-  // ---- the part that makes the positive cases true: run them.
+  // ---- every case must resolve to a fixture that exists.
+  //
+  // The REPLAY — running these bytes through the real engine and asserting the claimed reason code —
+  // lives in `packages/webhooks-spec/src/plugin-test-cases.test.ts`, NOT here. This script runs in the
+  // `lint` job, which does not build, and the engine's entry point is a gitignored `dist/`. Importing
+  // it from here crashed CI with ERR_MODULE_NOT_FOUND while passing locally, because a built `dist`
+  // happened to be lying around. A guard that only works when a build artifact survives from an
+  // earlier command is not a guard.
   for (const c of positive) {
-    const fixture = ("fixtures" in opts ? opts.fixtures : FIXTURES)[c.fixtureId];
-    if (fixture === undefined) {
+    const fixtures = "fixtures" in opts ? opts.fixtures : FIXTURES;
+    if (fixtures[c.fixtureId] === undefined) {
       problems.push(
         `positive case "${c.id}" names fixtureId "${c.fixtureId}", which is not in fixtures.mjs — ` +
           `the case would otherwise be checked against nothing.`,
-      );
-      continue;
-    }
-    const result = await runFixture(fixture);
-    if (result.error !== undefined) {
-      problems.push(`positive case "${c.id}": ${result.error}`);
-      continue;
-    }
-    if (result.ok !== c.expected.ok) {
-      problems.push(
-        `positive case "${c.id}" claims ok=${c.expected.ok} but the engine returned ok=${result.ok}. ` +
-          `The fixture no longer demonstrates what the case says it does.`,
-      );
-      continue;
-    }
-    if (c.expected.reasonCode !== undefined) {
-      const actual = result.ok ? null : result.reason.code;
-      if (actual !== c.expected.reasonCode) {
-        problems.push(
-          `positive case "${c.id}" claims reason.code ${c.expected.reasonCode} but the engine ` +
-            `returned ${actual}.`,
-        );
-      }
-    }
-    if (c.expected.keyId !== undefined && result.ok && result.keyId !== c.expected.keyId) {
-      problems.push(
-        `positive case "${c.id}" claims keyId ${c.expected.keyId} but the engine returned ${result.keyId}.`,
       );
     }
   }
@@ -186,7 +153,7 @@ export async function check(opts = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const problems = await check();
+  const problems = check();
   if (problems.length > 0) {
     console.error("plugin-test-cases-guard: FAILED\n");
     for (const p of problems) console.error(`  - ${p}`);
@@ -194,7 +161,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   const cases = JSON.parse(readFileSync(CASES, "utf8"));
   console.log(
-    `plugin-test-cases-guard: OK (${cases.positive.length} positive cases replayed through the real ` +
-      `engine, ${cases.negative.length} refusals found in the skill)`,
+    `plugin-test-cases-guard: OK (${cases.positive.length} positive cases wired to fixtures, ` +
+      `${cases.negative.length} refusals found in the skill; the engine replay runs in webhooks-spec tests)`,
   );
 }
