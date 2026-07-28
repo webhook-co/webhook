@@ -107,6 +107,34 @@ describe("kmsProviderFromEnv (KMS_MODE=local — dev custodian)", () => {
     }
   });
 
+  it("REFUSES local mode when AWS config arrives as Secrets Store BINDINGS, not strings", async () => {
+    // The shape that actually ships. Every other test here injects plain strings — the file says so
+    // itself — so without this case the production branch of kmsBindingPresent
+    // (`typeof value?.get === "function"`) is the one input the fence is load-bearing for and is
+    // exercised by nothing. In prod all four AWS fields are `secrets_store_secrets` objects.
+    const asBinding = (v: string) => ({ get: async () => v });
+    const env = {
+      KMS_MODE: "local",
+      LOCAL_KEK: LOCAL_KEK_B64,
+      KMS_KEY_ARN: asBinding(KEY_ARN),
+      AWS_REGION: asBinding("us-east-2"),
+      AWS_ACCESS_KEY_ID: asBinding("AKIAIOSFODNN7EXAMPLE"),
+      AWS_SECRET_ACCESS_KEY: asBinding("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+    } as unknown as Env;
+    expect(await rejection(kmsProviderFromEnv(env))).toMatch(/refusing/i);
+  });
+
+  it("a bound-but-empty secret still counts as provisioned — presence, not value", async () => {
+    // A half-provisioned Secrets Store must still REFUSE local rather than quietly substituting a
+    // throwaway KEK. Fails in the safe direction.
+    const env = {
+      KMS_MODE: "local",
+      LOCAL_KEK: LOCAL_KEK_B64,
+      KMS_KEY_ARN: { get: async () => "" },
+    } as unknown as Env;
+    expect(await rejection(kmsProviderFromEnv(env))).toMatch(/refusing/i);
+  });
+
   it("fails with a NAMED error when LOCAL_KEK is missing", async () => {
     const env = { KMS_MODE: "local" } as unknown as Env;
     expect(await rejection(kmsProviderFromEnv(env))).toMatch(/LOCAL_KEK/);
