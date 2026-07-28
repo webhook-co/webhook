@@ -1,0 +1,9 @@
+# Codex-only presentation for this skill. SKILL.md frontmatter carries `name` and `description`
+# ONLY — Codex's loader deserializes nothing else from it, so display metadata lives here, in
+# snake_case. (`disable-model-invocation` in frontmatter is a Claude Code key and a silent no-op in
+# Codex; `policy.allow_implicit_invocation` is the working equivalent, and we WANT implicit
+# invocation, so it is left at its default rather than set.)
+interface:
+  display_name: "Debug a webhook signature"
+  short_description: "Diagnose a failing signature"
+  default_prompt: "My webhook signature check is failing and I can't tell why — help me find the actual cause."

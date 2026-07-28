@@ -1,0 +1,20 @@
+{
+  "name": "webhook-co",
+  "interface": {
+    "displayName": "webhook.co"
+  },
+  "plugins": [
+    {
+      "name": "webhook-co",
+      "source": {
+        "source": "local",
+        "path": "./plugin/webhook-co"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
