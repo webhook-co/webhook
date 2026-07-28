@@ -1,4 +1,5 @@
 import { cn } from "@webhook-co/ui";
+import { CLIENT_VERIFIABLE_RECIPES } from "@webhook-co/webhooks-recipes";
 
 import { pageMetadata } from "@/app/metadata";
 import { Faq } from "@/components/marketing/faq";
@@ -10,11 +11,19 @@ import { container, sectionPad } from "@/lib/styles";
 
 import { VERIFY_FAQ } from "./verify-faq";
 
+/**
+ * How many providers this page can actually check.
+ *
+ * NOT the registry size. The registry is larger; the ones whose key is fetched from the provider's
+ * own servers cannot be verified inside a browser and are filtered out of the tool. Claiming the
+ * registry count here would claim the page does something it cannot. Pinned by `page.test.tsx`.
+ */
+const VERIFIABLE_HERE = CLIENT_VERIFIABLE_RECIPES.length;
+
 export const metadata = pageMetadata({
   path: "/verify",
   title: "Verify a webhook signature",
-  description:
-    "Check a webhook signature against its payload and secret, for 120+ providers, right in your browser. Nothing you paste ever leaves the page.",
+  description: `Check a webhook signature against its payload and secret, for ${VERIFIABLE_HERE} providers, right in your browser. Nothing you paste ever leaves the page.`,
 });
 
 export default function VerifyPage() {
@@ -39,8 +48,9 @@ export default function VerifyPage() {
           </h1>
           <p className="mx-auto max-w-[54ch] text-lg text-pretty text-fg-secondary">
             Pick a provider, paste the payload, the signature header, and your signing secret — this
-            checks it against the real verification code webhook.co runs for 120+ providers. Every
-            byte stays in your browser: nothing you paste is sent anywhere or saved.
+            checks it against the real verification code webhook.co runs for {VERIFIABLE_HERE}{" "}
+            providers. Every byte stays in your browser: nothing you paste is sent anywhere or
+            saved.
           </p>
         </div>
       </section>
