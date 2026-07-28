@@ -115,6 +115,27 @@ const CLAIMS: readonly Claim[] = [
     file: "README.md",
     fragments: [`Verification for ${TOTAL} providers`, `${TOTAL}-provider registry`],
   },
+  // ---- the PUBLISHED package: npmjs.com renders `description`, so it is a storefront too.
+  //
+  // These two files sat outside this manifest while every entry above was in it, so when the count
+  // moved to 144 the docs and www were updated and the npm listing was not — it advertised "141
+  // providers" on the public registry page for days, and the guard whose entire job is this could
+  // not see it. The manifest covered `apps/**` and the root README only; a gate whose input is
+  // scoped to what the producer already remembers to update cannot fail. Anything a stranger reads
+  // belongs here, not just the surfaces this repo deploys.
+  // NB: fragments for a `.json` file must be ASCII. These claims are matched against the RAW file
+  // text, and this file stores non-ASCII escaped: the description's em-dash is the six literal
+  // characters backslash-u-2-0-1-4, not U+2014. So the obvious fragment "from 144 providers —" is
+  // absent from the bytes while being present in the parsed string — a text scan over JSON can miss
+  // content that is genuinely there. Pin the number and stop before any punctuation.
+  {
+    file: "packages/webhooks-spec/package.json",
+    fragments: [`from ${TOTAL} providers`],
+  },
+  {
+    file: "packages/webhooks-spec/README.md",
+    fragments: [`from ${TOTAL} providers, behind one interface`, `**${TOTAL} providers** —`],
+  },
 ];
 
 describe("published provider counts match the registry", () => {

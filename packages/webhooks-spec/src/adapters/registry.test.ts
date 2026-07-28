@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { WEBHOOK_SCHEMES } from "../scheme";
+import { PROVIDERS, PROVIDER_CONFIGS } from "./config";
 import { detectScheme, getAdapterForScheme, ADAPTER_SCHEMES } from "./registry";
 
 describe("getAdapterForScheme", () => {
@@ -52,5 +53,35 @@ describe("detectScheme", () => {
 
   it("returns `unknown` for an empty header set", () => {
     expect(detectScheme(h())).toBe("unknown");
+  });
+
+  /**
+   * Signature header names are NOT unique across providers, and `detectScheme` returns the FIRST
+   * registry match. That makes `PROVIDERS` order load-bearing for a shared header, and nothing used
+   * to pin it — so the README could describe detection as identification and no test disagreed.
+   *
+   * The README now says `x-signature` alone resolves to `modern_treasury` even though five other
+   * providers send it with different schemes. This pins BOTH halves of that sentence: the winner,
+   * and the set it wins over. Add a seventh `x-signature` provider, or reorder `PROVIDERS`, and this
+   * fails asking you to re-check the README — which is the intended cost, because the difference is
+   * a confident wrong answer (Segment is SHA-1; Mercado Pago signs a URL manifest), not a miss.
+   */
+  it("resolves a shared header to the first registry match, and the README names the right set", () => {
+    const sharers = PROVIDERS.filter((p) => PROVIDER_CONFIGS[p]?.signatureHeader === "x-signature");
+
+    // Floor: if the filter ever matches nothing, the assertions below pass over an empty set.
+    expect(sharers.length, "no provider declares x-signature — re-point this test").toBeGreaterThan(
+      1,
+    );
+
+    expect(sharers).toEqual([
+      "modern_treasury",
+      "segment",
+      "airwallex",
+      "lemon_squeezy",
+      "clickup",
+      "mercado_pago",
+    ]);
+    expect(detectScheme(h(["x-signature", "abc"]))).toBe(sharers[0]);
   });
 });

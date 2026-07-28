@@ -20,14 +20,14 @@ npm install @webhook-co/webhooks-spec
 ## Verify a webhook
 
 ```js
-import { detectScheme, getAdapterForScheme } from "@webhook-co/webhooks-spec";
+import { getAdapterForScheme } from "@webhook-co/webhooks-spec";
 
 // `rawBody` MUST be the exact bytes you received — not a re-encoded copy.
 const rawBody = new Uint8Array(await request.arrayBuffer());
 const headers = [...request.headers]; // [["x-hub-signature-256", "sha256=…"], …]
 
-const scheme = detectScheme(headers); // "github" | "stripe" | … | "unknown"
-const adapter = getAdapterForScheme(scheme);
+// Name the provider whose endpoint this is. You registered the webhook, so you know.
+const adapter = getAdapterForScheme("github");
 
 const result = await adapter.verify({
   rawBody,
@@ -42,6 +42,12 @@ if (result.ok) {
   //                      NO_MATCHING_KEY | WRONG_SECRET | RAW_BODY_MODIFIED | …
 }
 ```
+
+There is also `detectScheme(headers)`, but treat it as a hint, not an identification. Signature header
+names are not unique across providers, and it returns the **first** registry match — so `x-signature`
+alone resolves to `modern_treasury`, though Segment (SHA-1), Airwallex, Lemon Squeezy, ClickUp and
+Mercado Pago all send that same header with different schemes. When you know the provider — and on
+your own endpoint you do — pass the slug.
 
 ## The result is a diagnosis, not a boolean
 
@@ -60,7 +66,6 @@ Heuristic sub-diagnoses carry a `confidence` field and never assert a cause that
 - **144 providers** — Stripe, GitHub, Shopify, Slack, Twilio, Square, Adyen, Braintree, HubSpot,
   Zoom, Linear, Vercel, Clerk, Supabase, Xero, Razorpay, and every
   [Standard Webhooks](https://www.standardwebhooks.com/) adopter, among many others.
-- **Scheme detection** from the request headers, so you don't have to know who's calling.
 - **Secret rotation** — pass every non-revoked secret; any match verifies, and `keyId` tells you which.
 - **Constant-time comparison**, and each scheme's own timestamp-skew window.
 - **Web Crypto only** — no Node built-ins — so it runs on Node 18+, Bun, Deno, Cloudflare Workers and
