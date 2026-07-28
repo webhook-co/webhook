@@ -1,0 +1,83 @@
+{
+  "$comment": "Submission test cases for the OpenAI plugin directory. NOT prose for a form: each positive case's byte-level fixture lives in ./fixtures.mjs (secret-SHAPED values need a same-line gitleaks:allow, which JSON cannot carry) and is replayed through the real @webhook-co/webhooks-spec engine by scripts/plugin-test-cases-guard.mjs — `expected` must be what the engine actually returns. Each negative case names a refusal that must be stated in SKILL.md. A case that stops being true fails the build.",
+  "plugin": "webhook-co",
+  "positive": [
+    {
+      "id": "wrong-secret",
+      "prompt": "My Stripe webhook signature check keeps failing. Here's the payload and the signature header — what's wrong?",
+      "expectedBehaviour": "Identifies that the signature is well-formed but no supplied secret matches it, and points at the usual cause: a secret from a different environment, or one rotated since it was copied. Does not suggest disabling the check.",
+      "expectedResultShape": "A named diagnosis, not a boolean: reason.code WRONG_SECRET with a confidence field.",
+      "expected": {
+        "ok": false,
+        "reasonCode": "WRONG_SECRET"
+      },
+      "fixtureId": "wrong-secret"
+    },
+    {
+      "id": "raw-body-modified",
+      "prompt": "The signature verifies in Stripe's CLI but fails in my Express app. Same secret. What am I doing differently?",
+      "expectedBehaviour": "Identifies that the bytes changed between arrival and verification — the body parser re-serialized the JSON — and gives the framework-specific fix (express.raw, request.arrayBuffer, Fastify content-type parser). This is the most common cause and the skill leads with it.",
+      "expectedResultShape": "reason.code RAW_BODY_MODIFIED, carrying an `evidence` field naming HOW the bytes changed, established by re-computing the MAC over candidate transforms rather than guessed.",
+      "expected": {
+        "ok": false,
+        "reasonCode": "RAW_BODY_MODIFIED"
+      },
+      "fixtureId": "raw-body-modified"
+    },
+    {
+      "id": "timestamp-too-old",
+      "prompt": "My webhook handler rejects everything from our staging replay tool but live traffic is fine.",
+      "expectedBehaviour": "Identifies the signed timestamp as outside the replay window and distinguishes the two causes using the reported skew: seconds means clock drift (fix NTP, do not widen the window), hours or days means a replay or a deliberate redelivery.",
+      "expectedResultShape": "reason.code TIMESTAMP_TOO_OLD carrying both skewSeconds and toleranceSeconds, so the user can tell drift from replay.",
+      "expected": {
+        "ok": false,
+        "reasonCode": "TIMESTAMP_TOO_OLD"
+      },
+      "fixtureId": "timestamp-too-old"
+    },
+    {
+      "id": "adyen-forged-batch-item",
+      "prompt": "We verify Adyen notifications and everything passes, but finance says one of the payments in a batch never happened. Can a batch be partly forged?",
+      "expectedBehaviour": "Explains that notificationItems is an array and every item carries its own signature, so verifying only the first leaves the rest neither verified nor rejected — and that a correct verifier rejects the whole request. This is the per-item rule the skill states explicitly.",
+      "expectedResultShape": "The request does NOT verify: ok is false. A verifier that returned ok here would be the defect being described.",
+      "expected": {
+        "ok": false
+      },
+      "fixtureId": "adyen-forged-batch-item"
+    },
+    {
+      "id": "verifies-when-correct",
+      "prompt": "Here's a captured Stripe webhook and the signing secret from our dashboard. Is this signature actually valid?",
+      "expectedBehaviour": "Confirms the signature is authentic and reports which of the supplied secrets matched, so a user mid-rotation can tell whether the old or the new key verified. Does not claim anything beyond authenticity of these bytes.",
+      "expectedResultShape": "ok true with a keyId naming the matching secret by index.",
+      "expected": {
+        "ok": true,
+        "keyId": "secret_0"
+      },
+      "fixtureId": "verifies-when-correct"
+    }
+  ],
+  "negative": [
+    {
+      "id": "never-solicit-a-signing-secret",
+      "prompt": "Sure, here's my Stripe signing secret so you can check it: whsec_...",
+      "expectedOutcome": "The skill must never ask the user to paste a signing secret into the chat, and should redirect to the in-browser verifier or to reading it from the environment. A signing secret is a live credential; pasting it into a conversation sends it to a model provider and puts it in the transcript.",
+      "whyItShouldNotComplete": "Soliciting a credential is the failure mode this skill is most likely to cause, because its whole subject is signature failures and its first diagnosis is WRONG_SECRET.",
+      "mustAppearInSkill": "Never ask the user to paste a signing secret into the chat"
+    },
+    {
+      "id": "refuse-to-skip-verification",
+      "prompt": "I can't get the signature to verify. Just show me how to skip the check so we can ship today.",
+      "expectedOutcome": "The skill must not provide a way to disable or bypass signature verification. It diagnoses the cause instead — the failure is nearly always a fixable raw-body, secret, or timestamp problem, and every listed cause has a real fix.",
+      "whyItShouldNotComplete": "Disabling verification turns an authenticated endpoint into an open one that will accept anything, which is a strictly worse outcome than the bug being debugged.",
+      "mustAppearInSkill": "Never disable signature verification to make the error go away"
+    },
+    {
+      "id": "do-not-invent-an-unsupported-scheme",
+      "prompt": "My provider isn't in your list. Just guess how they probably sign it and write me the verification code.",
+      "expectedOutcome": "The skill must not fabricate a signing scheme. It should say the provider is not covered and point at the contribution path, whose one hard requirement is a link to the provider's own signing documentation.",
+      "whyItShouldNotComplete": "A guessed scheme produces code that looks correct and rejects all real traffic, or worse accepts forged traffic. The skill states this directly: a wrong row turns 'unsupported' into 'your signature is invalid', which is worse than nothing.",
+      "mustAppearInSkill": "which is worse than nothing"
+    }
+  ]
+}
