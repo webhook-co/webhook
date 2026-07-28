@@ -34,8 +34,16 @@ command -v dbmate >/dev/null || { echo "❌ dbmate not found. brew install dbmat
 
 # The dev cluster's shape is DERIVED from the wrangler configs, never restated — see dev-db-config.mjs.
 # That module THROWS when the bindings disagree (two different dev databases/ports = a half-provisioned
-# cluster). Assign first and check, rather than `eval "$(...)"`: eval discards the child's exit status, so
-# a thrown config error degraded into a bare `SUPERUSER: unbound variable` and the real message was lost.
+# cluster). Assign first and check, rather than piping straight into a consumer: that would discard the
+# child's exit status, so a thrown config error degraded into a bare `SUPERUSER: unbound variable` and
+# the real message was lost.
+#
+# One value per line, read positionally — NOT `eval` of `KEY=value` assignments. `database` and the role
+# names come from a connection string's url.pathname/url.username, and WHATWG percent-encoding leaves
+# `;`, `$`, backtick and `|` intact, so eval made repo content executable. dev-db-config.mjs also
+# constrains both to plain Postgres identifiers (they reach raw SQL below too); that pattern excludes
+# newlines, which is what keeps a value from splitting into an extra line and shifting the fields below.
+# Two independent layers, so neither has to be perfect alone.
 if ! CONFIG="$(node -e '
 import("./scripts/dev-db-config.mjs").then(async (m) => {
   const fs = await import("node:fs");
@@ -43,7 +51,7 @@ import("./scripts/dev-db-config.mjs").then(async (m) => {
     try { return fs.readFileSync(`apps/${d}/wrangler.jsonc`, "utf8"); } catch { return ""; }
   });
   const c = m.parseDevDbConfig(texts);
-  console.log(`PORT=${c.port}; DB=${c.database}; SUPERUSER=${c.superuser}; ROLES="${c.roles.join(" ")}"`);
+  console.log([c.port, c.database, c.superuser, c.roles.join(" ")].join("\n"));
 }).catch((err) => {
   console.error(`❌ ${err.message}`);
   process.exit(1);
@@ -52,7 +60,22 @@ import("./scripts/dev-db-config.mjs").then(async (m) => {
   echo "❌ could not derive the dev-DB shape from the wrangler configs (see above)" >&2
   exit 1
 fi
-eval "$CONFIG"
+# `|| true` on every read: an empty ROLES (legitimate — parseDevDbConfig supports it, and a test pins
+# it) makes the 4th field an empty trailing line, which command substitution strips. The 4th `read`
+# then hits EOF, returns non-zero, and `set -e` killed the script with NO output at all. The explicit
+# check below is what must speak, not a silent abort.
+{
+  IFS= read -r PORT || true
+  IFS= read -r DB || true
+  IFS= read -r SUPERUSER || true
+  IFS= read -r ROLES || true
+} <<<"$CONFIG"
+ROLES="${ROLES:-}"
+# ROLES is deliberately not checked — no non-superuser bindings is a valid configuration.
+[ -n "$PORT" ] && [ -n "$DB" ] && [ -n "$SUPERUSER" ] || {
+  echo "❌ incomplete dev-DB shape from the wrangler configs" >&2
+  exit 1
+}
 
 SUPER_URL="postgres://${SUPERUSER}@127.0.0.1:${PORT}/${DB}?sslmode=disable"
 
@@ -72,6 +95,29 @@ case "${1:-up}" in
   up) ;;
   *) echo "usage: scripts/dev-db.sh [up|stop|nuke]" >&2; exit 2 ;;
 esac
+
+# A datadir is bound to the major that created it. Since we skip initdb whenever .dev-pg exists, a
+# cluster built by an older pin (PG14, before #734) would be started with PG17 binaries and die on a
+# bare `FATAL: database files are incompatible with server` — true, and useless, because the fix
+# DELETES the cluster and nobody would guess it. Decide in dev-db-preflight.mjs, where it is tested;
+# report here. Deliberately AFTER the case block, so `nuke` — the remedy — is never blocked by it.
+if ! node -e '
+import("./scripts/dev-db-preflight.mjs").then((m) => {
+  const fault = m.datadirVersionFault({
+    datadirVersion: m.readDatadirVersion(process.argv[1]),
+    expectedMajor: process.argv[2],
+  });
+  if (fault) {
+    console.error(`❌ ${fault.message}`);
+    process.exit(1);
+  }
+}).catch((err) => {
+  console.error(`❌ ${err.message}`);
+  process.exit(1);
+});
+' "$PGDATA" "$PG_MAJOR"; then
+  exit 1
+fi
 
 if [ ! -d "$PGDATA" ]; then
   echo "🔧 initdb → $PGDATA (trust auth, loopback only)"
@@ -128,3 +174,14 @@ echo
 echo "✅ dev DB ready — $SUPER_URL"
 echo "   roles verified:$(printf ' %s' $ROLES)"
 echo "   logs: $LOGFILE   ·   stop: scripts/dev-db.sh stop"
+echo
+# docs/local-billing-sandbox.md tells you to run `psql "$DEV_DB"`, but nothing ever defined DEV_DB —
+# it appeared in that one line and nowhere else in the repo, so the documented command could not work.
+# A child process cannot export into your shell, so emit the assignment for the reader to copy.
+# Print the RESOLVED psql, not a bare `psql`. postgresql@$PG_MAJOR is keg-only, so brew does not put it
+# on PATH — a bare `psql` is either `command not found` on a clean machine or, worse, a DIFFERENT major's
+# client that happens to be linked. Printing a command that cannot work is the exact defect this commit
+# is fixing two lines above.
+echo "   to open a psql session against it:"
+echo "     export DEV_DB='$SUPER_URL'"
+echo "     $PG_BIN/psql \"\$DEV_DB\""

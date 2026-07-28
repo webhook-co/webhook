@@ -1,0 +1,143 @@
+# Exercises scripts/dev-db.sh end to end.
+#
+# Until now this script ran in NO workflow — its own unit test says so: "nothing in CI noticed because
+# `dev:db` runs in no workflow (#721)". It is the single most load-bearing local-dev script (it is how
+# every developer gets a database) and it was the least tested, which is how the PG14 → PG17 pin change
+# shipped a hard break that only surfaced on machines carrying an older cluster.
+#
+# macOS, not ubuntu, because dev-db.sh is deliberately Homebrew-based and Docker-free — running it
+# anywhere else would test a different code path than the one developers actually use. macOS minutes
+# are free on public repos.
+#
+# Trigger is scoped to the files this actually covers (plus the migrations it applies), so the slower
+# macOS runner is not charged against every PR. See the derived-artifact-guard-trigger convention:
+# the SOURCE belongs in the paths filter, not just the artifact.
+name: dev-db-smoke
+
+on:
+  pull_request:
+    paths:
+      - "scripts/dev-db.sh"
+      - "scripts/dev-db-config.mjs"
+      - "scripts/dev-db-preflight.mjs"
+      - "packages/db/db/migrations/**"
+      - "apps/*/wrangler.jsonc"
+      - ".github/workflows/dev-db-smoke.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/dev-db.sh"
+      - "scripts/dev-db-config.mjs"
+      - "scripts/dev-db-preflight.mjs"
+      - "packages/db/db/migrations/**"
+      - "apps/*/wrangler.jsonc"
+      - ".github/workflows/dev-db-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Matches the convention in ci.yml: two pushes to the same PR should not both burn a 30-minute
+# macOS job.
+concurrency:
+  group: dev-db-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dev-db-smoke:
+    name: dev-db-smoke
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+
+      - name: Install postgresql@17 and dbmate
+        run: |
+          # Versioned formulae are keg-only, so nothing is linked onto PATH and nothing is started —
+          # no conflict with any Postgres the runner image ships.
+          brew install postgresql@17 dbmate
+          "$(brew --prefix postgresql@17)/bin/initdb" --version
+          dbmate --version
+
+      - name: The port the bindings name is free
+        run: |
+          # dev-db.sh binds the port the wrangler bindings name. If a runner image ever ships a started
+          # Postgres, pg_ctl fails with address-in-use buried in a log file and this job reads as a
+          # dev-db.sh regression rather than an environment clash.
+          if nc -z 127.0.0.1 5432 2>/dev/null; then
+            echo "::error::127.0.0.1:5432 is already in use on this runner"
+            exit 1
+          fi
+
+      - name: dev-db.sh up — creates the cluster, applies migrations, verifies roles
+        run: pnpm dev:db
+
+      - name: Migrations are fully applied
+        run: |
+          # dev-db.sh derives the cluster shape from the wrangler bindings, so read it back the same
+          # way rather than restating a port or database name that could drift.
+          #
+          # Note the node script prints the finished URL and we capture it with plain command
+          # substitution. The obvious shape here is `eval "$(node -e '...PORT=…; DB=…')"`, mirroring
+          # dev-db.sh — but the database name comes from a connection string in a checked-out
+          # wrangler.jsonc via url.pathname, and WHATWG percent-encoding leaves `;`, `$`, `(` and `|`
+          # intact. Under eval that is a shell-injection primitive. It grants nothing an attacker
+          # doesn't already have on a fork PR (this job checks out and runs PR code by design, with
+          # no secrets), so it is not a vulnerability here — but there is no reason to write a second
+          # copy of the pattern, and no reason for it to be waiting if the input ever stops being
+          # trusted. No eval, no primitive.
+          DATABASE_URL="$(node -e '
+            import("./scripts/dev-db-config.mjs").then(async (m) => {
+              const fs = await import("node:fs");
+              const texts = fs.readdirSync("apps").map((d) => {
+                try { return fs.readFileSync(`apps/${d}/wrangler.jsonc`, "utf8"); } catch { return ""; }
+              });
+              const c = m.parseDevDbConfig(texts);
+              const db = encodeURIComponent(c.database);
+              console.log(`postgres://webhook_owner@127.0.0.1:${c.port}/${db}?sslmode=disable`);
+            });
+          ')"
+          export DATABASE_URL
+          status="$(dbmate --no-dump-schema --migrations-dir packages/db/db/migrations status)"
+          echo "$status"
+
+          # Use dbmate's own exit code rather than grepping its output: `--exit-code` means exactly
+          # "return 1 if there are pending migrations", and it cannot drift the way an output format can.
+          dbmate --no-dump-schema --migrations-dir packages/db/db/migrations status --exit-code >/dev/null \
+            || { echo "::error::dev-db.sh left migrations unapplied"; exit 1; }
+
+          # ...and a zero-input FLOOR. `Applied: 0 / Pending: 0` is what dbmate prints for an EMPTY (but
+          # existing) migrations directory, and it satisfies every "no pending migrations" assertion —
+          # so a path filter that stops matching, or a directory emptied by a refactor, would read as
+          # success. Assert the applied count equals what is actually on disk.
+          on_disk="$(find packages/db/db/migrations -maxdepth 1 -name '[0-9]*_*.sql' | wc -l | tr -d ' ')"
+          applied="$(printf '%s\n' "$status" | sed -n 's/^Applied: //p')"
+          echo "on disk: $on_disk   applied: ${applied:-0}"
+          [ "$on_disk" -ge 90 ] || { echo "::error::only $on_disk migrations found — expected the real set"; exit 1; }
+          [ "${applied:-0}" -eq "$on_disk" ] \
+            || { echo "::error::applied=${applied:-0} but $on_disk migrations exist on disk"; exit 1; }
+
+      - name: Re-running is idempotent
+        run: pnpm dev:db
+
+      - name: A datadir from a different major fails with the recovery command, not a raw FATAL
+        run: |
+          scripts/dev-db.sh stop
+          echo "14" > .dev-pg/PG_VERSION
+          set +e
+          out="$(scripts/dev-db.sh up 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" -ne 0 ] || { echo "::error::a PG14 datadir under a PG17 pin must fail"; exit 1; }
+          echo "$out" | grep -q "scripts/dev-db.sh nuke" \
+            || { echo "::error::the failure must name the recovery command"; exit 1; }
+
+      - name: nuke is not blocked by the version fault it remedies
+        run: |
+          scripts/dev-db.sh nuke
+          [ ! -d .dev-pg ] || { echo "::error::nuke left .dev-pg behind"; exit 1; }
+
+      - name: A clean rebuild works after nuke
+        run: pnpm dev:db
