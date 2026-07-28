@@ -105,9 +105,9 @@ npm install @webhook-co/webhooks-spec
 ```
 
 ```js
-import { detectScheme, getAdapterForScheme } from "@webhook-co/webhooks-spec";
+import { getAdapterForScheme } from "@webhook-co/webhooks-spec";
 
-const adapter = getAdapterForScheme(detectScheme(headers));
+const adapter = getAdapterForScheme("github"); // name the provider — it's your endpoint
 const result = await adapter.verify({ rawBody, headers, secrets: [process.env.WEBHOOK_SECRET] });
 // result.ok, or result.reason.code — WRONG_SECRET vs RAW_BODY_MODIFIED vs TIMESTAMP_TOO_OLD
 ```
