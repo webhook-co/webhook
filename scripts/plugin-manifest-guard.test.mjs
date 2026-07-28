@@ -228,6 +228,21 @@ test("every interface field OpenAI's evaluator treats as an error is required he
   }
 });
 
+test("a required interface field that is present but EMPTY fails like a missing one", () => {
+  // Checking only for `undefined` would let a blank displayName or an empty capabilities array
+  // through — present, therefore "supplied", and rejected at submission for being blank.
+  for (const [field, empty] of [
+    ["displayName", ""],
+    ["shortDescription", "   "],
+    ["capabilities", []],
+    ["defaultPrompt", []],
+  ]) {
+    const problems = check(withInterface({ [field]: empty }));
+    assert.equal(problems.length, 1, `empty ${field} should be exactly one problem`);
+    assert.ok(problems[0].includes(field), `the message should name ${field}: ${problems[0]}`);
+  }
+});
+
 test("a category outside OpenAI's closed enum fails", () => {
   const problems = check(withInterface({ category: "Webhooks" }));
   assert.equal(problems.length, 1);

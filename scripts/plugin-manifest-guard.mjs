@@ -235,8 +235,19 @@ export function check(opts = {}) {
   }
 
   // ---- required interface fields
+  //
+  // PRESENT AND NON-EMPTY. Checking only for `undefined` would let `displayName: ""` or
+  // `capabilities: []` through — present, therefore "supplied", and rejected at submission for being
+  // blank. An empty required field is a missing one wearing a different shape.
   for (const field of REQUIRED_INTERFACE) {
-    if (iface[field] === undefined) problems.push(`plugin.json interface is missing \`${field}\`.`);
+    const value = iface[field];
+    if (value === undefined || value === null) {
+      problems.push(`plugin.json interface is missing \`${field}\`.`);
+    } else if (typeof value === "string" && value.trim().length === 0) {
+      problems.push(`plugin.json interface \`${field}\` is empty.`);
+    } else if (Array.isArray(value) && value.length === 0) {
+      problems.push(`plugin.json interface \`${field}\` is an empty array.`);
+    }
   }
   if (iface.category !== undefined && !CATEGORIES.has(iface.category)) {
     problems.push(`interface.category "${iface.category}" is not one of OpenAI's categories.`);
