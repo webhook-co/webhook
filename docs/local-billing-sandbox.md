@@ -24,6 +24,16 @@ Stripe shape change surfaces first.
 
 Three terminals. Everything below is sandbox/test-mode; no real money is reachable.
 
+`pnpm dev:db` needs two things on your PATH that nothing else in the repo installs for you:
+
+```sh
+brew install postgresql@17 dbmate
+```
+
+If `pnpm dev:db` reports that `.dev-pg` is a datadir for a different PostgreSQL major, your cluster
+predates the PG17 pin. Run `scripts/dev-db.sh nuke && pnpm dev:db` — this deletes the local cluster,
+and nothing in the repo seeds it, so local data is lost.
+
 ```sh
 # 1 — the local Postgres wrangler dev expects (idempotent; `stop` / `nuke` also available)
 pnpm dev:db
@@ -37,9 +47,10 @@ stripe listen --forward-to http://127.0.0.1:8787/v1/stripe/webhook \
 customer.subscription.updated,customer.subscription.deleted,invoice.created
 ```
 
-`apps/api/.dev.vars` already carries `BILLING_MODE=test`, the `sk_test_` key, and the **CLI's** signing
-secret (`stripe listen --print-secret`) — not the registered endpoint's. If `stripe listen` ever prints a
-secret that differs from `.dev.vars`, update `.dev.vars`; a mismatch shows up as `400 invalid signature`.
+`apps/api/.dev.vars` is gitignored, so a fresh clone does **not** have one — you create it. It needs
+`BILLING_MODE=test`, an `sk_test_` key, and the **CLI's** signing secret (`stripe listen --print-secret`)
+— not the registered endpoint's. If `stripe listen` ever prints a secret that differs from `.dev.vars`,
+update `.dev.vars`; a mismatch shows up as `400 invalid signature`.
 
 ## Fire an event
 
@@ -54,9 +65,12 @@ That is correct, not a bug. The receiver resolves the org from `client_reference
 — which *we* set at Checkout — and a synthetic fixture carries neither. An event it cannot attribute to an
 org is refused and left **out** of the dedup ledger, so a later fix + replay can still land it.
 
-To exercise the real path, give it an org that exists locally:
+To exercise the real path, give it an org that exists locally. `pnpm dev:db` prints the exact
+`export DEV_DB=…` line for your cluster when it finishes; set it first:
 
 ```sh
+export DEV_DB='postgres://postgres@127.0.0.1:5432/webhook_dev?sslmode=disable'
+
 ORG=$(psql "$DEV_DB" -tAc "insert into orgs (id, slug, name)
         values (gen_random_uuid(),'local-sandbox','local sandbox') returning id;" | head -1)
 

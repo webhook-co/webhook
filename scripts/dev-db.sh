@@ -73,6 +73,29 @@ case "${1:-up}" in
   *) echo "usage: scripts/dev-db.sh [up|stop|nuke]" >&2; exit 2 ;;
 esac
 
+# A datadir is bound to the major that created it. Since we skip initdb whenever .dev-pg exists, a
+# cluster built by an older pin (PG14, before #734) would be started with PG17 binaries and die on a
+# bare `FATAL: database files are incompatible with server` — true, and useless, because the fix
+# DELETES the cluster and nobody would guess it. Decide in dev-db-preflight.mjs, where it is tested;
+# report here. Deliberately AFTER the case block, so `nuke` — the remedy — is never blocked by it.
+if ! node -e '
+import("./scripts/dev-db-preflight.mjs").then((m) => {
+  const fault = m.datadirVersionFault({
+    datadirVersion: m.readDatadirVersion(process.argv[1]),
+    expectedMajor: process.argv[2],
+  });
+  if (fault) {
+    console.error(`❌ ${fault.message}`);
+    process.exit(1);
+  }
+}).catch((err) => {
+  console.error(`❌ ${err.message}`);
+  process.exit(1);
+});
+' "$PGDATA" "$PG_MAJOR"; then
+  exit 1
+fi
+
 if [ ! -d "$PGDATA" ]; then
   echo "🔧 initdb → $PGDATA (trust auth, loopback only)"
   "$PG_BIN/initdb" -D "$PGDATA" -U "$SUPERUSER" --auth=trust >/dev/null
@@ -128,3 +151,10 @@ echo
 echo "✅ dev DB ready — $SUPER_URL"
 echo "   roles verified:$(printf ' %s' $ROLES)"
 echo "   logs: $LOGFILE   ·   stop: scripts/dev-db.sh stop"
+echo
+# docs/local-billing-sandbox.md tells you to run `psql "$DEV_DB"`, but nothing ever defined DEV_DB —
+# it appeared in that one line and nowhere else in the repo, so the documented command could not work.
+# A child process cannot export into your shell, so emit the assignment for the reader to copy.
+echo "   to open a psql session against it:"
+echo "     export DEV_DB='$SUPER_URL'"
+echo "     psql \"\$DEV_DB\""
