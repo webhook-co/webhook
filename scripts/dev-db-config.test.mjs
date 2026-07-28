@@ -126,3 +126,81 @@ test("the reviewer role specifically is wired end to end (the #721 regression)",
     "webhook_activation_reviewer must stay in DB_ROLES — apps/api's reviewer Hyperdrive connects as it",
   );
 });
+
+// --- identifier validation -------------------------------------------------------------------
+//
+// `database` and every role name flow straight into a shell assignment and into SQL in
+// scripts/dev-db.sh (`rolname='$role'`, `createdb "$DB"`, the dbmate DATABASE_URL). They are derived
+// from url.pathname / url.username of a connection string in a checked-out wrangler.jsonc, and WHATWG
+// percent-encoding leaves `;`, `$`, `(`, `)`, `|`, `'` and `"` intact — so an unvalidated value is a
+// live shell- and SQL-injection primitive. Reject anything that is not a plain Postgres identifier at
+// the parser, which is the one place every consumer goes through.
+
+const withDb = (db) => line(`postgres://postgres:postgres@127.0.0.1:5432/${db}`);
+const withUser = (user) => `postgres://${user}:postgres@127.0.0.1:5432/webhook_dev`;
+
+test("accepts ordinary Postgres identifiers", () => {
+  assert.equal(parseDevDbConfig([withDb("webhook_dev")]).database, "webhook_dev");
+  assert.equal(parseDevDbConfig([withDb("Db_9")]).database, "Db_9");
+  assert.deepEqual(parseDevDbConfig([line(BASE), line(withUser("webhook_app"))]).roles, [
+    "webhook_app",
+  ]);
+});
+
+test("rejects a database name carrying shell metacharacters", () => {
+  for (const bad of [
+    "webhook_dev;id",
+    "webhook_dev$(id)",
+    "webhook_dev`id`",
+    "webhook_dev|id",
+    "webhook_dev&id",
+    "webhook_dev'",
+    "webhook dev",
+    "webhook-dev",
+    "",
+  ]) {
+    assert.throws(
+      () => parseDevDbConfig([withDb(bad)]),
+      /database/i,
+      `expected a throw for database ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test("rejects a role name carrying shell or SQL metacharacters", () => {
+  // dev-db.sh interpolates each role into `rolname='$role'` — an unescaped quote closes the literal.
+  for (const bad of ["webhook_app'--", "webhook_app;drop", "webhook_app$(id)", "webhook app"]) {
+    assert.throws(
+      () => parseDevDbConfig([line(BASE), line(withUser(encodeURIComponent(bad)))]),
+      /role/i,
+      `expected a throw for role ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test("a leading digit is not a valid identifier", () => {
+  assert.throws(() => parseDevDbConfig([withDb("9lives")]), /database/i);
+});
+
+test("the real repo configs still parse — validation must not reject production truth", () => {
+  // Anti-vacuity: if the pattern were too strict, every test above would still pass while the actual
+  // bootstrap broke. Parse what is really committed.
+  const texts = readdirSync(join(ROOT, "apps")).map((d) => {
+    try {
+      return readFileSync(join(ROOT, "apps", d, "wrangler.jsonc"), "utf8");
+    } catch {
+      return "";
+    }
+  });
+  const cfg = parseDevDbConfig(texts);
+  assert.equal(cfg.database, "webhook_dev");
+  assert.ok(cfg.roles.length >= 10, `expected the real role set, got ${cfg.roles.length}`);
+});
+
+test("a double quote cannot reach the parsed value at all — CONN_RE terminates on it", () => {
+  // Not a validation case: `"localConnectionString"\s*:\s*"([^"]+)"` stops at the first `"`, so the
+  // quote is never part of the captured URL. Asserting this keeps someone from later "fixing" the
+  // identifier check to cover a character that structurally cannot arrive.
+  const cfg = parseDevDbConfig([line(`postgres://postgres:postgres@127.0.0.1:5432/webhook_dev"`)]);
+  assert.equal(cfg.database, "webhook_dev");
+});

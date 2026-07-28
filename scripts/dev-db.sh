@@ -34,8 +34,15 @@ command -v dbmate >/dev/null || { echo "❌ dbmate not found. brew install dbmat
 
 # The dev cluster's shape is DERIVED from the wrangler configs, never restated — see dev-db-config.mjs.
 # That module THROWS when the bindings disagree (two different dev databases/ports = a half-provisioned
-# cluster). Assign first and check, rather than `eval "$(...)"`: eval discards the child's exit status, so
-# a thrown config error degraded into a bare `SUPERUSER: unbound variable` and the real message was lost.
+# cluster). Assign first and check, rather than piping straight into a consumer: that would discard the
+# child's exit status, so a thrown config error degraded into a bare `SUPERUSER: unbound variable` and
+# the real message was lost.
+#
+# One value per line, read positionally — NOT `eval` of `KEY=value` assignments. `database` and the role
+# names come from a connection string's url.pathname/url.username, and WHATWG percent-encoding leaves
+# `;`, `$`, backtick and `|` intact, so eval made repo content executable. dev-db-config.mjs now also
+# constrains both to plain Postgres identifiers (they reach raw SQL below too), but the shell should not
+# be relying on that: no eval, no primitive to re-open.
 if ! CONFIG="$(node -e '
 import("./scripts/dev-db-config.mjs").then(async (m) => {
   const fs = await import("node:fs");
@@ -43,7 +50,7 @@ import("./scripts/dev-db-config.mjs").then(async (m) => {
     try { return fs.readFileSync(`apps/${d}/wrangler.jsonc`, "utf8"); } catch { return ""; }
   });
   const c = m.parseDevDbConfig(texts);
-  console.log(`PORT=${c.port}; DB=${c.database}; SUPERUSER=${c.superuser}; ROLES="${c.roles.join(" ")}"`);
+  console.log([c.port, c.database, c.superuser, c.roles.join(" ")].join("\n"));
 }).catch((err) => {
   console.error(`❌ ${err.message}`);
   process.exit(1);
@@ -52,7 +59,18 @@ import("./scripts/dev-db-config.mjs").then(async (m) => {
   echo "❌ could not derive the dev-DB shape from the wrangler configs (see above)" >&2
   exit 1
 fi
-eval "$CONFIG"
+{
+  IFS= read -r PORT
+  IFS= read -r DB
+  IFS= read -r SUPERUSER
+  IFS= read -r ROLES
+} <<<"$CONFIG"
+# `read` leaves a variable empty rather than failing when the stream is short, and `set -u` cannot see
+# that. An empty PORT/DB/SUPERUSER would silently build a nonsense connection string.
+[ -n "$PORT" ] && [ -n "$DB" ] && [ -n "$SUPERUSER" ] || {
+  echo "❌ incomplete dev-DB shape from the wrangler configs" >&2
+  exit 1
+}
 
 SUPER_URL="postgres://${SUPERUSER}@127.0.0.1:${PORT}/${DB}?sslmode=disable"
 
