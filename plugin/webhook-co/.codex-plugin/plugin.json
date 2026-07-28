@@ -1,0 +1,42 @@
+{
+  "name": "webhook-co",
+  "version": "0.1.0",
+  "description": "Diagnose why an inbound webhook signature is failing, using the open registry of 144 provider schemes behind webhook.co.",
+  "author": {
+    "name": "webhook.co",
+    "url": "https://www.webhook.co"
+  },
+  "homepage": "https://www.webhook.co",
+  "repository": "https://github.com/webhook-co/webhook",
+  "license": "Apache-2.0",
+  "keywords": [
+    "webhook",
+    "webhooks",
+    "signature",
+    "hmac",
+    "verification",
+    "debugging",
+    "stripe",
+    "github",
+    "shopify"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "webhook.co",
+    "shortDescription": "Debug webhook signatures",
+    "longDescription": "Work out why an inbound webhook signature won't verify. The failure modes look identical from the outside and have completely different fixes: the wrong secret, a body your framework re-serialized before you saw it, a timestamp outside the replay window, or a provider whose signed message isn't what you'd guess. This walks you to a specific diagnosis using the open Apache-2.0 registry of 144 provider schemes that webhook.co is built on.",
+    "developerName": "webhook.co",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive"],
+    "websiteURL": "https://www.webhook.co",
+    "privacyPolicyURL": "https://www.webhook.co/privacy",
+    "termsOfServiceURL": "https://www.webhook.co/terms",
+    "defaultPrompt": [
+      "My Stripe webhook signature check keeps failing and I don't know why",
+      "Verify this webhook payload against my signing secret"
+    ],
+    "brandColor": "#0e141b",
+    "composerIcon": "./assets/mark.svg",
+    "logo": "./assets/logo.png"
+  }
+}

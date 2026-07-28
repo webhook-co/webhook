@@ -112,6 +112,12 @@ conflict, the tie-breakers are **clarity** and **trust**. Full guidance lives in
 This repo ships a "company-as-agents" governance layer. Cursor reads `.cursor/`; Claude Code reads
 `.claude/` (mirrored skills and agents) plus this file via `CLAUDE.md`.
 
+Separately, `plugin/webhook-co/` is an artifact we **publish outward** rather than guidance we consume:
+a skills-only agent plugin for OpenAI's directory (shared by ChatGPT and Codex), surfaced locally
+through `.agents/plugins/marketplace.json`. It is deliberately skills-only and carries no MCP server,
+no apps and no hooks — see [ADR-0131](docs/adr/0131-agent-plugin-skills-only.md) for why, and
+`scripts/plugin-manifest-guard.mjs` (wired into `lint`) for the invariants that keep it that way.
+
 **Rules** — `.cursor/rules/*.mdc` (auto-attached by scope):
 
 | Rule | Scope | Purpose |

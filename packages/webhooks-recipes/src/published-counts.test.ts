@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { BESPOKE_ADAPTER_SLUGS, PROVIDER_CONFIGS, PROVIDERS } from "@webhook-co/webhooks-spec";
+import { RECIPES } from "./recipes.generated";
 
 /**
  * Every place the product tells a reader how big the provider registry is.
@@ -41,6 +42,15 @@ const REPO = fileURLToPath(new URL("../../../", import.meta.url));
 const TOTAL = PROVIDERS.length;
 const BESPOKE = BESPOKE_ADAPTER_SLUGS.length;
 const CONFIG_DRIVEN = TOTAL - BESPOKE;
+
+/**
+ * Subset counts the plugin's SKILL.md states out loud. They are 1-2 digits, so the discovering sweep
+ * at the bottom of this file deliberately ignores them (a pattern loose enough to catch them would
+ * fire on every "18 providers share one recipe"). Pinned here instead, derived — not typed in.
+ */
+const byArchetype = (a: string) => RECIPES.filter((r) => r.archetype === a).length;
+const REMOTE_FETCH = byArchetype("remote-fetch");
+const TOKEN_TIER = byArchetype("token");
 
 interface Claim {
   readonly file: string;
@@ -131,6 +141,14 @@ const CLAIMS: readonly Claim[] = [
   {
     file: "packages/webhooks-spec/package.json",
     fragments: [`from ${TOTAL} providers`],
+  },
+  // ---- the agent plugin: ships to other people's machines, so it is a storefront too.
+  {
+    file: "plugin/webhook-co/skills/debug-webhook-signature/SKILL.md",
+    fragments: [
+      `${REMOTE_FETCH} providers need a key fetched`,
+      `${TOKEN_TIER} providers compare a static shared token`,
+    ],
   },
   {
     file: "packages/webhooks-spec/README.md",
@@ -252,16 +270,34 @@ describe("published provider counts match the registry", () => {
     /** "1,144" -> 1144. The capture keeps the separators a human would write. */
     const parseCount = (raw: string): number => Number(raw.replace(/,/g, ""));
     /** What npm renders on the package page: the readme body and the manifest's description. */
-    const SHOP_WINDOW = ["README.md", "package.json"] as const;
+    const SHOP_WINDOW = [
+      "README.md",
+      "package.json",
+      ".codex-plugin/plugin.json",
+      "skills/debug-webhook-signature/SKILL.md",
+    ] as const;
 
     const found: { file: string; claim: string; count: number }[] = [];
-    const packageDirs = readdirSync(`${REPO}packages`, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
 
-    for (const pkg of packageDirs) {
+    /**
+     * Trees whose contents a STRANGER reads, each walked one level deep.
+     *
+     * `plugin` is here for the same reason `packages` is: the agent-plugin manifest and its SKILL.md
+     * ship to other people's machines and state a registry size, and neither is a file this repo
+     * deploys — so the original "only what we publish to npm" framing would have missed them exactly
+     * the way it missed webhooks-spec's own README.
+     */
+    const SHOP_TREES = ["packages", "plugin"] as const;
+    const dirs: string[] = [];
+    for (const tree of SHOP_TREES) {
+      for (const e of readdirSync(`${REPO}${tree}`, { withFileTypes: true })) {
+        if (e.isDirectory()) dirs.push(`${tree}/${e.name}`);
+      }
+    }
+
+    for (const dir of dirs) {
       for (const name of SHOP_WINDOW) {
-        const file = `packages/${pkg}/${name}`;
+        const file = `${dir}/${name}`;
         let content: string;
         try {
           content = readFileSync(`${REPO}${file}`, "utf8");
@@ -276,8 +312,18 @@ describe("published provider counts match the registry", () => {
 
     // FLOORS. A discovery that silently walked nothing reads exactly like a clean run, so make the
     // two ways that can happen — no package dirs, no claims anywhere — loud failures instead.
-    it("walked the packages tree", () => {
-      expect(packageDirs.length, "readdir of packages/ found no directories").toBeGreaterThan(0);
+    it("walked every shop-window tree", () => {
+      expect(dirs.length, "readdir of the shop-window trees found no directories").toBeGreaterThan(
+        0,
+      );
+      // Per-tree, so adding a tree that turns out to be empty (or moving one) fails loudly instead of
+      // being absorbed by the other tree's directories.
+      for (const tree of SHOP_TREES) {
+        expect(
+          dirs.filter((d) => d.startsWith(`${tree}/`)).length,
+          `${tree}/ contributed no directories — the tree moved`,
+        ).toBeGreaterThan(0);
+      }
     });
 
     it("found at least one registry-scale claim to check", () => {

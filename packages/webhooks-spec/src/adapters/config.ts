@@ -1205,41 +1205,11 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
     ],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.hubspot,
   },
-  // adyen: the signature lives in the JSON body at
-  // `notificationItems[0].NotificationRequestItem.additionalData.hmacSignature` (base64). The signed
-  // message is 8 item fields joined by a plain colon (NO escaping/sorting — that is the legacy HPP path),
-  // absent fields = empty string. Key = the Customer-Area HMAC key HEX-DECODED. HMAC-SHA256, no timestamp.
-  // Verified against Adyen's published worked example (openssl-reproduced). One item verified per request.
-  adyen: (() => {
-    const item = "notificationItems.0.NotificationRequestItem";
-    const colon = { kind: "literal" as const, value: ":" };
-    const field = (p: string): MessagePart => ({ kind: "jsonField", path: `${item}.${p}` });
-    return {
-      slug: "adyen",
-      signatureHeader: "", // no header — the signature comes from the body (signatureSource)
-      signatureSource: { kind: "jsonField", path: `${item}.additionalData.hmacSignature` },
-      encoding: "base64",
-      keyDerivation: "hex",
-      message: [
-        field("pspReference"),
-        colon,
-        field("originalReference"),
-        colon,
-        field("merchantAccountCode"),
-        colon,
-        field("merchantReference"),
-        colon,
-        field("amount.value"),
-        colon,
-        field("amount.currency"),
-        colon,
-        field("eventCode"),
-        colon,
-        field("success"),
-      ],
-      toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.adyen,
-    };
-  })(),
+  // adyen: DELIBERATELY NOT A CONFIG ROW — see bespoke/adyen.ts. The signature is per-ITEM inside a
+  // batched body and a fixed `jsonField` path cannot iterate, so the row that used to live here
+  // addressed `notificationItems.0.…` and verified only the first item of a batch. It is deleted
+  // rather than left shadowed because `PROVIDER_CONFIGS` and `makeHmacAdapter` are both public
+  // exports: leaving it would keep a one-line reconstruction of that defect in the package's API.
   // mailgun (Webhooks 2.0 / JSON): the signature is in the body's nested `signature` object —
   // `$.signature.signature` (lowercase hex). The signed message is `{signature.timestamp}{signature.token}`
   // (no separator), HMAC-SHA256, key = the HTTP webhook signing key (utf8). No header, no replay window.
