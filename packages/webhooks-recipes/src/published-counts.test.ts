@@ -115,6 +115,27 @@ const CLAIMS: readonly Claim[] = [
     file: "README.md",
     fragments: [`Verification for ${TOTAL} providers`, `${TOTAL}-provider registry`],
   },
+  // ---- the PUBLISHED package: npmjs.com renders `description`, so it is a storefront too.
+  //
+  // These two files sat outside this manifest while every entry above was in it, so when the count
+  // moved to 144 the docs and www were updated and the npm listing was not — it advertised "141
+  // providers" on the public registry page for days, and the guard whose entire job is this could
+  // not see it. The manifest covered `apps/**` and the root README only; a gate whose input is
+  // scoped to what the producer already remembers to update cannot fail. Anything a stranger reads
+  // belongs here, not just the surfaces this repo deploys.
+  // NB: fragments for a `.json` file must be ASCII. These claims are matched against the RAW file
+  // text, and this file stores non-ASCII escaped: the description's em-dash is the six literal
+  // characters backslash-u-2-0-1-4, not U+2014. So the obvious fragment "from 144 providers —" is
+  // absent from the bytes while being present in the parsed string — a text scan over JSON can miss
+  // content that is genuinely there. Pin the number and stop before any punctuation.
+  {
+    file: "packages/webhooks-spec/package.json",
+    fragments: [`from ${TOTAL} providers`],
+  },
+  {
+    file: "packages/webhooks-spec/README.md",
+    fragments: [`from ${TOTAL} providers, behind one interface`, `**${TOTAL} providers** —`],
+  },
 ];
 
 describe("published provider counts match the registry", () => {
@@ -212,8 +233,24 @@ describe("published provider counts match the registry", () => {
      * because a fixed list is the same curated-list mistake one level down: it silently misses
      * "144 webhook providers" and "144 supported webhook providers". `\+?` catches the "144+
      * providers" marketing form, which is the single most likely way a stale count ships.
+     *
+     * The separators are `[-\s]`, not `[- ]`, because prose WRAPS. READMEs are hand-wrapped near 100
+     * columns, so "…verification for 144\nproviders…" is an ordinary sentence and a single-space
+     * separator misses it entirely — the guard would read clean over the exact copy it exists to
+     * check. Two spaces likewise: that is markdown's hard-line-break syntax, not a typo. The runs are
+     * bounded (`{0,4}`, `{1,4}`) so whitespace can cross ONE wrapped line but never a blank line —
+     * unbounded `\s*` would happily bridge two paragraphs and match "144 endpoints… many providers".
+     *
+     * Numbers are matched comma-grouped OR bare, and the lookbehind refuses a number already glued to
+     * a digit or comma. Without both, "1,144 providers" matches the tail "144", parses to 144, equals
+     * the registry, and PASSES while the copy claims 1,144 — a stale count that reads as verified.
+     * Dormant at 144, live the moment the registry crosses 999, which is exactly the kind of latent
+     * pass this whole file exists to prevent.
      */
-    const REGISTRY_SCALE = /\b(\d{3,})\+?[- ]?(?:[a-z-]+ ){0,2}providers?\b/gi;
+    const REGISTRY_SCALE =
+      /(?<![\d,])(\d{1,3}(?:,\d{3})+|\d{3,})\+?[-\s]{0,4}(?:[a-z-]+[-\s]{1,4}){0,2}providers?\b/gi;
+    /** "1,144" -> 1144. The capture keeps the separators a human would write. */
+    const parseCount = (raw: string): number => Number(raw.replace(/,/g, ""));
     /** What npm renders on the package page: the readme body and the manifest's description. */
     const SHOP_WINDOW = ["README.md", "package.json"] as const;
 
@@ -232,7 +269,7 @@ describe("published provider counts match the registry", () => {
           continue; // not every package ships a README; absence is not a claim.
         }
         for (const m of content.matchAll(REGISTRY_SCALE)) {
-          found.push({ file, claim: m[0], count: Number(m[1]) });
+          found.push({ file, claim: m[0], count: parseCount(m[1]) });
         }
       }
     }
@@ -266,10 +303,44 @@ describe("published provider counts match the registry", () => {
       }
     });
 
+    /**
+     * Prose wraps. A separator that only admits one literal space reads clean over the exact copy it
+     * exists to check, which is a guard that cannot fail on the most ordinary formatting there is.
+     */
+    it("still matches when the claim wraps across a line or uses a hard break", () => {
+      for (const phrase of [
+        "verification for 144\nproviders",
+        "144  providers",
+        "144\n  providers",
+      ]) {
+        expect([...phrase.matchAll(REGISTRY_SCALE)].length, `missed: ${phrase}`).toBe(1);
+      }
+    });
+
+    /**
+     * ...but bounded, so it cannot bridge a paragraph and invent a claim out of two unrelated
+     * sentences. This is the false-positive half of the same decision.
+     */
+    it("does not bridge a blank line to manufacture a claim", () => {
+      const across = "We handle 144 endpoints.\n\nWe support many providers.";
+      expect([...across.matchAll(REGISTRY_SCALE)].length, "bridged a paragraph").toBe(0);
+    });
+
     it("does not fire on subset claims", () => {
       for (const phrase of ["18 providers share one recipe", "62 singletons", "9 providers"]) {
         expect([...phrase.matchAll(REGISTRY_SCALE)].length, `false positive: ${phrase}`).toBe(0);
       }
+    });
+
+    /**
+     * The one that would have passed silently: the tail of a comma-grouped number is itself a valid
+     * 3-digit match. "1,144 providers" would extract 144, equal the registry, and certify a stale
+     * claim as correct. Dormant today, live the moment the registry passes 999.
+     */
+    it("reads a comma-grouped count whole, instead of its last three digits", () => {
+      const m = [..."1,144 providers".matchAll(REGISTRY_SCALE)];
+      expect(m.length, "comma-grouped claim not matched at all").toBe(1);
+      expect(parseCount(m[0][1]), "matched the tail rather than the whole number").toBe(1144);
     });
 
     it("every discovered claim equals the live registry size", () => {
