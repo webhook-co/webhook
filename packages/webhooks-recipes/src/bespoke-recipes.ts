@@ -280,6 +280,48 @@ export const BESPOKE_RECIPES: Record<string, RecipeDescriptor> = {
   },
 
   // ── Runtime-branching (client-verifiable, but request-context — needs method / URL) ───────────────
+  adyen: {
+    slug: "adyen",
+    archetype: "sig-in-body-hmac",
+    source: "bespoke",
+    signatureLocation: "json-body",
+    signatureHeader: null, // no header — the MAC is inside each notification item
+    signatureFormat: "the bare base64 MAC, per item", // bespoke/adyen.ts:76
+    algorithm: "HMAC-SHA256", // bespoke/adyen.ts:113
+    encoding: "base64", // bespoke/adyen.ts:113
+    keyDerivation:
+      "the Customer-Area HMAC key hex-decoded to raw bytes (not used as its ASCII characters)", // bespoke/adyen.ts:105
+    signedMessage:
+      "PER ITEM — for EVERY entry of `notificationItems`, the 8 fields of its `NotificationRequestItem` joined by a plain colon: `{pspReference}:{originalReference}:{merchantAccountCode}:{merchantReference}:{amount.value}:{amount.currency}:{eventCode}:{success}`, absent fields as the empty string, NO escaping and NO sorting (escaping belongs to the legacy HPP signature, a different scheme). Every item must verify under the same key; a batch with one authentic item and one forged item is rejected", // bespoke/adyen.ts:28-46,110-121
+    signedMessageParts: [
+      "jsonField:notificationItems[].NotificationRequestItem.pspReference",
+      "literal::",
+      "jsonField:notificationItems[].NotificationRequestItem.originalReference",
+      "literal::",
+      "jsonField:notificationItems[].NotificationRequestItem.merchantAccountCode",
+      "literal::",
+      "jsonField:notificationItems[].NotificationRequestItem.merchantReference",
+      "literal::",
+      "jsonField:notificationItems[].NotificationRequestItem.amount.value",
+      "literal::",
+      "jsonField:notificationItems[].NotificationRequestItem.amount.currency",
+      "literal::",
+      "jsonField:notificationItems[].NotificationRequestItem.eventCode",
+      "literal::",
+      "jsonField:notificationItems[].NotificationRequestItem.success",
+    ],
+    timestamp: null, // no signed timestamp
+    replayWindow: { enforced: false, toleranceSeconds: 300 }, // Adyen documents no window
+    rotation: false,
+    clientVerifiable: true,
+    verifierInputs: ["secret", "payload"],
+    quirks: [
+      "The signature is inside the body, not a header — `detectScheme` cannot identify Adyen from headers.",
+      "`notificationItems` is an ARRAY and production traffic batches. EVERY item is verified; a batch pairing one authentic item with a forged one is rejected, not accepted on the strength of the first.",
+      "The HMAC key is the Customer-Area key HEX-DECODED — using its ASCII characters fails every signature.",
+      "No escaping and no sorting. Backslash-escaping the colon-joined fields is the legacy HPP signature, a different scheme from the same vendor.",
+    ],
+  },
   twilio: {
     slug: "twilio",
     archetype: "request-context-hmac",

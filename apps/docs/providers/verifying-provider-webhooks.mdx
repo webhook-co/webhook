@@ -24,8 +24,8 @@ Signing over the exact captured bytes matters: a re-encoded or re-serialized bod
 
 Every provider webhook.co recognizes lives in a single registry of **144 providers**. Two kinds of entry sit behind that number:
 
-- **111 are one declarative config row** — a header name, a digest (SHA-256, SHA-1, or SHA-512), an encoding, and how the signed message is assembled. Every one runs through the same audited HMAC core, so the per-provider surface is data, not code.
-- **33 are hand-written adapters** — the schemes that don't reduce to a single HMAC recipe: JWT (HS256), asymmetric signatures (Ed25519, ECDSA, RSA), remote-key-fetch (the verification key is fetched from the provider and host-pinned), request-context HMAC (signing the URL, form fields, or specific body fields), and non-cryptographic token/basic authenticity.
+- **110 are one declarative config row** — a header name, a digest (SHA-256, SHA-1, or SHA-512), an encoding, and how the signed message is assembled. Every one runs through the same audited HMAC core, so the per-provider surface is data, not code.
+- **34 are hand-written adapters** — the schemes that don't reduce to a single HMAC recipe: JWT (HS256), asymmetric signatures (Ed25519, ECDSA, RSA), remote-key-fetch (the verification key is fetched from the provider and host-pinned), request-context HMAC (signing the URL, form fields, or specific body fields), and non-cryptographic token/basic authenticity.
 
 A new provider is usually one config row, which is why the list grows quickly. See the full list in the [provider directory](/providers/directory).
 
