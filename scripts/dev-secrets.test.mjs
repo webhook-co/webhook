@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { APP_NAMES, sharedNames, specsFor } from "./dev-secrets-manifest.mjs";
-import { generateDevVars, parseDevVars, renderDevVars, renderExample } from "./dev-secrets.mjs";
+import {
+  checkExamples,
+  generateDevVars,
+  orphanExamples,
+  parseDevVars,
+  renderDevVars,
+  renderExample,
+} from "./dev-secrets.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -262,4 +269,129 @@ test("parseDevVars ignores comments and blank lines", () => {
 test("parseDevVars keeps '=' inside a value", () => {
   // base64 secrets end in '='. Splitting on every '=' would silently truncate every key.
   assert.deepEqual(parseDevVars("K=abc==\n"), { K: "abc==" });
+});
+
+// ── Existing trees, not empty ones ────────────────────────────────────────────────────────────────
+//
+// Every test above seeds an EMPTY tree, so none of them exercise the only population that actually has
+// the bug: a developer whose apps/*/.dev.vars already disagree. Deleting the adoption loop entirely
+// left the suite 18/18 green, which is how the two defects below survived.
+
+const seed = (dir, app, text) => {
+  mkdirSync(join(dir, "apps", app), { recursive: true });
+  writeFileSync(join(dir, "apps", app, ".dev.vars"), text);
+};
+const allApps = (dir) => {
+  for (const app of APP_NAMES) mkdirSync(join(dir, "apps", app), { recursive: true });
+};
+
+test("REFUSES to proceed when apps disagree on a shared secret", () => {
+  // The pre-existing broken state. Silently keeping both values leaves the dead WebSocket in place
+  // while printing success — the tool would be a no-op on exactly the machines that need it.
+  // Matches dev-db-config.mjs's policy: a half-provisioned tree is worse than none.
+  const dir = tmp();
+  try {
+    allApps(dir);
+    seed(dir, "web", "LISTEN_TICKET_KEY=AAAA\n");
+    seed(dir, "engine", "LISTEN_TICKET_KEY=BBBB\n");
+    assert.throws(() => generateDevVars({ root: dir }), /LISTEN_TICKET_KEY/);
+    assert.throws(() => generateDevVars({ root: dir }), /web|engine/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--converge overwrites a disagreement onto one value", () => {
+  const dir = tmp();
+  try {
+    allApps(dir);
+    seed(dir, "web", "LISTEN_TICKET_KEY=AAAA\n");
+    seed(dir, "engine", "LISTEN_TICKET_KEY=BBBB\n");
+    generateDevVars({ root: dir, converge: true });
+    const rd = (a) => parseDevVars(readFileSync(join(dir, "apps", a, ".dev.vars"), "utf8"));
+    assert.equal(rd("web").LISTEN_TICKET_KEY, rd("engine").LISTEN_TICKET_KEY);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("adopts an existing shared value for apps that are missing it", () => {
+  const dir = tmp();
+  try {
+    allApps(dir);
+    seed(dir, "engine", "LISTEN_TICKET_KEY=KEEPME\n");
+    generateDevVars({ root: dir });
+    const rd = (a) => parseDevVars(readFileSync(join(dir, "apps", a, ".dev.vars"), "utf8"));
+    assert.equal(rd("engine").LISTEN_TICKET_KEY, "KEEPME", "must not rotate an existing value");
+    assert.equal(rd("web").LISTEN_TICKET_KEY, "KEEPME", "must adopt it, not mint a second one");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a key not in the manifest is PRESERVED, never silently deleted", () => {
+  // apps/auth/src/runtime/env.ts:37 — "Set in dev (.dev.vars) so the handoff redirects to localhost,
+  // not prod." Deleting AUTH_BASE_URL would point the local auth handoff at PRODUCTION.
+  const dir = tmp();
+  try {
+    allApps(dir);
+    seed(dir, "auth", "AUTH_BASE_URL=http://localhost:3001\nMY_DEBUG_FLAG=1\n");
+    generateDevVars({ root: dir });
+    const vars = parseDevVars(readFileSync(join(dir, "apps", "auth", ".dev.vars"), "utf8"));
+    assert.equal(vars.AUTH_BASE_URL, "http://localhost:3001");
+    assert.equal(vars.MY_DEBUG_FLAG, "1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseDevVars matches what wrangler's dotenv actually does", () => {
+  // wrangler reads .dev.vars with dotenv. If our parser disagrees, a legal `K = v` reads as ABSENT
+  // here — and the rewrite then blanks it, or mints a NEW shared secret while wrangler keeps using
+  // the old one. That is the tool causing the very mismatch it exists to prevent.
+  assert.deepEqual(parseDevVars("E = 5\n"), { E: "5" });
+  assert.deepEqual(parseDevVars('B="q v"\n'), { B: "q v" });
+  assert.deepEqual(parseDevVars("C='q v'\n"), { C: "q v" });
+  assert.deepEqual(parseDevVars("D=1\r\nE=2\r\n"), { D: "1", E: "2" });
+  assert.deepEqual(parseDevVars("K=a\nK=b\n"), { K: "b" }, "last wins");
+  assert.deepEqual(parseDevVars("=oops\n"), {}, "an empty key is not a key");
+});
+
+test("generated .dev.vars are not world-readable", () => {
+  const dir = tmp();
+  try {
+    allApps(dir);
+    generateDevVars({ root: dir });
+    const mode = statSync(join(dir, "apps", "engine", ".dev.vars")).mode & 0o777;
+    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── The guard must run, and must not pass vacuously ──────────────────────────────────────────────
+
+test("checkExamples reports drift, and has a zero-input floor", () => {
+  assert.deepEqual(checkExamples(ROOT), [], "the committed examples should match the manifest");
+  const dir = tmp();
+  try {
+    allApps(dir);
+    assert.ok(checkExamples(dir).length >= 5, "absent examples must be reported as drifted");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an example with no manifest entry is flagged as an orphan", () => {
+  // Remove an app from the manifest and its committed example lingers with stale key names, guard
+  // green. Discover the files on disk rather than only iterating the manifest.
+  assert.deepEqual(orphanExamples(ROOT), [], "no orphaned dev.vars.example should be committed");
+});
+
+test("the example header does not claim to be gitignored", () => {
+  // renderExample rewrites the header by string surgery; a no-op replace would silently ship a
+  // COMMITTED file reading "GITIGNORED; never commit it".
+  const ex = renderExample("web");
+  assert.doesNotMatch(ex, /GITIGNORED/);
+  assert.match(ex, /COMMITTED reference/);
 });

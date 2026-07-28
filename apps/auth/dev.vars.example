@@ -9,6 +9,12 @@ CREDENTIAL_PEPPER=
 # GENERATED: Hash-chain key for the tamper-evident audit log. Must match across every surface that appends or verifies.
 AUDIT_CHAIN_HMAC_KEY=
 
+# LOCAL: apps/auth/src/runtime/env.ts:37 — 'Set in dev (.dev.vars) so the handoff redirects to localhost, not prod.' Unset, the auth->app handoff redirects to PRODUCTION.
+AUTH_BASE_URL=http://localhost:3001
+
+# LOCAL: Where auth sends you after login. Defaults to the prod dashboard host, so locally you would land on app.webhook.co.
+APP_BASE_URL=http://localhost:3000
+
 # GENERATED: Better Auth signing secret. In auth's REQUIRED_SECRETS — the app throws at the request boundary without it.
 BETTER_AUTH_SECRET=
 

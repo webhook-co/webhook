@@ -118,6 +118,12 @@ export const APPS = {
     shared: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "LISTEN_TICKET_KEY"],
     own: [
       {
+        name: "AUTH_BASE_URL",
+        scope: "local",
+        value: "http://localhost:3001",
+        note: "Where web sends you to sign in. apps/web/src/server/env.ts:35 already assumes :3001 — but nothing binds auth to that port, so it worked only by accident of start order.",
+      },
+      {
         name: "SESSION_TOKEN_SECRET",
         scope: "generated",
         note: "Signs the dashboard session cookie. web falls back to a hardcoded dev value when unset, which is why a local session silently works — set it explicitly so local matches prod shape.",
@@ -138,6 +144,18 @@ export const APPS = {
   auth: {
     shared: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY"],
     own: [
+      {
+        name: "AUTH_BASE_URL",
+        scope: "local",
+        value: "http://localhost:3001",
+        note: "apps/auth/src/runtime/env.ts:37 — 'Set in dev (.dev.vars) so the handoff redirects to localhost, not prod.' Unset, the auth->app handoff redirects to PRODUCTION.",
+      },
+      {
+        name: "APP_BASE_URL",
+        scope: "local",
+        value: "http://localhost:3000",
+        note: "Where auth sends you after login. Defaults to the prod dashboard host, so locally you would land on app.webhook.co.",
+      },
       {
         name: "BETTER_AUTH_SECRET",
         scope: "generated",
