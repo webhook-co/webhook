@@ -400,7 +400,9 @@ export const ROUTES: readonly RouteDef[] = [
     successStatus: 200,
     dispatch: "shared",
     body: false,
-    summary: "List captured events for an endpoint (deprecated — use GET /v1/events?endpointId=)",
+    // Kept ASCII and free of `?` on purpose: Mintlify slugifies this summary into the docs page URL,
+    // so a query separator here produces a sitemapped 404. See the summary guard in routes.test.ts.
+    summary: "List captured events for an endpoint (deprecated, use the org-wide events list)",
     query: [...PAGINATION_QUERY, ...EVENT_FILTER_QUERY],
     buildInput: (params, q) => eventListInput(q, { endpointId: params.endpointId }),
   },

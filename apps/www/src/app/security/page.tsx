@@ -11,7 +11,7 @@ export const metadata = pageMetadata({
   path: "/security",
   title: "Security",
   description:
-    "Private by default. Tenant isolation enforced in the database by row-level security, secrets in a KMS, a tamper-evident audit log, and an open-source core you can read.",
+    "Private by default: tenant isolation enforced in the database by row-level security, secrets in a KMS, a tamper-evident audit log, and a core you can read.",
 });
 
 export default function SecurityPage() {

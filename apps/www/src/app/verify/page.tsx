@@ -14,7 +14,7 @@ export const metadata = pageMetadata({
   path: "/verify",
   title: "Verify a webhook signature",
   description:
-    "Check a webhook signature against its payload and secret — for 120+ providers, right in your browser. Nothing you paste (secret, payload, or signature) ever leaves the page.",
+    "Check a webhook signature against its payload and secret, for 120+ providers, right in your browser. Nothing you paste ever leaves the page.",
 });
 
 export default function VerifyPage() {

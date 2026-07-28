@@ -38,14 +38,23 @@ export const LINKS = {
   usage: APP,
 
   // ── docs ─────────────────────────────────────────────────────────────────
-  docs: DOCS,
+  /**
+   * The docs landing page, named explicitly rather than as the bare origin. `https://docs.webhook.co`
+   * 308s to `/introduction`, and this link is in the nav on all 36 www pages — 36 redirect hops that
+   * cost a round trip per visitor and bleed crawl equity, for no difference in where anyone lands.
+   */
+  docs: `${DOCS}/introduction`,
   status: "https://status.webhook.co",
   quickstart: `${DOCS}/quickstart`,
   apiReference: `${DOCS}/api-reference/introduction`,
   cli: `${DOCS}/cli/overview`,
   mcp: `${DOCS}/mcp/overview`,
-  /** The existing docs guides estate. We rename "Blog" → "Guides" here rather than run a blog. */
-  guides: `${DOCS}/guides`,
+  /**
+   * The existing docs guides estate. We rename "Blog" → "Guides" here rather than run a blog.
+   * Points at the first guide, not the bare `/guides` group path — Mintlify 307s that to exactly
+   * this URL, and the link ships in the footer of all 36 www pages.
+   */
+  guides: `${DOCS}/guides/receive-your-first-webhook`,
   changelog: `${DOCS}/changelog`,
   /** The flat table of all 144 providers + their schemes/headers. No per-provider anchors exist. */
   providerDirectory: `${DOCS}/providers/directory`,

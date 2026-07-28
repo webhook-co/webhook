@@ -40,6 +40,21 @@ describe("apps/api worker — public routes (no auth, no DB deps)", () => {
     expect(Object.keys(spec.paths).length).toBeGreaterThan(0);
   });
 
+  // Google crawled https://api.webhook.co/ and filed it as a **Soft 404** (URL Inspection,
+  // 2026-07-28): a 200 whose whole body is "webhook:api ok" reads to a search engine as a page that
+  // should have been a 404. Every unauthenticated GET on this host is reachable by a crawler (the
+  // rest of the surface is bearer-gated and answers 401), so each one must carry an explicit
+  // noindex — the same `x-robots-tag: noindex` the health/play/engine surfaces already send.
+  // This is discovered over the public route table, not pinned to the one URL that got filed —
+  // the next public GET added here is the one this has to catch.
+  it.each(["/", "/openapi.json", "/.well-known/oauth-protected-resource", "/readyz"])(
+    "tells crawlers not to index the public GET %s",
+    async (path) => {
+      const res = await worker.fetch(new Request(`https://api.webhook.co${path}`), dummyEnv);
+      expect(res.headers.get("x-robots-tag")).toBe("noindex");
+    },
+  );
+
   it("does not serve a built-in docs UI (reference docs are rendered by Mintlify off the spec)", async () => {
     // The api Worker publishes only the machine-readable spec; human docs live on docs.webhook.co (Mintlify,
     // internal ADR-0006). A /docs path is therefore not a public route — it falls through to the router.

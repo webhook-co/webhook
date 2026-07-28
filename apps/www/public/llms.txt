@@ -35,5 +35,5 @@ webhook.co is open-core webhook infrastructure: receive, inspect, replay-to-loca
 
 ## Docs
 
-- [Documentation](https://docs.webhook.co): the full CLI, API, web, and MCP reference.
+- [Documentation](https://docs.webhook.co/introduction): the full CLI, API, web, and MCP reference.
 - [Source on GitHub](https://github.com/webhook-co): the open core is Apache-2.0.

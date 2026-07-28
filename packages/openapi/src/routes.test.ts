@@ -119,6 +119,24 @@ describe("ROUTES manifest — the single source of HTTP truth", () => {
     }
   });
 
+  // Mintlify derives each API-reference PAGE URL from the operation `summary`
+  // (docs.webhook.co/api-reference/<tag>/<slugified summary>), and those URLs go into the docs
+  // sitemap. Its slugifier drops `()'/` and lowercases, but carries `?`, `#` and `&` through
+  // verbatim — so a summary containing one produces a page whose path is truncated at that
+  // character and 404s while STILL being submitted to Google. That is exactly how
+  // "…-use-get-v1events?endpointid=" shipped as a sitemapped 404. Non-ASCII survives too, as
+  // percent-encoding, which makes the URL unreadable in a SERP.
+  //
+  // This discovers over every route rather than pinning the one that broke: the next summary
+  // someone writes is the one this has to catch.
+  it("no summary carries a character that Mintlify turns into a broken docs URL", () => {
+    for (const r of ROUTES) {
+      expect(r.summary, `${r.method} ${r.path}`).not.toMatch(/[?#&]/);
+
+      expect(r.summary, `${r.method} ${r.path}`).toMatch(/^[\x20-\x7e]+$/);
+    }
+  });
+
   it("every declared path param appears in the template exactly once", () => {
     for (const r of ROUTES) {
       const names = pathParamNames(r.path);
