@@ -16,7 +16,7 @@ export const metadata = pageMetadata({
   // "authenticated" state, so a standalone SERP snippet must not imply all 144 are cryptographically
   // verified (the page body makes the four-state distinction; the description can't rely on it).
   description:
-    "144 providers checked at the edge. Every event lands in one of four states, and when a signature fails we name the likely reason — one of eleven codes — with the fix.",
+    "144 providers checked at the edge. Every event lands in one of four states, and a failed signature names the likely reason — one of eleven codes.",
 });
 
 export default function VerificationPage() {

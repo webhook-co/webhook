@@ -99,7 +99,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List captured events for an endpoint (deprecated — use GET /v1/events?endpointId=)
+         * List captured events for an endpoint (deprecated, use the org-wide events list)
          * @deprecated
          */
         get: operations["eventsListByEndpoint"];

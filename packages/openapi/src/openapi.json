@@ -1007,7 +1007,7 @@
     "/v1/endpoints/{endpointId}/events": {
       "get": {
         "operationId": "eventsListByEndpoint",
-        "summary": "List captured events for an endpoint (deprecated — use GET /v1/events?endpointId=)",
+        "summary": "List captured events for an endpoint (deprecated, use the org-wide events list)",
         "tags": [
           "Events"
         ],

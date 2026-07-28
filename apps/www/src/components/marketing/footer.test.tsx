@@ -16,7 +16,9 @@ describe("Footer", () => {
     const byLabel = Object.fromEntries(
       columnLinks("Developers").map((a) => [a.textContent, a.getAttribute("href")]),
     );
-    expect(byLabel["Docs"]).toBe("https://docs.webhook.co");
+    // Named page, not the bare origin: `https://docs.webhook.co` 308s here, and this link renders
+    // in the footer of every www page.
+    expect(byLabel["Docs"]).toBe("https://docs.webhook.co/introduction");
     expect(byLabel["Quickstart"]).toBe("https://docs.webhook.co/quickstart");
     expect(byLabel["API reference"]).toBe("https://docs.webhook.co/api-reference/introduction");
     expect(byLabel["CLI"]).toBe("https://docs.webhook.co/cli/overview");
@@ -128,7 +130,8 @@ describe("Footer", () => {
       columnLinks("Company").map((a) => [a.textContent, a.getAttribute("href")]),
     );
     expect(byLabel["About"]).toBe("/about");
-    expect(byLabel["Guides"]).toBe("https://docs.webhook.co/guides");
+    // The first guide, not the `/guides` group path — Mintlify 307s that to exactly this URL.
+    expect(byLabel["Guides"]).toBe("https://docs.webhook.co/guides/receive-your-first-webhook");
     expect(byLabel["Changelog"]).toBe("https://docs.webhook.co/changelog");
     // Security is a www trust page now, not a docs deep-link: the buyer question is answered on
     // our own domain (docs.webhook.co is a different subdomain — its authority does not accrue here).

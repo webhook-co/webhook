@@ -24,8 +24,8 @@ export function absoluteUrl(path: string): string {
 // bare headline since og:site_name already carries the brand.
 const headline = "The webhook platform built for the agent era";
 const description =
-  "Capture the webhooks other services send you — inspect, verify, and replay to localhost. " +
-  "Then hand your agents an event they can act on. MCP-native, private by default.";
+  "Capture the webhooks other services send you — inspect, verify, replay to localhost. " +
+  "Hand your agents an event they can act on. MCP-native, private by default.";
 
 // 1200×630 social card (public/og.png). Referenced explicitly (not via the app/ file convention)
 // so the og:image and twitter:image URLs are predictable and assertable — both resolve to an

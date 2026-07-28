@@ -56,6 +56,15 @@ import { handleStripeWebhook } from "./stripe-webhook.js";
 // API_RESOURCE (the RFC 8707 audience this surface binds api keys to) is single-sourced in @webhook-co/db.
 const PRM_PATH = "/.well-known/oauth-protected-resource";
 /**
+ * Sent on every unauthenticated GET this Worker serves. api.webhook.co is a machine surface, not a
+ * search result: Google crawled `GET /` and filed it as a **Soft 404** (a 200 whose body is the 14
+ * bytes `webhook:api ok` reads as a page that should have 404'd), which then surfaced in Search
+ * Console's index-coverage report for webhook.co. A `noindex` header — not a robots.txt Disallow —
+ * is the fix, because a disallowed URL is one Google can never recrawl to *see* the noindex on.
+ * Matches the header the health/play/engine surfaces already send (packages/shared/src/health.ts).
+ */
+const NOINDEX = { "x-robots-tag": "noindex" } as const;
+/**
  * The OAuth token issuer for this resource — auth.webhook.co (the Lane C issuer). Was mcp. while mcp
  * co-located the issuer (ADR-0010); A8 tore that down (mcp is now a resource server), so api's RFC 9728
  * discovery must point clients at the real issuer. api still validates `whk_` keys directly (zero issuer
@@ -338,7 +347,7 @@ export default {
     const url = new URL(request.url);
     // Public, DB-free routes: served before any tenant deps are built.
     if (request.method === "GET" && url.pathname === PRM_PATH) {
-      return Response.json(RESOURCE_METADATA);
+      return Response.json(RESOURCE_METADATA, { headers: { ...NOINDEX } });
     }
     // Readiness: unlike GET / above, this proves the api can actually reach its dependencies.
     if (request.method === "GET" && url.pathname === "/readyz") {
@@ -347,7 +356,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") {
       return new Response(`${SERVICE_NAME}:api ok`, {
         status: 200,
-        headers: { "content-type": "text/plain; charset=utf-8" },
+        headers: { "content-type": "text/plain; charset=utf-8", ...NOINDEX },
       });
     }
     // The public, machine-readable OpenAPI 3.1 document. Unauthenticated + CORS-open (the spec is public
@@ -359,6 +368,7 @@ export default {
         headers: {
           "access-control-allow-origin": "*",
           "cache-control": "public, max-age=300",
+          ...NOINDEX,
         },
       });
     }

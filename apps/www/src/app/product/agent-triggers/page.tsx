@@ -11,7 +11,7 @@ export const metadata = pageMetadata({
   path: "/product/agent-triggers",
   title: "Agent triggers",
   description:
-    "Turn a webhook into an agent trigger: your agent subscribes to an endpoint and reads its events with a durable, at-least-once, cursor-acked call — captured even when the agent isn't running.",
+    "Your agent subscribes to an endpoint and reads its webhooks with a durable, at-least-once, cursor-acked call — events are captured even while it is offline.",
 });
 
 export default function AgentTriggersPage() {
