@@ -1,10 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CLIENT_VERIFIABLE_RECIPES, RECIPES } from "@webhook-co/webhooks-recipes";
+
 import { axeComponent } from "@/test/axe";
 import { installIntersectionObserverMock, mockMatchMedia } from "@/lib/test-utils";
 
-import VerifyPage from "./page";
+import VerifyPage, { metadata } from "./page";
 
 function renderVerify() {
   mockMatchMedia(true);
@@ -58,6 +60,59 @@ describe("/verify", () => {
         /[*`#<>]|\[.*\]\(/,
       );
     }
+  });
+
+  // ── The provider count this page claims ──────────────────────────────────────────────────────
+  //
+  // The page used to hardcode "120+ providers" in BOTH the meta description and the lede. That was
+  // honest when it was written and is still not false, but it is unpinned prose about a number the
+  // registry owns, which is the exact shape of every count-drift defect this repo has already had.
+  //
+  // 🔑 The number here is NOT the registry size. The registry is 144 providers; the browser tool can
+  // only offer the ones whose key is not fetched from the provider's own servers, because a page
+  // cannot make that request. That subset is `CLIENT_VERIFIABLE_RECIPES` and it is smaller. Claiming
+  // the registry count on this page would be claiming the tool does something it cannot do, so these
+  // tests pin the SUBSET and separately prove the two counts have not silently become the same
+  // number — if they ever do, the "left out" sentence below is a lie and must go.
+  describe("the provider count it claims", () => {
+    it("states the client-verifiable count, derived, in the lede", () => {
+      const { container } = renderVerify();
+      expect(container.textContent).toContain(`${CLIENT_VERIFIABLE_RECIPES.length} providers`);
+    });
+
+    it("states the same derived count in the meta description", () => {
+      expect(metadata.description).toContain(`${CLIENT_VERIFIABLE_RECIPES.length} providers`);
+    });
+
+    // Without this, the two assertions above would still pass if someone reintroduced a literal that
+    // happened to match today's count. Any bare "NNN providers" on the page must BE the derived one.
+    it("carries no provider count other than the derived one", () => {
+      const { container } = renderVerify();
+      const claimed = [
+        ...(container.textContent ?? "").matchAll(/(\d[\d,+]*)\+?\s+providers/gi),
+      ].map((m) => m[1].replace(/[,+]/g, ""));
+      expect(
+        claimed.length,
+        "the page must state its provider count at least once",
+      ).toBeGreaterThan(0);
+      for (const n of claimed) {
+        expect(Number(n), `"${n} providers" is not the client-verifiable count`).toBe(
+          CLIENT_VERIFIABLE_RECIPES.length,
+        );
+      }
+    });
+
+    // The page tells the reader that remote-key providers "are left out". That sentence is only true
+    // while the subset is a PROPER subset. If every recipe became client-verifiable the copy would be
+    // wrong, and no count assertion above would notice.
+    it("only claims providers are left out while some actually are", () => {
+      const { container } = renderVerify();
+      const saysLeftOut = /left out|can(?:no|')t be checked/i.test(container.textContent ?? "");
+      expect(
+        saysLeftOut,
+        "copy claims providers are excluded, but every recipe is client-verifiable",
+      ).toBe(CLIENT_VERIFIABLE_RECIPES.length < RECIPES.length);
+    });
   });
 
   it("composes without axe violations", async () => {
