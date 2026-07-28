@@ -8,7 +8,7 @@
 // The version pair is pure data, so the decision lives here where it is tested, and the shell only
 // reports it — the same split as dev-db-config.mjs.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 /** The one command that resolves a datadir/binary version mismatch. Destructive by nature. */
 export const RECOVERY_COMMAND = "scripts/dev-db.sh nuke && pnpm dev:db";
@@ -24,12 +24,14 @@ export const RECOVERY_COMMAND = "scripts/dev-db.sh nuke && pnpm dev:db";
  * @returns {{found: string, expected: number, message: string}|null} null when it is safe to start.
  */
 export function datadirVersionFault({ datadirVersion, expectedMajor }) {
+  // Test the STRING shape, not the coerced number: Number("0x11") is 17 and Number(" 17 ") is 17,
+  // and neither is a plausible PG_MAJOR line in bash. A guard that accepts them does not mean what
+  // its name says.
   const expected = Number(expectedMajor);
   if (
     expectedMajor === undefined ||
     expectedMajor === null ||
-    String(expectedMajor).trim() === "" ||
-    !Number.isInteger(expected) ||
+    !/^\d+$/.test(String(expectedMajor)) ||
     expected <= 0
   ) {
     // Fail loudly rather than silently disabling the check: an unset PG_MAJOR would otherwise make
@@ -46,7 +48,10 @@ export function datadirVersionFault({ datadirVersion, expectedMajor }) {
 
   // Anything we cannot parse means we cannot reason about the cluster. Starting it anyway reproduces
   // the opaque failure, so treat it as a fault and let the operator reset.
-  if (!/^\d+$/.test(found)) {
+  // `9.6` is a real historical PG_VERSION (pre-10 used major.minor). The recovery is identical either
+  // way, but the reason we print should be true — that is a mismatch, not an unreadable file.
+  const major = /^(\d+)(?:\.\d+)?$/.exec(found);
+  if (!major) {
     return {
       found,
       expected,
@@ -54,7 +59,7 @@ export function datadirVersionFault({ datadirVersion, expectedMajor }) {
     };
   }
 
-  if (Number(found) === expected) return null;
+  if (Number(major[1]) === expected) return null;
 
   return { found, expected, message: mismatchMessage(found, expected) };
 }
@@ -83,16 +88,23 @@ function unreadableMessage(found, expected) {
 }
 
 /**
- * Read `PG_VERSION` from a datadir. Returns null when the datadir (or the file) is absent, which is
- * the normal first-run state and not a fault.
+ * Read `PG_VERSION` from a datadir.
  *
  * @param {string} pgdata
- * @returns {string|null}
+ * @returns {string|null} null ONLY when the datadir itself is absent (the normal first-run state).
+ *   A datadir that exists but cannot be read yields a sentinel string, which faults.
  */
 export function readDatadirVersion(pgdata) {
+  // null means exactly one thing to the caller: "no datadir — initdb will create it". A bare
+  // `catch { return null }` also returned it for a datadir that EXISTS but whose PG_VERSION is absent
+  // or unreadable (an interrupted `nuke`, a partial rm -rf, a copy that dropped hidden files, EACCES).
+  // That is the dangerous direction: dev-db.sh keys initdb off `[ ! -d "$PGDATA" ]`, so the directory
+  // being present means initdb is SKIPPED, and the script then dies on the opaque pg_ctl error this
+  // module exists to prevent. Separate the two cases.
+  if (!existsSync(pgdata)) return null;
   try {
     return readFileSync(`${pgdata}/PG_VERSION`, "utf8");
-  } catch {
-    return null;
+  } catch (err) {
+    return `<unreadable: ${err.code ?? "unknown"}>`;
   }
 }

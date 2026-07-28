@@ -66,12 +66,14 @@ That is correct, not a bug. The receiver resolves the org from `client_reference
 org is refused and left **out** of the dedup ledger, so a later fix + replay can still land it.
 
 To exercise the real path, give it an org that exists locally. `pnpm dev:db` prints the exact
-`export DEV_DB=…` line for your cluster when it finishes; set it first:
+`export DEV_DB=…` and `psql` lines for your cluster when it finishes — paste those rather than
+copying a URL from here, since the cluster's shape is derived from the wrangler bindings and can
+change. Note `psql` needs its full path: `postgresql@17` is keg-only, so Homebrew does not put it
+on your `PATH`.
 
 ```sh
-export DEV_DB='postgres://postgres@127.0.0.1:5432/webhook_dev?sslmode=disable'
-
-ORG=$(psql "$DEV_DB" -tAc "insert into orgs (id, slug, name)
+# paste the two lines `pnpm dev:db` printed, then:
+ORG=$("$(brew --prefix postgresql@17)/bin/psql" "$DEV_DB" -tAc "insert into orgs (id, slug, name)
         values (gen_random_uuid(),'local-sandbox','local sandbox') returning id;" | head -1)
 
 stripe trigger customer.subscription.created --override "subscription:metadata.org_id=$ORG"

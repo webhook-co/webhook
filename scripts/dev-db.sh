@@ -40,9 +40,10 @@ command -v dbmate >/dev/null || { echo "❌ dbmate not found. brew install dbmat
 #
 # One value per line, read positionally — NOT `eval` of `KEY=value` assignments. `database` and the role
 # names come from a connection string's url.pathname/url.username, and WHATWG percent-encoding leaves
-# `;`, `$`, backtick and `|` intact, so eval made repo content executable. dev-db-config.mjs now also
-# constrains both to plain Postgres identifiers (they reach raw SQL below too), but the shell should not
-# be relying on that: no eval, no primitive to re-open.
+# `;`, `$`, backtick and `|` intact, so eval made repo content executable. dev-db-config.mjs also
+# constrains both to plain Postgres identifiers (they reach raw SQL below too); that pattern excludes
+# newlines, which is what keeps a value from splitting into an extra line and shifting the fields below.
+# Two independent layers, so neither has to be perfect alone.
 if ! CONFIG="$(node -e '
 import("./scripts/dev-db-config.mjs").then(async (m) => {
   const fs = await import("node:fs");
@@ -59,14 +60,18 @@ import("./scripts/dev-db-config.mjs").then(async (m) => {
   echo "❌ could not derive the dev-DB shape from the wrangler configs (see above)" >&2
   exit 1
 fi
+# `|| true` on every read: an empty ROLES (legitimate — parseDevDbConfig supports it, and a test pins
+# it) makes the 4th field an empty trailing line, which command substitution strips. The 4th `read`
+# then hits EOF, returns non-zero, and `set -e` killed the script with NO output at all. The explicit
+# check below is what must speak, not a silent abort.
 {
-  IFS= read -r PORT
-  IFS= read -r DB
-  IFS= read -r SUPERUSER
-  IFS= read -r ROLES
+  IFS= read -r PORT || true
+  IFS= read -r DB || true
+  IFS= read -r SUPERUSER || true
+  IFS= read -r ROLES || true
 } <<<"$CONFIG"
-# `read` leaves a variable empty rather than failing when the stream is short, and `set -u` cannot see
-# that. An empty PORT/DB/SUPERUSER would silently build a nonsense connection string.
+ROLES="${ROLES:-}"
+# ROLES is deliberately not checked — no non-superuser bindings is a valid configuration.
 [ -n "$PORT" ] && [ -n "$DB" ] && [ -n "$SUPERUSER" ] || {
   echo "❌ incomplete dev-DB shape from the wrangler configs" >&2
   exit 1
@@ -173,6 +178,10 @@ echo
 # docs/local-billing-sandbox.md tells you to run `psql "$DEV_DB"`, but nothing ever defined DEV_DB —
 # it appeared in that one line and nowhere else in the repo, so the documented command could not work.
 # A child process cannot export into your shell, so emit the assignment for the reader to copy.
+# Print the RESOLVED psql, not a bare `psql`. postgresql@$PG_MAJOR is keg-only, so brew does not put it
+# on PATH — a bare `psql` is either `command not found` on a clean machine or, worse, a DIFFERENT major's
+# client that happens to be linked. Printing a command that cannot work is the exact defect this commit
+# is fixing two lines above.
 echo "   to open a psql session against it:"
 echo "     export DEV_DB='$SUPER_URL'"
-echo "     psql \"\$DEV_DB\""
+echo "     $PG_BIN/psql \"\$DEV_DB\""

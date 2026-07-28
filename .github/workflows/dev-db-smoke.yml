@@ -37,6 +37,12 @@ on:
 permissions:
   contents: read
 
+# Matches the convention in ci.yml: two pushes to the same PR should not both burn a 30-minute
+# macOS job.
+concurrency:
+  group: dev-db-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dev-db-smoke:
     name: dev-db-smoke
@@ -48,9 +54,21 @@ jobs:
 
       - name: Install postgresql@17 and dbmate
         run: |
+          # Versioned formulae are keg-only, so nothing is linked onto PATH and nothing is started —
+          # no conflict with any Postgres the runner image ships.
           brew install postgresql@17 dbmate
           "$(brew --prefix postgresql@17)/bin/initdb" --version
           dbmate --version
+
+      - name: The port the bindings name is free
+        run: |
+          # dev-db.sh binds the port the wrangler bindings name. If a runner image ever ships a started
+          # Postgres, pg_ctl fails with address-in-use buried in a log file and this job reads as a
+          # dev-db.sh regression rather than an environment clash.
+          if nc -z 127.0.0.1 5432 2>/dev/null; then
+            echo "::error::127.0.0.1:5432 is already in use on this runner"
+            exit 1
+          fi
 
       - name: dev-db.sh up — creates the cluster, applies migrations, verifies roles
         run: pnpm dev:db
@@ -83,12 +101,22 @@ jobs:
           export DATABASE_URL
           status="$(dbmate --no-dump-schema --migrations-dir packages/db/db/migrations status)"
           echo "$status"
-          # `status` lists pending migrations; any non-zero count means `up` did not finish the job.
-          echo "$status" | grep -qE "Applied: [0-9]+" || { echo "::error::could not read dbmate status"; exit 1; }
-          if echo "$status" | grep -qE "Pending: [1-9]"; then
-            echo "::error::dev-db.sh left migrations unapplied"
-            exit 1
-          fi
+
+          # Use dbmate's own exit code rather than grepping its output: `--exit-code` means exactly
+          # "return 1 if there are pending migrations", and it cannot drift the way an output format can.
+          dbmate --no-dump-schema --migrations-dir packages/db/db/migrations status --exit-code >/dev/null \
+            || { echo "::error::dev-db.sh left migrations unapplied"; exit 1; }
+
+          # ...and a zero-input FLOOR. `Applied: 0 / Pending: 0` is what dbmate prints for an EMPTY (but
+          # existing) migrations directory, and it satisfies every "no pending migrations" assertion —
+          # so a path filter that stops matching, or a directory emptied by a refactor, would read as
+          # success. Assert the applied count equals what is actually on disk.
+          on_disk="$(find packages/db/db/migrations -maxdepth 1 -name '[0-9]*_*.sql' | wc -l | tr -d ' ')"
+          applied="$(printf '%s\n' "$status" | sed -n 's/^Applied: //p')"
+          echo "on disk: $on_disk   applied: ${applied:-0}"
+          [ "$on_disk" -ge 90 ] || { echo "::error::only $on_disk migrations found — expected the real set"; exit 1; }
+          [ "${applied:-0}" -eq "$on_disk" ] \
+            || { echo "::error::applied=${applied:-0} but $on_disk migrations exist on disk"; exit 1; }
 
       - name: Re-running is idempotent
         run: pnpm dev:db
