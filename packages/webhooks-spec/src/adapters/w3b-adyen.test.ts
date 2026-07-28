@@ -45,6 +45,81 @@ describe("W3b adyen (sig-in-body JSON, colon-join, hex key) — published gold v
     expect(result).toEqual({ ok: true, keyId: "secret_0", scheme: "adyen" });
   });
 
+  /**
+   * `hexToBytes("")` returns a ZERO-BYTE array, not null, and Web Crypto throws `DataError` on a
+   * zero-length HMAC key. So an empty secret does not fall through the "not hex, skip it" branch — it
+   * reaches `importHmacKey` and throws out of an adapter that promises never to. The mixed case is the
+   * damaging one: one misconfigured empty secret alongside the live key turns every Adyen webhook from
+   * verified into an exception. Mirrors the standard-webhooks regression test for the same class.
+   */
+  it("does not throw on an empty secret, and still finds the live key beside one", async () => {
+    const onlyEmpty = await getAdapterForScheme("adyen")!.verify({
+      rawBody: utf8Encoder.encode(BODY),
+      headers: [["content-type", "application/json"]],
+      secrets: [""],
+      now: new Date(1790000000 * 1000),
+    });
+    expect(onlyEmpty.ok).toBe(false);
+    if (!onlyEmpty.ok) expect(onlyEmpty.reason.code).toBe("NO_MATCHING_KEY");
+
+    const mixed = await getAdapterForScheme("adyen")!.verify({
+      rawBody: utf8Encoder.encode(BODY),
+      headers: [["content-type", "application/json"]],
+      secrets: ["", ADYEN_EXAMPLE_HEX],
+      now: new Date(1790000000 * 1000),
+    });
+    expect(mixed).toEqual({ ok: true, keyId: "secret_1", scheme: "adyen" });
+  });
+
+  /**
+   * A well-formed signature that simply did not match is WRONG_SECRET — the same code every sibling
+   * adapter returns, and the one the docs promise. Flattening it to SIGNATURE_MISMATCH would lose the
+   * most actionable thing the diagnosis tells a user.
+   */
+  it("reports WRONG_SECRET, not a generic mismatch, for a well-formed signature under a bad key", async () => {
+    const result = await getAdapterForScheme("adyen")!.verify({
+      rawBody: utf8Encoder.encode(BODY),
+      headers: [["content-type", "application/json"]],
+      secrets: ["00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"],
+      now: new Date(1790000000 * 1000),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.code).toBe("WRONG_SECRET");
+  });
+
+  /**
+   * Collapsing "absent" and "present but an object/array" both to "" lets a forged item build the SAME
+   * signed message as an authentic notification that carried no `amount` at all — so one real Adyen
+   * signature covers both readings. A consumer doing `Number(item.amount.value)` then reads 999999,
+   * because JS coerces a 1-element array. Adyen never sends a non-scalar in a signed position, so
+   * rejecting it costs nothing and closes the class.
+   */
+  it("refuses a non-scalar in a signed field instead of treating it as absent", async () => {
+    const nonScalarAmount = JSON.stringify({
+      notificationItems: [
+        {
+          NotificationRequestItem: {
+            pspReference: "P2",
+            merchantAccountCode: "ACCT",
+            merchantReference: "R",
+            amount: { value: ["999999"], currency: ["EUR"] },
+            eventCode: "REPORT_AVAILABLE",
+            success: "true",
+            additionalData: { hmacSignature: "coqCmt/IZ4E3CzPvMY8zTjQVL5hYJUiBRg8UU+iCWo0=" },
+          },
+        },
+      ],
+    });
+    const result = await getAdapterForScheme("adyen")!.verify({
+      rawBody: utf8Encoder.encode(nonScalarAmount),
+      headers: [["content-type", "application/json"]],
+      secrets: [ADYEN_EXAMPLE_HEX],
+      now: new Date(1790000000 * 1000),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.code).toBe("MALFORMED_SIGNATURE");
+  });
+
   it("rejects the wrong key", async () => {
     const result = await getAdapterForScheme("adyen")!.verify({
       rawBody: utf8Encoder.encode(BODY),

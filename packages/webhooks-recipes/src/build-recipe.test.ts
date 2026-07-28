@@ -62,15 +62,19 @@ describe("buildRecipe — config-driven recipes derived from the registry", () =
     expect(r.verifierInputs).toContain("requestUrl");
   });
 
-  it("adyen: signature-in-body (JSON field), hex-decoded key, base64, no timestamp", () => {
-    const r = recipe("adyen");
+  // This case used to be adyen. Adyen moved to a BESPOKE adapter — its signature is per-item inside a
+  // batched body, which a fixed `jsonField` path cannot iterate — and its config row was deleted, so
+  // there is nothing here for `buildRecipe` to derive; its recipe is asserted in
+  // bespoke-recipes.test.ts. Re-pointed at mailgun rather than dropped: adyen was the ONLY
+  // config-driven sig-in-body case in this file, so deleting it would have silently retired the
+  // archetype's coverage here.
+  it("mailgun: signature-in-body (JSON field), hex, no header, no enforced window", () => {
+    const r = recipe("mailgun");
     expect(r.archetype).toBe("sig-in-body-hmac");
     expect(r.signatureLocation).toBe("json-body");
     expect(r.signatureHeader).toBeNull();
-    expect(r.encoding).toBe("base64");
-    expect(r.keyDerivation).toMatch(/hex/i);
+    expect(r.encoding).toBe("hex");
     expect(r.replayWindow.enforced).toBe(false);
-    expect(r.quirks.join(" ")).toMatch(/hex/i);
   });
 
   it("sanity: timestamp is SIGNED but the replay window is NOT enforced (enforceReplayWindow:false)", () => {
