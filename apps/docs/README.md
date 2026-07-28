@@ -33,6 +33,26 @@ API-driven resync (`POST https://api.mintlify.com/v1/project/update/{projectId}`
 exists but the admin key is a **paid Enterprise** feature, so we don't rely on it — a manual redeploy after
 a spec change is the Hobby-tier path.
 
+> ⚠️ **A single PR that changes BOTH the spec and this directory races itself.** The Mintlify build
+> (GitHub App, on push to `main`) and the api Worker deploy (`.github/workflows/deploy.yml`) are
+> independent pipelines with no ordering between them. If the docs build wins, it re-fetches
+> `api.webhook.co/openapi.json` **before** the new spec is published and bakes the OLD one — so the
+> hand-authored `.mdx` and `docs.json` changes go live while the API reference silently stays stale.
+> This is not hypothetical: PR #792 renamed an operation `summary` (which is what Mintlify slugifies
+> into the page URL) and shipped with `logo.href` and the new descriptions live but the api-reference
+> pages still on the previous slug.
+>
+> **After merging any PR that touches both, verify the reference actually moved** — don't assume the
+> green deploy covered it:
+>
+> ```sh
+> curl -sS https://api.webhook.co/openapi.json | jq -r '.paths["/v1/endpoints/{endpointId}/events"].get.summary'
+> curl -sS https://docs.webhook.co/sitemap.xml | grep -c 'api-reference'
+> ```
+>
+> If the spec is new but the docs are stale, push again touching this directory (or hit **Redeploy**
+> in the Mintlify dashboard) once the Worker is live.
+
 ## Setup status
 
 - ✅ **GitHub App installed** on `webhook-co/webhook`, deploy branch `main`.
