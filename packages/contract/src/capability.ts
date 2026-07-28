@@ -39,6 +39,27 @@ export class CapabilityFault extends Error {
 }
 
 export interface CapabilitySemantics {
+  /**
+   * Does this capability DESTROY or invalidate something a caller already had?
+   *
+   * Required on every capability whose scope is not `:read` — `parity.test.ts` fails if a write
+   * capability leaves it undeclared, because silence is indistinguishable from nobody having thought
+   * about it. It becomes the MCP `destructiveHint`, whose spec default is `true`, so an omission does
+   * not fail safe: it labels every write tool destructive, which is both wrong and scarier than the
+   * truth. A read capability must NOT declare it (the hint is only meaningful when `readOnlyHint` is
+   * false).
+   *
+   * "Destructive" means the caller loses something they cannot get back in one call: a row deleted, a
+   * secret revoked, a token rotated out from under a live integration.
+   *
+   * A full-field OVERWRITE is deliberately NOT destructive here, and that is the judgement call worth
+   * naming rather than leaving under the word "update": `endpoints.update` replaces `dedup_config`
+   * wholesale (and `null` resets it to off), and `replayDestinations.setOrdered` replaces a flag.
+   * Neither keeps history, so the previous value is gone — but the same caller restores it with one
+   * more call and no data is lost, which is the line drawn here. Turning dedup off does re-admit
+   * duplicate deliveries in the meantime; that is a consequence, not a loss.
+   */
+  readonly destructive?: boolean;
   /** Safe to retry with the same input + idempotency key (events.replay). */
   readonly idempotent?: boolean;
   /** Returns a page + nextCursor. */

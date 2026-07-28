@@ -180,6 +180,93 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     expect(whoami?.description).toMatch(/profile/i);
   });
 
+  // The Anthropic Connectors Directory requires, verbatim: "All tools must include a `title` and the
+  // applicable `readOnlyHint` or `destructiveHint`." The submission portal syncs tools from the live
+  // server and flags any that are missing them, so this is a hard gate on being listed at all — and
+  // it is invisible to every other test we have, because a tool without annotations works perfectly.
+  //
+  // Asserted through tools/list rather than against the source maps, because what the portal reads is
+  // the wire response. A title that exists in a constant but never reaches the client is not a title.
+  it("advertises a title and the applicable hints on every tool (directory requirement)", async () => {
+    const { sessionId, protocolVersion } = await handshake();
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 10, method: "tools/list", params: {} },
+      { sessionId, protocolVersion },
+    );
+    const { tools } = res.message?.result as {
+      tools: {
+        name: string;
+        title?: string;
+        annotations?: {
+          readOnlyHint?: boolean;
+          destructiveHint?: boolean;
+          idempotentHint?: boolean;
+        };
+      }[];
+    };
+    // Anti-vacuity: an empty list would satisfy every filter below having checked nothing.
+    expect(tools.length).toBeGreaterThan(20);
+
+    const untitled = tools.filter((t) => (t.title ?? "").trim() === "").map((t) => t.name);
+    expect(untitled, "tools with no title — the portal rejects these").toEqual([]);
+
+    // A title that is just the tool name is what a `?? cap.name` fallback produces: present, useless,
+    // and indistinguishable from a real one unless asserted against.
+    const lazyTitles = tools.filter((t) => t.title === t.name).map((t) => t.name);
+    expect(lazyTitles, "titles that are just the tool name").toEqual([]);
+
+    const noHint = tools
+      .filter((t) => typeof t.annotations?.readOnlyHint !== "boolean")
+      .map((t) => t.name);
+    expect(noHint, "tools with no readOnlyHint").toEqual([]);
+
+    // For a WRITE tool, `destructiveHint` must be an explicit decision. Leaving it undefined is
+    // indistinguishable from "nobody thought about it", and the MCP default is `true` — so silence
+    // labels every write tool destructive, which is both wrong and scarier than the truth.
+    const undecided = tools
+      .filter((t) => t.annotations?.readOnlyHint === false)
+      .filter((t) => typeof t.annotations?.destructiveHint !== "boolean")
+      .map((t) => t.name);
+    expect(undecided, "write tools that never declared whether they are destructive").toEqual([]);
+
+    // Sanity that the read/write split is real and not all-one-way, in both directions.
+    expect(tools.filter((t) => t.annotations?.readOnlyHint === true).length).toBeGreaterThan(5);
+    expect(tools.filter((t) => t.annotations?.readOnlyHint === false).length).toBeGreaterThan(5);
+
+    // Pin the DERIVATION, not just its presence. Everything above passes if every tool is labelled
+    // identically; these four say the scope→readOnly and semantics→destructive mappings actually
+    // discriminate. `endpoints.rotate` is the interesting one: nothing in its name says "delete", but
+    // it invalidates a working ingest URL, which is exactly what a name-based rule would get wrong.
+    const byName = new Map(tools.map((t) => [t.name, t]));
+    expect(byName.get("events.list")?.annotations).toMatchObject({ readOnlyHint: true });
+    expect(byName.get("events.delete")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(byName.get("endpoints.rotate")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(byName.get("endpoints.create")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
+    // A read tool must carry NEITHER hint — the spec defines both only when `readOnlyHint` is false.
+    // Swept over every read tool rather than spot-checked: `byName.get(x)?.annotations?.hint` is
+    // `undefined` when the tool is simply absent, so a single spot-check passes having verified
+    // nothing the day that tool is renamed.
+    const readTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
+    expect(readTools.length).toBeGreaterThan(5);
+    expect(
+      readTools.filter((t) => t.annotations?.destructiveHint !== undefined).map((t) => t.name),
+      "read tools carrying a destructiveHint — it has nowhere to land",
+    ).toEqual([]);
+    expect(
+      readTools.filter((t) => t.annotations?.idempotentHint !== undefined).map((t) => t.name),
+      "read tools carrying an idempotentHint — same spec rule as destructiveHint",
+    ).toEqual([]);
+  });
+
   // The advertised schema is half the contract; this is the other half. Asserting only that
   // `tools/list` carries `additionalProperties: false` would leave the client-visible behaviour of the
   // exact historical mistake — `eventTypes` on `triggers.create`, real on `subscriptions.create` —
