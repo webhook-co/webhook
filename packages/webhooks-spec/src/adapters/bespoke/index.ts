@@ -7,6 +7,7 @@
 
 import type { VerifyAdapter } from "../../adapter";
 import type { Provider } from "../config";
+import { makeAdyenAdapter } from "./adyen";
 import { makeAwsSnsAdapter } from "./aws-sns";
 import { makeConstantContactAdapter } from "./constant-contact";
 import { makeContentfulAdapter } from "./contentful";
@@ -30,6 +31,8 @@ import { makeWiseAdapter } from "./wise";
 
 export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   twilio: makeTwilioAdapter(),
+  // Signature is per-ITEM inside a batched JSON body; a fixed `jsonField` path cannot iterate it.
+  adyen: makeAdyenAdapter(),
   contentful: makeContentfulAdapter(),
   plivo: makePlivoAdapter(),
   // Tier-3 HS256-JWT (S2.2): a signed JWT with body/URL hash-claim binding, not an HMAC over the body.

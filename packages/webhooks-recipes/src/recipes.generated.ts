@@ -3558,30 +3558,30 @@ export const RECIPES: readonly RecipeDescriptor[] = [
   {
     "slug": "adyen",
     "archetype": "sig-in-body-hmac",
-    "source": "config",
+    "source": "bespoke",
     "signatureLocation": "json-body",
     "signatureHeader": null,
-    "signatureFormat": "the bare encoded MAC",
+    "signatureFormat": "the bare base64 MAC, per item",
     "algorithm": "HMAC-SHA256",
     "encoding": "base64",
-    "keyDerivation": "the signing key hex-decoded to raw bytes (not used as its ASCII characters)",
-    "signedMessage": "`{notificationItems.0.NotificationRequestItem.pspReference}:{notificationItems.0.NotificationRequestItem.originalReference}:{notificationItems.0.NotificationRequestItem.merchantAccountCode}:{notificationItems.0.NotificationRequestItem.merchantReference}:{notificationItems.0.NotificationRequestItem.amount.value}:{notificationItems.0.NotificationRequestItem.amount.currency}:{notificationItems.0.NotificationRequestItem.eventCode}:{notificationItems.0.NotificationRequestItem.success}`",
+    "keyDerivation": "the Customer-Area HMAC key hex-decoded to raw bytes (not used as its ASCII characters)",
+    "signedMessage": "PER ITEM — for EVERY entry of `notificationItems`, the 8 fields of its `NotificationRequestItem` joined by a plain colon: `{pspReference}:{originalReference}:{merchantAccountCode}:{merchantReference}:{amount.value}:{amount.currency}:{eventCode}:{success}`, absent fields as the empty string, NO escaping and NO sorting (escaping belongs to the legacy HPP signature, a different scheme). Every item must verify under the same key; a batch with one authentic item and one forged item is rejected",
     "signedMessageParts": [
-      "jsonField:notificationItems.0.NotificationRequestItem.pspReference",
+      "jsonField:notificationItems[].NotificationRequestItem.pspReference",
       "literal::",
-      "jsonField:notificationItems.0.NotificationRequestItem.originalReference",
+      "jsonField:notificationItems[].NotificationRequestItem.originalReference",
       "literal::",
-      "jsonField:notificationItems.0.NotificationRequestItem.merchantAccountCode",
+      "jsonField:notificationItems[].NotificationRequestItem.merchantAccountCode",
       "literal::",
-      "jsonField:notificationItems.0.NotificationRequestItem.merchantReference",
+      "jsonField:notificationItems[].NotificationRequestItem.merchantReference",
       "literal::",
-      "jsonField:notificationItems.0.NotificationRequestItem.amount.value",
+      "jsonField:notificationItems[].NotificationRequestItem.amount.value",
       "literal::",
-      "jsonField:notificationItems.0.NotificationRequestItem.amount.currency",
+      "jsonField:notificationItems[].NotificationRequestItem.amount.currency",
       "literal::",
-      "jsonField:notificationItems.0.NotificationRequestItem.eventCode",
+      "jsonField:notificationItems[].NotificationRequestItem.eventCode",
       "literal::",
-      "jsonField:notificationItems.0.NotificationRequestItem.success"
+      "jsonField:notificationItems[].NotificationRequestItem.success"
     ],
     "timestamp": null,
     "replayWindow": {
@@ -3595,8 +3595,10 @@ export const RECIPES: readonly RecipeDescriptor[] = [
       "payload"
     ],
     "quirks": [
-      "The signing key is hex-decoded to raw bytes before HMAC — not used as UTF-8 characters.",
-      "The signature travels inside the request body, not in a header."
+      "The signature is inside the body, not a header — `detectScheme` cannot identify Adyen from headers.",
+      "`notificationItems` is an ARRAY and production traffic batches. EVERY item is verified; a batch pairing one authentic item with a forged one is rejected, not accepted on the strength of the first.",
+      "The HMAC key is the Customer-Area key HEX-DECODED — using its ASCII characters fails every signature.",
+      "No escaping and no sorting. Backslash-escaping the colon-joined fields is the legacy HPP signature, a different scheme from the same vendor."
     ]
   },
   {
