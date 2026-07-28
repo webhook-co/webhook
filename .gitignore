@@ -26,11 +26,22 @@ next-env.d.ts
 # Environment
 .env
 .env.*
+# Same trap as .dev.vars below: `.env.example` matches `.env.*` and would be silently dropped.
+!.env.example
+!**/.env.example
 # wrangler / OpenNext local dev secrets (next dev + `opennextjs-cloudflare preview`)
 .dev.vars
 .dev.vars.*
 **/.dev.vars
 **/.dev.vars.*
+# ...but the COMMITTED, secret-free reference must be trackable. Without these negations a
+# `.dev.vars.example` is silently ignored: you add it, commit, and it is simply not there.
+# The dot-less name dodges the patterns above; the negations make the intent explicit and
+# survive someone renaming it.
+!dev.vars.example
+!**/dev.vars.example
+!.dev.vars.example
+!**/.dev.vars.example
 
 # Logs
 *.log
