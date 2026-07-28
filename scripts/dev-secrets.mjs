@@ -153,8 +153,10 @@ export function generateDevVars(opts = {}) {
     }
     const distinct = new Set(byApp.values());
     if (distinct.size > 1 && !opts.converge) {
+      // App names and value LENGTHS only — never any part of the value itself. This message goes to a
+      // terminal and gets pasted into issues, and a suffix is not needed to act on it.
       const detail = [...byApp.entries()]
-        .map(([a, v]) => `   apps/${a}: ...${v.slice(-8)}`)
+        .map(([a, v]) => `   apps/${a}: ${v.length} chars`)
         .join("\n");
       throw new Error(
         `${name} must be identical across apps, but they disagree:\n${detail}\n\n` +

@@ -383,9 +383,30 @@ test("checkExamples reports drift, and has a zero-input floor", () => {
 });
 
 test("an example with no manifest entry is flagged as an orphan", () => {
-  // Remove an app from the manifest and its committed example lingers with stale key names, guard
-  // green. Discover the files on disk rather than only iterating the manifest.
+  // Asserting only `orphanExamples(ROOT) === []` would be VACUOUS: a function that always returns []
+  // passes it. Build a real orphan and prove it is caught, THEN assert the repo is clean.
+  const dir = tmp();
+  try {
+    allApps(dir);
+    mkdirSync(join(dir, "apps", "notinmanifest"), { recursive: true });
+    writeFileSync(join(dir, "apps", "notinmanifest", "dev.vars.example"), "X=1\n");
+    assert.deepEqual(orphanExamples(dir), ["apps/notinmanifest/dev.vars.example"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
   assert.deepEqual(orphanExamples(ROOT), [], "no orphaned dev.vars.example should be committed");
+});
+
+test("an app dir with no example at all is not an orphan", () => {
+  // Only a COMMITTED example with no manifest entry is an orphan; a bare directory is not.
+  const dir = tmp();
+  try {
+    allApps(dir);
+    mkdirSync(join(dir, "apps", "bare"), { recursive: true });
+    assert.deepEqual(orphanExamples(dir), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the example header does not claim to be gitignored", () => {
@@ -394,4 +415,30 @@ test("the example header does not claim to be gitignored", () => {
   const ex = renderExample("web");
   assert.doesNotMatch(ex, /GITIGNORED/);
   assert.match(ex, /COMMITTED reference/);
+});
+
+test("the mismatch error names the apps but never any secret material", () => {
+  // The error is printed to a terminal and pasted into issues. App names and lengths are enough to
+  // act on; a suffix of the value is not needed and should not be there.
+  const dir = tmp();
+  try {
+    allApps(dir);
+    seed(dir, "web", "LISTEN_TICKET_KEY=SECRETAAAAAAAAAA\n");
+    seed(dir, "engine", "LISTEN_TICKET_KEY=SECRETBBBBBBBBBB\n");
+    let msg = "";
+    try {
+      generateDevVars({ root: dir });
+    } catch (err) {
+      msg = err.message;
+    }
+    assert.ok(msg, "expected a throw");
+    assert.match(msg, /web/);
+    assert.match(msg, /engine/);
+    // The fixtures END in a distinctive run, so a trailing-suffix leak is actually detectable —
+    // a fixture whose tail is generic would make this assertion pass by construction.
+    assert.doesNotMatch(msg, /AAAA/, "must not echo any part of the value");
+    assert.doesNotMatch(msg, /BBBB/, "must not echo any part of the value");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
