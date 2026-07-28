@@ -18,20 +18,29 @@
 //    different hat.
 
 import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { APP_NAMES, GENERATED_BYTES, sharedNames, specsFor } from "./dev-secrets-manifest.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * Read a file, or null when it does not exist.
+ *
+ * Deliberately try/catch rather than `existsSync(p) ? readFileSync(p) : null`: the check-then-use
+ * pair is a TOCTOU race (CodeQL js/file-system-race) and there is no reason to write one when the
+ * single-call form is both simpler and correct.
+ */
+function readIfPresent(p) {
+  try {
+    return readFileSync(p, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
+}
 
 /** Parse `KEY=value` lines. Comments and blanks ignored; only the FIRST `=` splits. */
 export function parseDevVars(text) {
@@ -123,7 +132,8 @@ export function generateDevVars(opts = {}) {
   const existing = new Map();
   for (const app of APP_NAMES) {
     const p = join(root, "apps", app, ".dev.vars");
-    existing.set(app, existsSync(p) ? parseDevVars(readFileSync(p, "utf8")) : {});
+    const text = readIfPresent(p);
+    existing.set(app, text === null ? {} : parseDevVars(text));
   }
 
   // Collect EVERY on-disk value for each shared name, then refuse if they disagree.
@@ -194,7 +204,7 @@ export function generateDevVars(opts = {}) {
     for (const [k, v] of Object.entries(prior)) if (!(k in values)) values[k] = v;
 
     const next = renderDevVars(app, values);
-    if (!existsSync(path) || readFileSync(path, "utf8") !== next) {
+    if (readIfPresent(path) !== next) {
       // 0600: these hold the credential pepper and the session-signing key.
       writeFileSync(path, next, { mode: 0o600 });
     }
@@ -227,7 +237,7 @@ export function checkExamples(root = REPO_ROOT) {
   for (const app of APP_NAMES) {
     const p = join(root, "apps", app, "dev.vars.example");
     const want = renderExample(app);
-    const have = existsSync(p) ? readFileSync(p, "utf8") : null;
+    const have = readIfPresent(p);
     if (have !== want) drifted.push(`apps/${app}/dev.vars.example`);
   }
   return drifted;
@@ -242,7 +252,7 @@ export function orphanExamples(root = REPO_ROOT) {
   const known = new Set(APP_NAMES);
   return readdirSync(appsDir, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !known.has(e.name))
-    .filter((e) => existsSync(join(appsDir, e.name, "dev.vars.example")))
+    .filter((e) => readIfPresent(join(appsDir, e.name, "dev.vars.example")) !== null)
     .map((e) => `apps/${e.name}/dev.vars.example`);
 }
 
