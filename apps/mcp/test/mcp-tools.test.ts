@@ -252,9 +252,19 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     const { tools } = res.message?.result as {
       tools: { name: string; inputSchema?: { additionalProperties?: unknown } }[];
     };
-    // Anti-vacuity: an empty tool list would make the loop below pass without checking anything.
-    expect(tools.length).toBeGreaterThan(10);
-    const loose = tools
+    // Scoped to CAPABILITY tools. `whoami` is registered outside the capability loop and is
+    // deliberately not strict: it takes no arguments, so there is nothing to misspell, and rejecting a
+    // client that sends a placeholder argument would break the first call a new user makes for no
+    // gain. Excluding it by NAME rather than by "whatever isn't strict" — an exemption that keys on
+    // the symptom would silently absorb the next tool that loses its strictness.
+    const capabilityTools = tools.filter((t) => t.name !== "whoami");
+    // Anti-vacuity: an empty list would make the check below pass having verified nothing.
+    expect(capabilityTools.length).toBeGreaterThan(10);
+    expect(
+      tools.some((t) => t.name === "whoami"),
+      "whoami missing — re-point this filter",
+    ).toBe(true);
+    const loose = capabilityTools
       .filter((t) => t.inputSchema?.additionalProperties !== false)
       .map((t) => t.name);
     expect(loose, "these tools advertise a schema that tolerates unknown keys").toEqual([]);

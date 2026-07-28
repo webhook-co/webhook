@@ -2,7 +2,7 @@ import {
   AgentTriggerEventSchema,
   AgentTriggerSchema,
   canonicalizeAndValidateUrl,
-  DedupConfigSchema,
+  DedupConfigInputSchema,
   DeliveryAttemptSchema,
   DeliverySchema,
   DeliveryStatusSchema,
@@ -138,7 +138,7 @@ export const endpointsCreate = defineCapability({
   input: z.object({
     name: z.string().trim().min(1).max(200),
     // Optional per-endpoint dedup config (ADR-0104). Absent = the default (off — log every request).
-    dedupConfig: DedupConfigSchema.nullable().optional(),
+    dedupConfig: DedupConfigInputSchema.nullable().optional(),
   }),
   output: CreatedEndpointSchema,
   // FORBIDDEN: a bearer lacking endpoints:write (the api edge returns 403 before dispatch; mcp has no
@@ -193,7 +193,7 @@ export const endpointsRotate = defineCapability({
 // across the change). Bound on every surface — api + mcp (slice 3), cli (slice 3b), web (slice 4).
 export const endpointsUpdate = defineCapability({
   name: "endpoints.update",
-  input: z.object({ endpointId: uuid, dedupConfig: DedupConfigSchema.nullable() }),
+  input: z.object({ endpointId: uuid, dedupConfig: DedupConfigInputSchema.nullable() }),
   output: EndpointSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },

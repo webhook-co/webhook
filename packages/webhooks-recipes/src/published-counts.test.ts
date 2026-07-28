@@ -197,6 +197,12 @@ describe("published provider counts match the registry", () => {
    * about a competitor. Several `*.test.ts` files carry 122 and 141 as fixtures. Catching those
    * three would need an exemption list, and the exemption list is the hole. Published package
    * surfaces have no history, no competitors and no fixtures, so the rule can stay absolute.
+   *
+   * Known scope limit, stated rather than implied: this walks `packages/*` only. `sdks/python` ships
+   * to PyPI from outside that tree with its own README + `pyproject.toml` description, so a count
+   * added there would not be covered — it states none today. `packages/video` is `private: true` and
+   * carries a stale 141 and a test-pinned 142 in caption fixtures; not a published surface, not
+   * scanned, but worth knowing they are there.
    */
   describe("published package surfaces state the live count", () => {
     /**

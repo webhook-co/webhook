@@ -282,7 +282,11 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
   handlers.set(triggersList.name, async (ctx, input) => {
     ensureScope(ctx, triggersList);
     const parsed = triggersList.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const items = await listAgentTriggers(deps.tenant, ctx.orgId, parsed.data.endpointId);
     return { items };
   });
@@ -290,7 +294,11 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
   handlers.set(triggersRevoke.name, async (ctx, input) => {
     ensureScope(ctx, triggersRevoke);
     const parsed = triggersRevoke.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const revoked = await revokeAgentTrigger(deps.tenant, ctx.orgId, parsed.data.triggerId, {
       auditKey: deps.auditKey,
       actor: requireAuditActor(ctx),

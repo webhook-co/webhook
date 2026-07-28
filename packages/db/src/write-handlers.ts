@@ -119,7 +119,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(endpointsCreate.name, async (ctx, input) => {
     ensureScope(ctx, endpointsCreate); // FIRST — sole authz gate on mcp; no mint/write before this
     const parsed = endpointsCreate.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     // Validate the apex BEFORE minting: a misconfig must fail closed WITHOUT committing an orphan
     // endpoint whose one-time URL would then be unrecoverable.
     const apex = normalizeIngestApex(deps.ingestBaseUrl);
@@ -183,7 +187,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(endpointsDelete.name, async (ctx, input) => {
     ensureScope(ctx, endpointsDelete); // FIRST — sole authz gate on mcp
     const parsed = endpointsDelete.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const evict = requireEvictor();
     const deleted = await deleteEndpointWithAudit(
       deps.tenant,
@@ -199,7 +207,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(eventsDelete.name, async (ctx, input) => {
     ensureScope(ctx, eventsDelete); // FIRST — sole authz gate on mcp
     const parsed = eventsDelete.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     // Destructive-op mitigation (esp. on mcp, where an agent may act on attacker-controlled payloads):
     // a per-org rate limit BEFORE the tombstone bounds a runaway/compromised deleter. Single-id only (the
     // input schema takes ONE eventId — never a bulk/filter delete). deleteEventWithAudit redacts + enqueues
@@ -216,7 +228,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(endpointsRotate.name, async (ctx, input) => {
     ensureScope(ctx, endpointsRotate); // FIRST — sole authz gate on mcp
     const parsed = endpointsRotate.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const apex = normalizeIngestApex(deps.ingestBaseUrl); // validate BEFORE minting (mirrors create)
     const evict = requireEvictor();
     const rotated = await rotateEndpointWithAudit(
@@ -249,7 +265,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(endpointsUpdate.name, async (ctx, input) => {
     ensureScope(ctx, endpointsUpdate); // FIRST — endpoints:write; sole authz gate on mcp
     const parsed = endpointsUpdate.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const evict = requireEvictor();
     const updated = await updateEndpointDedupWithAudit(
       deps.tenant,
@@ -276,7 +296,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(endpointsRevealIngestUrl.name, async (ctx, input) => {
     ensureScope(ctx, endpointsRevealIngestUrl); // FIRST — endpoints:write; sole authz gate on mcp
     const parsed = endpointsRevealIngestUrl.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const apex = normalizeIngestApex(deps.ingestBaseUrl); // validate BEFORE the reveal (mirrors create)
     const reveal = requireRevealer();
     // Rate-limit BEFORE the unseal so a throttled caller never reaches the engine/KMS (audit-derived cap).
@@ -342,7 +366,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(endpointsListProviderSecrets.name, async (ctx, input) => {
     ensureScope(ctx, endpointsListProviderSecrets); // endpoints:read
     const parsed = endpointsListProviderSecrets.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     // Metadata only — listEndpointProviderSecrets SELECTs no ciphertext, so the sealed bytes/plaintext
     // never leave the DB. Not paginated (a human-managed handful per endpoint): return the whole set.
     const items = await listEndpointProviderSecrets(deps.tenant, ctx.orgId, parsed.data.endpointId);
@@ -352,7 +380,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
   handlers.set(endpointsRevokeProviderSecret.name, async (ctx, input) => {
     ensureScope(ctx, endpointsRevokeProviderSecret); // FIRST — sole authz gate on mcp
     const parsed = endpointsRevokeProviderSecret.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const evict = requireEvictor();
     // The revoke and the ingest-token-hash lookup are independent (the hash needs only org+endpoint,
     // both known up front), so run them concurrently rather than serializing two round-trips. The

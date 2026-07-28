@@ -181,14 +181,14 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     // whoami — identity, NOT a capability (binds no resource), so registered outside the capability loop.
     // Returns org/user/scopes always; name+email only when the token carries the consented `profile` scope,
     // resolved on-demand via the auth. RPC (kept off the introspection hot path).
-    // `z.object({}).strict()`, not `{}`: whoami takes no arguments, and a bare empty raw shape
-    // advertises an object with no `additionalProperties`, i.e. "pass me whatever you like, I will
-    // ignore it". Every capability tool tells a client that unknown keys are rejected; the one tool
-    // registered outside that loop must say the same thing or it is the exception that teaches agents
-    // the rule does not hold.
+    // Deliberately NOT strict, unlike every capability tool. whoami takes no arguments, so there is no
+    // field to misspell and strictness protects nothing — while its only reachable effect is to reject
+    // a client that sends a placeholder argument for a no-parameter tool, which real MCP clients do.
+    // whoami is the canonical "is my connection working" call, so that failure would land on the first
+    // thing a new user runs, to buy nothing but symmetry.
     this.server.registerTool(
       "whoami",
-      { description: WHOAMI_DESCRIPTION, inputSchema: z.object({}).strict() },
+      { description: WHOAMI_DESCRIPTION, inputSchema: {} },
       async () => {
         let ctx: AuthContext;
         try {

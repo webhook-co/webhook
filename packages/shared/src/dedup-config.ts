@@ -143,7 +143,7 @@ const FieldPathString = z
   .max(256)
   .refine((s) => parseFieldPath(s).ok, { message: "invalid dedup field path" });
 
-const FieldSelectorSchema = z.strictObject({
+const FieldSelectorSchema = z.object({
   include: z.array(FieldPathString).min(1).max(MAX_FIELD_PATHS),
   exclude: z.array(FieldPathString).max(MAX_FIELD_PATHS).optional(),
 });
@@ -152,9 +152,17 @@ export type FieldSelector = z.infer<typeof FieldSelectorSchema>;
 /**
  * Per-endpoint dedup config. `fields` is required exactly for `fields` mode and forbidden otherwise
  * (superRefine, not `.transform`, so JSON-Schema serialization is preserved for the contract gate).
+ *
+ * DELIBERATELY LOOSE, and it must stay that way: this schema is a field of `EndpointSchema`, which is
+ * an OUTPUT — `packages/cli/src/api-client.ts` parses every endpoint response through it and THROWS
+ * on failure. A strict version here means the next field we add inside `dedupConfig` breaks every
+ * already-installed `wbhk` binary, and `CLIENT_MIN_SUPPORTED` is advisory, so nothing makes anyone
+ * upgrade. `sdks/python` is generated with `--extra-fields ignore` for the same reason. Use
+ * `DedupConfigInputSchema` below for the request side, where rejecting an unknown key is a
+ * server-side policy we can reverse with a deploy. `parity.test.ts` asserts both directions.
  */
 export const DedupConfigSchema = z
-  .strictObject({
+  .object({
     mode: DedupModeSchema,
     // Optional so `off` (which never collapses) needs no window — required for every OTHER mode via the
     // superRefine below. Keeps the docs/API consistent (`off` takes no windowSeconds) and prevents a
@@ -201,3 +209,21 @@ export const DedupConfigSchema = z
     }
   });
 export type DedupConfig = z.infer<typeof DedupConfigSchema>;
+
+/**
+ * The REQUEST-side dedup config: identical rules, but unknown keys are rejected rather than dropped.
+ *
+ * Split from `DedupConfigSchema` because the two directions want opposite things. On the way IN, a
+ * silently-stripped key is a lie — an operator who misspells `windowSecond` gets a 200 and no dedup
+ * window. On the way OUT, strictness is a forward-compatibility bomb in every published client (see
+ * the docblock above).
+ *
+ * `safeExtend`, not `extend`: zod 4 REFUSES `.extend()` on a schema carrying refinements ("Cannot
+ * overwrite keys on object schemas containing refinements"), because it would drop them. The nested
+ * `fields` selector has to be re-pointed at a strict copy — `.strict()` only affects the outer object,
+ * so without this an operator could misspell a key INSIDE `fields` and still get a 200. Verified: the
+ * fields-mode `superRefine` still fires, and both levels reject unknown keys.
+ */
+export const DedupConfigInputSchema = DedupConfigSchema.safeExtend({
+  fields: FieldSelectorSchema.strict().optional(),
+}).strict();
