@@ -15,6 +15,12 @@ CURSOR_KEY=
 # GENERATED: web MINTS the dashboard live-events ticket, engine VERIFIES it. A mismatch is a dead WebSocket with no config error — the exact bug this manifest exists to prevent.
 LISTEN_TICKET_KEY=
 
+# LOCAL: Selects the hermetic dev KEK custodian instead of AWS KMS. Without it, creating an endpoint needs real AWS IAM credentials. Lives ONLY here — .dev.vars is never sent by `wrangler deploy`, kmsProviderFromEnv refuses it whenever AWS KMS config is bound, and scripts/kms-mode-guard.mjs keeps it out of every committed Worker config.
+KMS_MODE=local
+
+# GENERATED: The dev KEK, 32 random bytes. Stable across restarts so endpoints sealed before a restart stay openable — LocalKmsProvider.generate() would mint a fresh key each process and orphan them.
+LOCAL_KEK=
+
 # LOCAL: MATCHES PRODUCTION. Unset parses to uncapped, so local silently skipped the cap logic that prod enforces.
 FREE_EVENT_CAP=5000
 

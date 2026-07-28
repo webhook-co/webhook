@@ -95,6 +95,17 @@ export const APPS = {
     shared: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "CURSOR_KEY", "LISTEN_TICKET_KEY"],
     own: [
       {
+        name: "KMS_MODE",
+        scope: "local",
+        value: "local",
+        note: "Selects the hermetic dev KEK custodian instead of AWS KMS. Without it, creating an endpoint needs real AWS IAM credentials. Lives ONLY here — .dev.vars is never sent by `wrangler deploy`, kmsProviderFromEnv refuses it whenever AWS KMS config is bound, and scripts/kms-mode-guard.mjs keeps it out of every committed Worker config.",
+      },
+      {
+        name: "LOCAL_KEK",
+        scope: "generated",
+        note: "The dev KEK, 32 random bytes. Stable across restarts so endpoints sealed before a restart stay openable — LocalKmsProvider.generate() would mint a fresh key each process and orphan them.",
+      },
+      {
         name: "FREE_EVENT_CAP",
         scope: "local",
         value: "5000",
