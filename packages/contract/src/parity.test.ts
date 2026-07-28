@@ -226,6 +226,51 @@ describe("capability inputs reject unknown keys", () => {
   });
 });
 
+/**
+ * Every write capability must SAY whether it is destructive; no read capability may.
+ *
+ * This exists for the MCP `destructiveHint`, which the Anthropic Connectors Directory requires and
+ * whose spec default is `true`. So an omission is not a safe default — it silently labels a
+ * non-destructive write (creating an endpoint, enabling a destination) as destructive, and a client
+ * that gates on the hint would prompt for confirmation on all of them. Deriving it from the
+ * capability NAME would be worse: `endpoints.rotate` destroys a working ingest token and
+ * `replayDestinations.setOrdered` destroys nothing, and no regex over verbs knows that.
+ *
+ * Read capabilities are required to stay silent because the hint is only meaningful when
+ * `readOnlyHint` is false — declaring it there is a claim with nowhere to land.
+ */
+describe("destructive semantics are declared, not inferred", () => {
+  const isRead = (cap: (typeof CAPABILITIES)[number]): boolean => cap.auth.scope.endsWith(":read");
+
+  it("has both reads and writes to check", () => {
+    expect(CAPABILITIES.filter(isRead).length).toBeGreaterThan(5);
+    expect(CAPABILITIES.filter((c) => !isRead(c)).length).toBeGreaterThan(5);
+  });
+
+  it("every write capability declares `destructive`", () => {
+    const undeclared = CAPABILITIES.filter((c) => !isRead(c))
+      .filter((c) => typeof c.semantics.destructive !== "boolean")
+      .map((c) => c.name);
+    expect(
+      undeclared,
+      "these mutate state but never said whether they destroy anything — MCP defaults the hint to true, so silence mislabels them",
+    ).toEqual([]);
+  });
+
+  it("no read capability declares `destructive`", () => {
+    const overreaching = CAPABILITIES.filter(isRead)
+      .filter((c) => c.semantics.destructive !== undefined)
+      .map((c) => c.name);
+    expect(overreaching, "readOnly tools have nowhere to put a destructiveHint").toEqual([]);
+  });
+
+  it("the declaration is not all-one-way", () => {
+    const writes = CAPABILITIES.filter((c) => !isRead(c));
+    expect(writes.filter((c) => c.semantics.destructive === true).length).toBeGreaterThan(2);
+    expect(writes.filter((c) => c.semantics.destructive === false).length).toBeGreaterThan(2);
+  });
+});
+
 function fullBindings() {
   const b = emptyBindings();
   for (const surface of SURFACES) for (const cap of CAPABILITIES) b[surface].add(cap.name);

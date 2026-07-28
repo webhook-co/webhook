@@ -147,7 +147,7 @@ export const endpointsCreate = defineCapability({
   // idempotent: each call mints a new endpoint + token (the api-client never blind-retries this POST).
   errors: ["UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: false },
 });
 
 // endpoints.delete SOFT-deletes an endpoint (ADR-0076): it stops resolving on the wbhk.my ingest path
@@ -167,7 +167,7 @@ export const endpointsDelete = defineCapability({
   // is a 200 idempotent success). RATE_LIMITED reserved for a future per-org delete throttle.
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: { idempotent: true },
+  semantics: { destructive: true, idempotent: true },
 });
 
 // endpoints.rotate replaces an endpoint's ingest token (the wbhk.my/<token> secret) IN PLACE (ADR-0076):
@@ -181,7 +181,7 @@ export const endpointsRotate = defineCapability({
   output: CreatedEndpointSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: true },
 });
 
 // endpoints.update MUTATES an endpoint's per-endpoint dedup config (ADR-0104) in place. dedupConfig is
@@ -197,7 +197,7 @@ export const endpointsUpdate = defineCapability({
   output: EndpointSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: { idempotent: true },
+  semantics: { destructive: false, idempotent: true },
 });
 
 // endpoints.revealIngestUrl RE-DISPLAYS the always-shown wbhk.my/<token> ingest URL for an endpoint
@@ -218,7 +218,7 @@ export const endpointsRevealIngestUrl = defineCapability({
   output: RevealedIngestUrlSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: false },
   // This CAPABILITY (the endpoints:write-gated, audited, rate-limited programmatic reveal — the scripted
   // exfil vector) is bound on api/cli/mcp. The dashboard shows the same URL, but NOT via this capability: the
   // endpoint-detail page reads it as always-visible endpoint CONFIG through a DB-direct session seam
@@ -408,7 +408,7 @@ export const eventsReplay = defineCapability({
   output: DeliveryAttemptSchema,
   errors: ["NOT_FOUND", "ENDPOINT_PAUSED", "TARGET_UNREACHABLE", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "events:replay" },
-  semantics: { idempotent: true },
+  semantics: { destructive: false, idempotent: true },
   // Bound on the CLI (`replay` / `listen --forward`) + api (records the delivery_attempt server-side,
   // PR3). mcp stays exempt: the localhost-tunnel target is CLI-intrinsic (an agent has no localhost).
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_MCP_EXEMPT },
@@ -434,7 +434,7 @@ export const eventsDelete = defineCapability({
   // RATE_LIMITED: the per-org delete throttle (the destructive-op mitigation) trips.
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "events:delete" },
-  semantics: { idempotent: true },
+  semantics: { destructive: true, idempotent: true },
 });
 
 // ── Provider signing-secret management (ADR-0078, decisions D1/D2) ───────────────────────────────
@@ -513,7 +513,7 @@ export const endpointsAddProviderSecret = defineCapability({
   output: AddedProviderSecretSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: false },
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
@@ -541,7 +541,7 @@ export const endpointsRevokeProviderSecret = defineCapability({
   output: RevokedProviderSecretSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: true },
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
@@ -594,7 +594,7 @@ export const replayDestinationsCreate = defineCapability({
   // the handler scope check is the sole gate). VALIDATION_ERROR carries the structural URL rejection.
   errors: ["UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: false },
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
@@ -621,7 +621,7 @@ export const replayDestinationsDelete = defineCapability({
   // target. NOT_FOUND for an unknown / cross-org / already-removed id (don't leak existence).
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: true },
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
@@ -637,7 +637,7 @@ export const replayDestinationsEnable = defineCapability({
   output: ReplayDestinationSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: false },
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
@@ -649,7 +649,7 @@ export const replayDestinationsSetOrdered = defineCapability({
   output: ReplayDestinationSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: false },
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
@@ -684,7 +684,7 @@ export const replayDestinationsRotateSigningSecret = defineCapability({
   // downtime (both signatures are sent, space-delimited, until the next rotation).
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: true },
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
@@ -722,7 +722,7 @@ export const subscriptionsCreate = defineCapability({
   // ingest resolver would exclude is rejected, not silently created as an undeliverable rule).
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: false },
   surfaceExempt: { web: WEB_DEFERRED, mcp: SUBSCRIPTIONS_MCP_EXEMPT },
 });
 
@@ -748,7 +748,7 @@ export const subscriptionsDelete = defineCapability({
   // Hard delete. NOT_FOUND for an unknown / cross-org / already-removed id (don't leak existence).
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
-  semantics: {},
+  semantics: { destructive: true },
   surfaceExempt: { web: WEB_DEFERRED, mcp: SUBSCRIPTIONS_MCP_EXEMPT },
 });
 
@@ -818,7 +818,7 @@ export const triggersCreate = defineCapability({
   // NOT_FOUND: the endpoint is missing / soft-deleted / cross-org (don't bind a dead target, don't leak).
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "triggers:write" },
-  semantics: {},
+  semantics: { destructive: false },
 });
 export const triggersList = defineCapability({
   name: "triggers.list",
@@ -837,7 +837,7 @@ export const triggersRevoke = defineCapability({
   // id, no re-audit); only an unknown / cross-org id is NOT_FOUND (don't leak existence).
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "triggers:write" },
-  semantics: { idempotent: true },
+  semantics: { destructive: true, idempotent: true },
 });
 // triggers.wait — the CONSUMPTION primitive: short-poll the next events for a trigger subscription. Returns
 // immediately with whatever is past `cursor` up to the gapless watermark; the caller re-invokes with the

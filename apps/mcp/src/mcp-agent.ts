@@ -66,6 +66,42 @@ const SERVER_DESCRIPTION =
 const WHOAMI_DESCRIPTION =
   "Who am I? Returns the authenticated organization, user, and granted scopes. Includes the user's name and email only if the `profile` scope was granted at authorization.";
 
+/**
+ * Short human-facing display names, shown in tool pickers and required by the Connectors Directory
+ * ("All tools must include a `title`"). Sentence case, per the brand voice.
+ *
+ * Hand-written because a title is display copy, not a derivable fact — but NOT optional: the
+ * registration below throws on a missing one rather than falling back to the tool name, because a
+ * fallback title is indistinguishable from a real one on the wire and would pass a presence check
+ * while telling a user nothing. `mcp-tools.test.ts` asserts both, over the live tools/list response.
+ */
+const TOOL_TITLES: Record<string, string> = {
+  "endpoints.list": "List endpoints",
+  "endpoints.get": "Get endpoint",
+  "endpoints.create": "Create endpoint",
+  "endpoints.delete": "Delete endpoint",
+  "endpoints.rotate": "Rotate ingest URL",
+  "endpoints.update": "Update endpoint",
+  "endpoints.revealIngestUrl": "Reveal ingest URL (bearer credential)",
+  "endpoints.addProviderSecret": "Add provider signing secret",
+  "endpoints.listProviderSecrets": "List provider signing secrets",
+  "endpoints.revokeProviderSecret": "Revoke provider signing secret",
+  "events.list": "List events",
+  "events.get": "Get event",
+  "events.tail": "Tail events",
+  "events.delete": "Delete event",
+  "deliveries.list": "List deliveries",
+  "deliveries.get": "Get delivery",
+  "triggers.create": "Create agent trigger",
+  "triggers.list": "List agent triggers",
+  "triggers.revoke": "Revoke agent trigger",
+  "triggers.wait": "Wait for triggered events",
+  "audit.verify": "Verify audit chain",
+  "usage.get": "Get usage",
+};
+
+const WHOAMI_TITLE = "Who am I";
+
 /** Concise, agent-facing descriptions for the bound read tools (MCP tool discovery). */
 const TOOL_DESCRIPTIONS: Record<string, string> = {
   "endpoints.list":
@@ -130,6 +166,66 @@ function inputSchema(cap: AnyCapability): z.ZodTypeAny {
   return cap.input;
 }
 
+/**
+ * The display name, or a hard failure.
+ *
+ * No `?? cap.name` fallback, deliberately — that is what `TOOL_DESCRIPTIONS` does, and it means a
+ * forgotten entry ships as a title that LOOKS present to any presence check while telling a user
+ * nothing. Throwing at registration turns "someone added a capability and forgot the copy" into a
+ * failing boot in CI instead of a silently degraded listing.
+ */
+function toolTitle(cap: AnyCapability): string {
+  const title = TOOL_TITLES[cap.name];
+  if (title === undefined || title.trim() === "") {
+    throw new Error(`mcp: no TOOL_TITLES entry for "${cap.name}" — add one before binding it`);
+  }
+  return title;
+}
+
+/**
+ * MCP tool annotations, DERIVED from the capability contract rather than restated here.
+ *
+ * The Connectors Directory requires a `title` plus the applicable `readOnlyHint`/`destructiveHint`,
+ * and a second hand-maintained list of which tools are read-only would drift from the scopes that
+ * actually gate them. So:
+ *   • `readOnlyHint` ← the auth scope. `:read` is read-only; `endpoints:write`, `events:replay`,
+ *     `events:delete` and `triggers:write` are not.
+ *   • `destructiveHint` ← `semantics.destructive`, which `parity.test.ts` requires every write
+ *     capability to declare. Only emitted for writes: the hint is meaningless when `readOnlyHint`
+ *     is true, and the MCP default of `true` is why silence is not an option for a write.
+ *   • `idempotentHint` ← `semantics.idempotent`. Same gate as `destructiveHint`, for the same
+ *     spec reason — it is defined only when `readOnlyHint` is false.
+ *
+ * CAVEAT on the first bullet, because it is the load-bearing one: a scope governs AUTHORIZATION, not
+ * mutation, and nothing structurally stops a `:read` capability from writing. `readOnlyHint: true` is
+ * what a client may use to auto-approve without prompting, so the mapping is only as good as the
+ * handlers. Verified handler-by-handler as of this change: all 12 read-scoped bound capabilities are
+ * pure selects under `withTenant` — `triggers.wait` included, whose ack is a caller-held cursor, not a
+ * server-side write. Re-check when adding a capability; the guard cannot see this for you.
+ *
+ * `openWorldHint` is left at its MCP default (`true`) — deliberately undecided, not decided closed.
+ * The directory does not require it, and a per-tool judgement on whether third-party payloads make
+ * `events.*` "open world" is a separate call from this change.
+ */
+function toolAnnotations(cap: AnyCapability): {
+  readOnlyHint: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+} {
+  const readOnly = cap.auth.scope.endsWith(":read");
+  return {
+    readOnlyHint: readOnly,
+    ...(readOnly
+      ? {}
+      : {
+          destructiveHint: cap.semantics.destructive === true,
+          ...(cap.semantics.idempotent === undefined
+            ? {}
+            : { idempotentHint: cap.semantics.idempotent }),
+        }),
+  };
+}
+
 export class WebhookMcp extends McpAgent<McpEnv> {
   server = new McpServer({
     name: SERVER_NAME,
@@ -166,7 +262,12 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     for (const cap of MCP_BOUND_CAPABILITIES) {
       this.server.registerTool(
         cap.name,
-        { description: TOOL_DESCRIPTIONS[cap.name] ?? cap.name, inputSchema: inputSchema(cap) },
+        {
+          title: toolTitle(cap),
+          description: TOOL_DESCRIPTIONS[cap.name] ?? cap.name,
+          inputSchema: inputSchema(cap),
+          annotations: toolAnnotations(cap),
+        },
         async (args: unknown) => {
           const result = await this.runTool(cap.name, args);
           // The single point where an McpToolResult becomes the SDK's (mutable) CallToolResult.
@@ -186,9 +287,17 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     // a client that sends a placeholder argument for a no-parameter tool, which real MCP clients do.
     // whoami is the canonical "is my connection working" call, so that failure would land on the first
     // thing a new user runs, to buy nothing but symmetry.
+    // Annotated by hand because it is not a capability: it reads the authenticated principal and
+    // nothing else. No `idempotentHint` — the spec defines it only when `readOnlyHint` is false, the
+    // same rule this file enforces for `destructiveHint`.
     this.server.registerTool(
       "whoami",
-      { description: WHOAMI_DESCRIPTION, inputSchema: {} },
+      {
+        title: WHOAMI_TITLE,
+        description: WHOAMI_DESCRIPTION,
+        inputSchema: {},
+        annotations: { readOnlyHint: true },
+      },
       async () => {
         let ctx: AuthContext;
         try {
