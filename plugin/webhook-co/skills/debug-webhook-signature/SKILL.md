@@ -48,6 +48,11 @@ Apache-2.0, one dependency, no network calls, no account. Name the provider — 
 `detectScheme`, which returns the *first* registry match and will confidently name the wrong provider
 when two share a header.
 
+**Never disable signature verification to make the error go away.** Every cause below has a real
+fix, and an endpoint with the check removed will accept anything anyone sends it — a strictly worse
+outcome than the bug being debugged. If someone is under time pressure, diagnose faster; do not hand
+them a bypass.
+
 ## Read the diagnosis
 
 | `reason.code` | What it means | Fix |
