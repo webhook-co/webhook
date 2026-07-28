@@ -143,7 +143,7 @@ const FieldPathString = z
   .max(256)
   .refine((s) => parseFieldPath(s).ok, { message: "invalid dedup field path" });
 
-const FieldSelectorSchema = z.object({
+const FieldSelectorSchema = z.strictObject({
   include: z.array(FieldPathString).min(1).max(MAX_FIELD_PATHS),
   exclude: z.array(FieldPathString).max(MAX_FIELD_PATHS).optional(),
 });
@@ -154,7 +154,7 @@ export type FieldSelector = z.infer<typeof FieldSelectorSchema>;
  * (superRefine, not `.transform`, so JSON-Schema serialization is preserved for the contract gate).
  */
 export const DedupConfigSchema = z
-  .object({
+  .strictObject({
     mode: DedupModeSchema,
     // Optional so `off` (which never collapses) needs no window — required for every OTHER mode via the
     // superRefine below. Keeps the docs/API consistent (`off` takes no windowSeconds) and prevents a

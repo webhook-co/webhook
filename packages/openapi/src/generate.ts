@@ -238,7 +238,17 @@ function pathParameter(inputJson: JsonObject, capabilityName: string, name: stri
   };
 }
 
-/** The request body schema = the capability input minus the path-param properties. */
+/**
+ * The request body schema = the capability input minus the path-param properties.
+ *
+ * `additionalProperties` is carried across deliberately. The body has to be REBUILT (the path params
+ * come out of it), and rebuilding it as `{ type, properties, required }` silently dropped the
+ * strictness the input declares. Capability inputs reject unknown keys with a 400 VALIDATION_ERROR,
+ * so a spec that omits `additionalProperties: false` describes a server that does not exist — and
+ * this spec is what the SDK generators read, so the clients built from it would send fields the API
+ * refuses. Copy the flag rather than hard-coding `false`: if an input is ever legitimately not
+ * strict, the spec should say so instead of lying in the other direction.
+ */
 function requestBodySchema(cap: AnyCapability, path: string): JsonObject {
   const json = inputJsonSchema(cap);
   const pathParams = new Set(pathParamNames(path));
@@ -249,6 +259,8 @@ function requestBodySchema(cap: AnyCapability, path: string): JsonObject {
   );
   const body: JsonObject = { type: "object", properties };
   if (required.length > 0) body.required = required;
+  if (json.additionalProperties !== undefined)
+    body.additionalProperties = json.additionalProperties;
   return body;
 }
 

@@ -180,6 +180,36 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     expect(whoami?.description).toMatch(/profile/i);
   });
 
+  // The advertised schema is half the contract; this is the other half. Asserting only that
+  // `tools/list` carries `additionalProperties: false` would leave the client-visible behaviour of the
+  // exact historical mistake — `eventTypes` on `triggers.create`, real on `subscriptions.create` —
+  // untested on the surface this change is aimed at. Pinned here so a future change that hands the SDK
+  // a `.shape` again (silently restoring the strip) fails rather than passing a schema-only check.
+  it("rejects an invented argument on tools/call, naming the key", async () => {
+    const session = await handshake();
+    const res = await rpc(
+      {
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: {
+          name: "triggers.create",
+          arguments: {
+            endpointId: "00000000-0000-4000-8000-000000000000",
+            eventTypes: ["issue.updated"],
+          },
+        },
+      },
+      session,
+    );
+    expect(res.status).toBe(200);
+    // The SDK validates against the advertised schema BEFORE the handler, so this arrives as a
+    // JSON-RPC error rather than the tools.ts `{"error":"VALIDATION_ERROR"}` result envelope.
+    const body = JSON.stringify(res.message);
+    expect(body).toMatch(/eventTypes/);
+    expect(body.toLowerCase()).toMatch(/unrecognized|invalid/);
+  });
+
   it("whoami returns org-only identity for an api-key principal (no userId → no PII, no profile RPC)", async () => {
     // The seeded principal is an ORG-bound api key (no userId), so whoami must return orgId + scopes and
     // NEVER name/email — the profile RPC is structurally unreachable without a userId. This drives the tool
@@ -211,7 +241,7 @@ describe("mcp tool surface — authenticated end-to-end", () => {
   // capability input being strict server-side is necessary but invisible: if we advertise the bare
   // shape, the published JSON Schema carries no `additionalProperties`, so an agent inventing a
   // plausible sibling field (`eventTypes`, real on subscriptions.create) has nothing telling it no,
-  // and learns only from a VALIDATION_ERROR after the fact. Advertising the strict schema moves that
+  // and learns only from the rejection after the fact. Advertising the strict schema moves that
   // signal before the call. Asserted across EVERY tool, because one tool proves one wiring.
   it("advertises additionalProperties:false on every tool, so an invented field is visible pre-call", async () => {
     const { sessionId, protocolVersion } = await handshake();

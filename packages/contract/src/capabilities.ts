@@ -106,7 +106,7 @@ export const endpointsList = defineCapability({
     limit: z.number().int().positive().max(200).optional(),
     // Optional substring name filter (case-insensitive). The endpoint set is small/capped per org, so
     // this is an unindexed residual filter by design — no migration needed.
-    filter: z.object({ name: z.string().trim().min(1).max(200).optional() }).optional(),
+    filter: z.strictObject({ name: z.string().trim().min(1).max(200).optional() }).optional(),
   }),
   output: paged(EndpointSchema),
   errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
@@ -249,7 +249,7 @@ export const eventsList = defineCapability({
     // parses + validates each bound into a Date (a malformed value → VALIDATION_ERROR, never a raw
     // string handed to SQL → a Postgres 22P02), so the check lives in exactly one place.
     filter: z
-      .object({
+      .strictObject({
         // provider + verificationState are MULTI-select (OR'd within each, AND'd across fields):
         // `provider=[stripe,github]` → `provider in (...)`. multiEnum accepts a scalar or a non-empty
         // array (normalized to an array) — JSON-Schema-clean for the MCP inputSchema. Omit = no filter.

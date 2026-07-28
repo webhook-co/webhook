@@ -305,7 +305,9 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     // (whsec_+valid-base64, validated with the same decoder the verify path uses). A mis-stored SW
     // secret is rejected here rather than verifying as NO_MATCHING_KEY forever. Surface the failing
     // issue's message (e.g. "a standard_webhooks secret must be whsec_ followed by standard base64") so
-    // the operator can self-correct — the messages are fixed strings, never the secret value.
+    // the operator can self-correct. The message never contains the input VALUE — zod carries no `input`
+    // on these issues — so a secret cannot be echoed back. It is no longer a fixed string in every case:
+    // now that inputs are strict, an `unrecognized_keys` message interpolates the caller's own key NAMES.
     const parsed = endpointsAddProviderSecret.input.safeParse(input);
     if (!parsed.success) {
       throw new CapabilityFault(

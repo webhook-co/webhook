@@ -26,10 +26,14 @@ function isStrictObject(schema: z.ZodTypeAny): boolean {
  * `triggers.create` (a real field, but on the sibling `subscriptions.create`) got a success and a
  * trigger that did not do what it asked. Nothing anywhere said no.
  *
- * Strictness fixes it twice over: `safeParse` now returns `unrecognized_keys` → VALIDATION_ERROR on
- * every surface, and `z.toJSONSchema(input, { io: "input" })` starts emitting
- * `additionalProperties: false`, which is what the MCP tool schema advertises — so a model is told
- * the key is illegal BEFORE it calls, rather than being lied to afterwards.
+ * Strictness fixes it twice over: `safeParse` returns `unrecognized_keys`, which the handlers map to
+ * VALIDATION_ERROR, and `z.toJSONSchema(input, { io: "input" })` starts emitting
+ * `additionalProperties: false` — which is what the MCP tool schema and the OpenAPI request bodies
+ * advertise, so a client is told the key is illegal BEFORE it sends it rather than after.
+ *
+ * On MCP the rejection actually lands one layer earlier: the SDK validates against the advertised
+ * schema before the handler runs, so a client sees a JSON-RPC InvalidParams rather than the
+ * VALIDATION_ERROR envelope. Same refusal, different wrapper — see `apps/mcp/src/mcp-agent.ts`.
  */
 describe("capability inputs reject unknown keys", () => {
   it("has capabilities to check", () => {
@@ -38,6 +42,78 @@ describe("capability inputs reject unknown keys", () => {
 
   it.each(CAPABILITIES.map((c) => [c.name, c] as const))("%s input is strict", (_name, cap) => {
     expect(isStrictObject(cap.input)).toBe(true);
+  });
+
+  /**
+   * Top-level strictness is not enough. `defineCapability` only strictens the OUTER object, so a
+   * nested one keeps stripping: `events.list` accepted `{filter:{bogus:1}}`, parsed it to
+   * `{filter:{}}`, and returned an UNFILTERED page with a 200 — the same lie as the invented
+   * `eventTypes`, one level down, on a field whose whole job is to narrow results.
+   *
+   * Walk every object reachable from an input (through optional/nullable/default/array/union
+   * wrappers) and require all of them to be strict. A per-site `z.strictObject` is the fix; this is
+   * what stops the next nested `z.object` from re-opening the hole.
+   */
+  function nestedObjects(schema: z.ZodTypeAny, path = "", seen = new Set<unknown>()): string[] {
+    if (seen.has(schema)) return [];
+    seen.add(schema);
+    const def = (schema as unknown as { _zod?: { def?: Record<string, unknown> } })._zod?.def;
+    if (!def) return [];
+    const type = def.type as string;
+    const out: string[] = [];
+    if (type === "object") {
+      if (path !== "" && !isStrictObject(schema)) out.push(path);
+      for (const [key, child] of Object.entries(def.shape as Record<string, z.ZodTypeAny>)) {
+        out.push(...nestedObjects(child, path === "" ? key : `${path}.${key}`, seen));
+      }
+      return out;
+    }
+    for (const k of ["innerType", "element", "valueType", "in", "out"]) {
+      const child = def[k] as z.ZodTypeAny | undefined;
+      if (child) out.push(...nestedObjects(child, path, seen));
+    }
+    for (const child of (def.options as z.ZodTypeAny[] | undefined) ?? []) {
+      out.push(...nestedObjects(child, path, seen));
+    }
+    return out;
+  }
+
+  it.each(CAPABILITIES.map((c) => [c.name, c] as const))(
+    "%s has no loose nested object",
+    (name, cap) => {
+      expect(
+        nestedObjects(cap.input),
+        `${name}: these nested objects still strip unknown keys`,
+      ).toEqual([]);
+    },
+  );
+
+  /**
+   * `.strict()` overwrites a catchall rather than composing with one: `.catchall(z.string()).strict()`
+   * leaves `catchall === never`. So a future capability that deliberately accepts a typed metadata bag
+   * would have that intent destroyed here, silently — and the strictness assertion above would PASS,
+   * because `.strict()` is what made it true. A guard that cannot see the case it should flag is worse
+   * than no guard, so refuse the input instead of quietly rewriting it.
+   */
+  it("refuses an input that declares a catchall instead of silently overriding it", () => {
+    expect(() =>
+      defineCapability({
+        name: "internal.catchall",
+        input: z.object({ a: z.string() }).catchall(z.string()),
+        output: z.object({}),
+        errors: ["UNAUTHORIZED"],
+        auth: { scope: "events:read" },
+        semantics: {},
+      }),
+    ).toThrow(/catchall/i);
+  });
+
+  it("rejects an unknown key inside a nested filter object", () => {
+    const eventsList = CAPABILITIES.find((c) => c.name === "events.list");
+    expect(eventsList, "events.list missing").toBeDefined();
+    const result = eventsList!.input.safeParse({ filter: { providerr: ["stripe"] } });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.code).toBe("unrecognized_keys");
   });
 
   it("rejects an invented key instead of silently dropping it", () => {

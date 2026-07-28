@@ -111,13 +111,20 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
 
 /**
  * Every capability input is a `z.object` (a contract invariant), and the WHOLE schema is advertised
- * as the MCP tool's parameter schema — not its `.shape`. The distinction is the point: capability
- * inputs are strict, and `z.toJSONSchema(input, { io: "input" })` only emits
- * `additionalProperties: false` for the schema itself. Handing over the bare shape drops that, and
- * an agent inventing a plausible sibling field (`eventTypes`, which is real on
- * `subscriptions.create`) would see nothing forbidding it and learn only from the VALIDATION_ERROR
- * afterwards. The shared handler still re-validates, so this remains the discovery surface rather
- * than the authoritative gate — but discovery is exactly where a model makes the decision.
+ * as the tool's parameter schema — not its `.shape`. The distinction is the point: capability inputs
+ * are strict, and `z.toJSONSchema(input, { io: "input" })` only emits `additionalProperties: false`
+ * for the schema itself. Handing over the bare shape drops that, and an agent inventing a plausible
+ * sibling field (`eventTypes`, which is real on `subscriptions.create`) would see nothing forbidding
+ * it — discovery is exactly where a model makes the decision.
+ *
+ * This also MOVES the rejection. The SDK validates arguments against whatever schema it was given
+ * before it calls the handler, and it previously wrapped the bare `.shape` in a non-strict object, so
+ * unknown keys were stripped and the shared handler's own `safeParse` was the first thing to see
+ * them. Handing over the real schema makes the SDK the first and only gate for this class: it answers
+ * a JSON-RPC `-32602` InvalidParams, NOT the `{"error":"VALIDATION_ERROR"}` envelope
+ * `apps/mcp/src/tools.ts` builds. That is a deliberate trade — an earlier, stricter rejection with
+ * the offending key named, at the cost of this one error class not carrying a capability error code
+ * on mcp. The two `.superRefine` inputs move with it, for the same reason.
  */
 function inputSchema(cap: AnyCapability): z.ZodTypeAny {
   return cap.input;

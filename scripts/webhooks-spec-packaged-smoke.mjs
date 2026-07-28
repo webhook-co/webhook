@@ -62,12 +62,15 @@ try {
   );
 
   // ── 2b. The legal files `files` promises must actually be IN the tarball ────
-  // `files` is a wish list, not a manifest: npm drops entries that do not exist on disk, silently and
-  // with exit 0. So `"license": "Apache-2.0"` plus `"files": ["LICENSE"]` shipped a tarball carrying
-  // the CLAIM of a licence and none of its text — for every release to date. Asserting the manifest
-  // field would have proved nothing; only the packed bytes can. Grep the archive listing, then read
-  // the file back and check it is the licence it says it is, so an empty or truncated LICENSE fails
-  // the same way a missing one does.
+  // `packages/webhooks-spec/LICENSE` does not exist on disk, yet `files` lists it and the manifest
+  // declares Apache-2.0. That combination ships correctly ONLY because `pnpm pack` hoists the
+  // workspace-root LICENSE into the tarball — `npm pack` does not, and `files` is a wish list rather
+  // than a manifest: npm drops entries with no file behind them silently, with exit 0. So the licence
+  // currently survives on the same pnpm-only behaviour step 2 above already guards for the entry
+  // points, and it would vanish the day this package is published with plain npm, with nothing else
+  // saying so. Asserting the manifest field would prove nothing; only the packed bytes can. Read the
+  // archive listing, then read the file back and check it is the licence it claims to be, so an empty
+  // or truncated LICENSE fails the same way a missing one does.
   const packedFiles = execFileSync("tar", ["-tzf", join(scratch, tarball)], { encoding: "utf8" })
     .split("\n")
     .map((f) => f.trim())

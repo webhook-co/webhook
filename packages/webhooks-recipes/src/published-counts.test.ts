@@ -21,6 +21,10 @@ import { BESPOKE_ADAPTER_SLUGS, PROVIDER_CONFIGS, PROVIDERS } from "@webhook-co/
  * Deliberately NOT a repo-wide regex sweep for "N providers": legitimate subset claims are everywhere
  * ("18 providers share one recipe", "62 singletons lack a page"), and a pattern loose enough to catch
  * the headline catches those too. An explicit list is longer and honest.
+ *
+ * That rationale holds for the REPO. It does not hold for the files npm publishes, and relying on it
+ * there is how this list came to omit `packages/webhooks-spec`'s own README and `description` while
+ * they told the registry 141 — see the scoped, discovering sweep at the bottom of this file.
  */
 
 const REPO = fileURLToPath(new URL("../../../", import.meta.url));
@@ -195,8 +199,15 @@ describe("published provider counts match the registry", () => {
    * surfaces have no history, no competitors and no fixtures, so the rule can stay absolute.
    */
   describe("published package surfaces state the live count", () => {
-    /** 3+ digits is registry-scale. Legitimate subset claims ("18 providers share a recipe") are 1-2. */
-    const REGISTRY_SCALE = /\b(\d{3,})[- ]?(?:listed |registered |supported )?providers?\b/g;
+    /**
+     * 3+ digits is registry-scale; legitimate subset claims ("18 providers share a recipe") are 1-2.
+     *
+     * The adjective slot is a wildcard rather than a fixed list of `listed|registered|supported`,
+     * because a fixed list is the same curated-list mistake one level down: it silently misses
+     * "144 webhook providers" and "144 supported webhook providers". `\+?` catches the "144+
+     * providers" marketing form, which is the single most likely way a stale count ships.
+     */
+    const REGISTRY_SCALE = /\b(\d{3,})\+?[- ]?(?:[a-z-]+ ){0,2}providers?\b/gi;
     /** What npm renders on the package page: the readme body and the manifest's description. */
     const SHOP_WINDOW = ["README.md", "package.json"] as const;
 
@@ -231,6 +242,28 @@ describe("published provider counts match the registry", () => {
         found.length,
         "no packages/*/{README.md,package.json} states a provider count — either the copy was removed (delete this) or the pattern stopped matching (re-point it)",
       ).toBeGreaterThan(0);
+    });
+
+    // The pattern IS the guard: too narrow and a stale count ships unseen, too wide and it fires on a
+    // changelog or a competitor's number. Pin both directions — the floors above cannot catch a false
+    // negative, because the three real claims satisfy `found.length > 0` forever.
+    it("matches the phrasings a stale count would actually ship in", () => {
+      for (const phrase of [
+        "144 providers",
+        "144+ providers",
+        "144 webhook providers",
+        "144 supported webhook providers",
+        "144-provider registry",
+        "144 listed providers",
+      ]) {
+        expect([...phrase.matchAll(REGISTRY_SCALE)].length, `missed: ${phrase}`).toBe(1);
+      }
+    });
+
+    it("does not fire on subset claims", () => {
+      for (const phrase of ["18 providers share one recipe", "62 singletons", "9 providers"]) {
+        expect([...phrase.matchAll(REGISTRY_SCALE)].length, `false positive: ${phrase}`).toBe(0);
+      }
     });
 
     it("every discovered claim equals the live registry size", () => {
