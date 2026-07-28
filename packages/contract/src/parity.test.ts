@@ -2,8 +2,67 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { defineCapability, requiredSurfaces, SURFACES } from "./capability";
-import { CAPABILITIES } from "./capabilities";
+import { CAPABILITIES, triggersCreate } from "./capabilities";
 import { assertCapabilityParity, emptyBindings, findParityViolations } from "./parity";
+
+/**
+ * Zod marks a strict object by setting its catchall to `never`. There is no public `.isStrict`, and
+ * asserting on a parse result alone would let a schema that merely happens to have no extra keys in
+ * the fixture pass — so read the marker directly.
+ */
+function isStrictObject(schema: z.ZodTypeAny): boolean {
+  const def = (schema as unknown as { _zod?: { def?: { type?: string; catchall?: unknown } } })._zod
+    ?.def;
+  if (def?.type !== "object") return false;
+  const catchall = def.catchall as { _zod?: { def?: { type?: string } } } | undefined;
+  return catchall?._zod?.def?.type === "never";
+}
+
+/**
+ * Unknown keys on a capability input must be REJECTED, not silently dropped.
+ *
+ * Zod's default is to strip. That made every surface — API, CLI, MCP, the SDKs — accept a field it
+ * did not understand, discard it, and return 200. An agent that invented `eventTypes` on
+ * `triggers.create` (a real field, but on the sibling `subscriptions.create`) got a success and a
+ * trigger that did not do what it asked. Nothing anywhere said no.
+ *
+ * Strictness fixes it twice over: `safeParse` now returns `unrecognized_keys` → VALIDATION_ERROR on
+ * every surface, and `z.toJSONSchema(input, { io: "input" })` starts emitting
+ * `additionalProperties: false`, which is what the MCP tool schema advertises — so a model is told
+ * the key is illegal BEFORE it calls, rather than being lied to afterwards.
+ */
+describe("capability inputs reject unknown keys", () => {
+  it("has capabilities to check", () => {
+    expect(CAPABILITIES.length).toBeGreaterThan(0);
+  });
+
+  it.each(CAPABILITIES.map((c) => [c.name, c] as const))("%s input is strict", (_name, cap) => {
+    expect(isStrictObject(cap.input)).toBe(true);
+  });
+
+  it("rejects an invented key instead of silently dropping it", () => {
+    const result = triggersCreate.input.safeParse({
+      endpointId: "00000000-0000-4000-8000-000000000000",
+      eventTypes: ["payment.succeeded"],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.code).toBe("unrecognized_keys");
+  });
+
+  it("still accepts the same input without the invented key", () => {
+    const result = triggersCreate.input.safeParse({
+      endpointId: "00000000-0000-4000-8000-000000000000",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("advertises additionalProperties:false to MCP clients", () => {
+    const schema = z.toJSONSchema(triggersCreate.input, { io: "input" }) as {
+      additionalProperties?: boolean;
+    };
+    expect(schema.additionalProperties).toBe(false);
+  });
+});
 
 function fullBindings() {
   const b = emptyBindings();

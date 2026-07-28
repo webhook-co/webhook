@@ -1,5 +1,5 @@
-/* eslint-disable security/detect-non-literal-fs-filename -- every path is a fixed literal in CLAIMS, never user input. */
-import { readFileSync } from "node:fs";
+/* eslint-disable security/detect-non-literal-fs-filename -- paths are CLAIMS literals or come from a readdirSync of packages/, never user input. */
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { BESPOKE_ADAPTER_SLUGS, PROVIDER_CONFIGS, PROVIDERS } from "@webhook-co/webhooks-spec";
@@ -172,5 +172,73 @@ describe("published provider counts match the registry", () => {
         `${file} no longer contains "${fragment}". Either the count moved (update the copy) or the sentence was reworded (re-point this claim).`,
       ).toBe(true);
     }
+  });
+
+  /**
+   * A SECOND, INDEPENDENT discovery — over the files npm actually publishes.
+   *
+   * CLAIMS above is curated, and a curated list can only ever report on itself. It covers
+   * `apps/docs`, `apps/www` and the root README, and it missed `packages/webhooks-spec`'s own README
+   * and npm `description` — which shipped to the registry saying 141 providers while the code held
+   * 144. Nothing went red, because the file naming the number was not on the list naming the files.
+   *
+   * So this half discovers: walk every workspace package, read the two files that are its shop
+   * window on npm, and require any registry-scale count in them to be the live one. A package added
+   * tomorrow is covered the day it lands, with no edit here.
+   *
+   * Scoped to `packages/*` on purpose, NOT a repo-wide sweep, because a sweep is wrong here and the
+   * repo proves it three ways: `apps/docs/changelog.mdx` says "141 providers" under a dated
+   * "June 30, 2026" heading and is CORRECT — a changelog records what was true then, and "fixing" it
+   * would falsify history. `apps/www/src/lib/comparisons.ts` says "135 provider-specific configs"
+   * about a competitor. Several `*.test.ts` files carry 122 and 141 as fixtures. Catching those
+   * three would need an exemption list, and the exemption list is the hole. Published package
+   * surfaces have no history, no competitors and no fixtures, so the rule can stay absolute.
+   */
+  describe("published package surfaces state the live count", () => {
+    /** 3+ digits is registry-scale. Legitimate subset claims ("18 providers share a recipe") are 1-2. */
+    const REGISTRY_SCALE = /\b(\d{3,})[- ]?(?:listed |registered |supported )?providers?\b/g;
+    /** What npm renders on the package page: the readme body and the manifest's description. */
+    const SHOP_WINDOW = ["README.md", "package.json"] as const;
+
+    const found: { file: string; claim: string; count: number }[] = [];
+    const packageDirs = readdirSync(`${REPO}packages`, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+
+    for (const pkg of packageDirs) {
+      for (const name of SHOP_WINDOW) {
+        const file = `packages/${pkg}/${name}`;
+        let content: string;
+        try {
+          content = readFileSync(`${REPO}${file}`, "utf8");
+        } catch {
+          continue; // not every package ships a README; absence is not a claim.
+        }
+        for (const m of content.matchAll(REGISTRY_SCALE)) {
+          found.push({ file, claim: m[0], count: Number(m[1]) });
+        }
+      }
+    }
+
+    // FLOORS. A discovery that silently walked nothing reads exactly like a clean run, so make the
+    // two ways that can happen — no package dirs, no claims anywhere — loud failures instead.
+    it("walked the packages tree", () => {
+      expect(packageDirs.length, "readdir of packages/ found no directories").toBeGreaterThan(0);
+    });
+
+    it("found at least one registry-scale claim to check", () => {
+      expect(
+        found.length,
+        "no packages/*/{README.md,package.json} states a provider count — either the copy was removed (delete this) or the pattern stopped matching (re-point it)",
+      ).toBeGreaterThan(0);
+    });
+
+    it("every discovered claim equals the live registry size", () => {
+      const stale = found.filter((f) => f.count !== TOTAL);
+      expect(
+        stale.map((f) => `${f.file}: "${f.claim}" (registry has ${TOTAL})`),
+        "a published package tells npm a provider count the registry does not agree with",
+      ).toEqual([]);
+    });
   });
 });

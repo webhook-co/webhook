@@ -207,6 +207,29 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     expect(JSON.stringify(eventsList?.inputSchema)).toContain("endpointId");
   });
 
+  // The schema a client is HANDED is the only thing a model can reason about before it calls. A
+  // capability input being strict server-side is necessary but invisible: if we advertise the bare
+  // shape, the published JSON Schema carries no `additionalProperties`, so an agent inventing a
+  // plausible sibling field (`eventTypes`, real on subscriptions.create) has nothing telling it no,
+  // and learns only from a VALIDATION_ERROR after the fact. Advertising the strict schema moves that
+  // signal before the call. Asserted across EVERY tool, because one tool proves one wiring.
+  it("advertises additionalProperties:false on every tool, so an invented field is visible pre-call", async () => {
+    const { sessionId, protocolVersion } = await handshake();
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 4, method: "tools/list", params: {} },
+      { sessionId, protocolVersion },
+    );
+    const { tools } = res.message?.result as {
+      tools: { name: string; inputSchema?: { additionalProperties?: unknown } }[];
+    };
+    // Anti-vacuity: an empty tool list would make the loop below pass without checking anything.
+    expect(tools.length).toBeGreaterThan(10);
+    const loose = tools
+      .filter((t) => t.inputSchema?.additionalProperties !== false)
+      .map((t) => t.name);
+    expect(loose, "these tools advertise a schema that tolerates unknown keys").toEqual([]);
+  });
+
   it("denies a tools/call when the key lacks the capability's scope (FORBIDDEN, before any DB)", async () => {
     // Seed a key WITHOUT audit:read, then call audit.verify. The shared handler's scope check fails
     // closed before any tenant read, so this exercises the full grant -> dispatch -> CapabilityFault

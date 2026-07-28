@@ -16,7 +16,8 @@ import {
   readSecretBinding,
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
-import type { z } from "zod";
+// A VALUE import: whoami declares an explicit strict empty input (see its registration below).
+import { z } from "zod";
 
 import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
 import { grantPropsToAuthContext } from "./grant";
@@ -109,12 +110,17 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
- * Every capability input is a `z.object` (a contract invariant), so its `.shape` is the MCP tool's
- * parameter schema — advertised to clients for discovery. The shared handler re-validates the input
- * against the full schema, so this is the discovery surface, not the authoritative gate.
+ * Every capability input is a `z.object` (a contract invariant), and the WHOLE schema is advertised
+ * as the MCP tool's parameter schema — not its `.shape`. The distinction is the point: capability
+ * inputs are strict, and `z.toJSONSchema(input, { io: "input" })` only emits
+ * `additionalProperties: false` for the schema itself. Handing over the bare shape drops that, and
+ * an agent inventing a plausible sibling field (`eventTypes`, which is real on
+ * `subscriptions.create`) would see nothing forbidding it and learn only from the VALIDATION_ERROR
+ * afterwards. The shared handler still re-validates, so this remains the discovery surface rather
+ * than the authoritative gate — but discovery is exactly where a model makes the decision.
  */
-function inputShape(cap: AnyCapability): z.ZodRawShape {
-  return (cap.input as z.ZodObject<z.ZodRawShape>).shape;
+function inputSchema(cap: AnyCapability): z.ZodTypeAny {
+  return cap.input;
 }
 
 export class WebhookMcp extends McpAgent<McpEnv> {
@@ -153,7 +159,7 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     for (const cap of MCP_BOUND_CAPABILITIES) {
       this.server.registerTool(
         cap.name,
-        { description: TOOL_DESCRIPTIONS[cap.name] ?? cap.name, inputSchema: inputShape(cap) },
+        { description: TOOL_DESCRIPTIONS[cap.name] ?? cap.name, inputSchema: inputSchema(cap) },
         async (args: unknown) => {
           const result = await this.runTool(cap.name, args);
           // The single point where an McpToolResult becomes the SDK's (mutable) CallToolResult.
@@ -168,9 +174,14 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     // whoami — identity, NOT a capability (binds no resource), so registered outside the capability loop.
     // Returns org/user/scopes always; name+email only when the token carries the consented `profile` scope,
     // resolved on-demand via the auth. RPC (kept off the introspection hot path).
+    // `z.object({}).strict()`, not `{}`: whoami takes no arguments, and a bare empty raw shape
+    // advertises an object with no `additionalProperties`, i.e. "pass me whatever you like, I will
+    // ignore it". Every capability tool tells a client that unknown keys are rejected; the one tool
+    // registered outside that loop must say the same thing or it is the exception that teaches agents
+    // the rule does not hold.
     this.server.registerTool(
       "whoami",
-      { description: WHOAMI_DESCRIPTION, inputSchema: {} },
+      { description: WHOAMI_DESCRIPTION, inputSchema: z.object({}).strict() },
       async () => {
         let ctx: AuthContext;
         try {

@@ -1,4 +1,5 @@
-import type { z } from "zod";
+// A VALUE import, not `import type`: defineCapability narrows on `instanceof z.ZodObject` at runtime.
+import { z } from "zod";
 
 // The transport-agnostic capability registry. A capability is a typed
 // descriptor — stable name, Zod input/output, typed error taxonomy, auth scope, and
@@ -119,11 +120,30 @@ export interface CapabilityDef<
   readonly surfaceExempt?: Partial<Record<SurfaceId, string>>;
 }
 
-/** Identity helper that fixes a capability descriptor while preserving its IO types. */
+/**
+ * Fixes a capability descriptor while preserving its IO types, and makes its input STRICT.
+ *
+ * Zod objects strip unknown keys by default, which meant every surface accepted a field it did not
+ * understand, dropped it, and answered 200. An agent that invented `eventTypes` on `triggers.create`
+ * — plausible, because it IS a real field on the sibling `subscriptions.create` — got a success and
+ * a trigger that ignored it. The lie was silent on the API, the CLI, the SDKs and MCP alike.
+ *
+ * Strictness is applied HERE rather than on each of the ~34 declarations so it cannot be forgotten by
+ * the next one: every capability funnels through this call, and `cap.input.safeParse` is the single
+ * parse used by all 26 handler sites, so one change covers every surface. It also changes what MCP
+ * advertises — `z.toJSONSchema(input, { io: "input" })` emits `additionalProperties: false` only for
+ * a strict object — so a model is told the key is illegal before it calls, instead of after.
+ *
+ * Deliberately a runtime narrowing, not a type-level one: `I` stays the declared schema type so
+ * every existing `z.infer<typeof cap.input>` keeps resolving. Non-object inputs pass through
+ * untouched — `.strict()` is meaningless on them, and silently skipping is better than throwing on a
+ * shape no capability currently uses.
+ */
 export function defineCapability<I extends z.ZodTypeAny, O extends z.ZodTypeAny>(
   def: CapabilityDef<I, O>,
 ): CapabilityDef<I, O> {
-  return def;
+  if (!(def.input instanceof z.ZodObject)) return def;
+  return { ...def, input: def.input.strict() as unknown as I };
 }
 
 export type AnyCapability = CapabilityDef;

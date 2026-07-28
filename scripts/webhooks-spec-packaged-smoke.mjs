@@ -61,6 +61,34 @@ try {
     JSON.stringify(packed.exports),
   );
 
+  // ── 2b. The legal files `files` promises must actually be IN the tarball ────
+  // `files` is a wish list, not a manifest: npm drops entries that do not exist on disk, silently and
+  // with exit 0. So `"license": "Apache-2.0"` plus `"files": ["LICENSE"]` shipped a tarball carrying
+  // the CLAIM of a licence and none of its text — for every release to date. Asserting the manifest
+  // field would have proved nothing; only the packed bytes can. Grep the archive listing, then read
+  // the file back and check it is the licence it says it is, so an empty or truncated LICENSE fails
+  // the same way a missing one does.
+  const packedFiles = execFileSync("tar", ["-tzf", join(scratch, tarball)], { encoding: "utf8" })
+    .split("\n")
+    .map((f) => f.trim())
+    .filter(Boolean);
+  for (const legal of ["LICENSE", "NOTICE"]) {
+    const present = packedFiles.includes(`package/${legal}`);
+    check(`tarball ships ${legal}`, present, `packed files: ${packedFiles.join(", ")}`);
+    if (!present) continue;
+    const body = execFileSync("tar", ["-xzOf", join(scratch, tarball), `package/${legal}`], {
+      encoding: "utf8",
+    });
+    check(`${legal} is non-empty`, body.trim().length > 0, `${body.length} bytes`);
+    if (legal === "LICENSE") {
+      check(
+        "LICENSE text matches the declared Apache-2.0",
+        body.includes("Apache License") && body.includes("Version 2.0"),
+        `declared "${packed.license}", first line: ${body.split("\n")[0]}`,
+      );
+    }
+  }
+
   // ── 3. Install it as a user would ───────────────────────────────────────────
   const app = join(scratch, "app");
   execFileSync("mkdir", ["-p", app]);
