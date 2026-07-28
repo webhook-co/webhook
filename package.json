@@ -13,7 +13,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev:db": "scripts/dev-db.sh",
-    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run no-early-db-close && pnpm run cap-cron-sync-guard && pnpm run cron-dispatch-guard && pnpm run subrequest-budget-guard && pnpm run deploy-token-pr-guard && pnpm run hyperdrive-binding-guard && pnpm run tracing-safety-guard && pnpm run remote-db-test-guard && pnpm run workflow-timeout-guard && pnpm run overrides-guard && pnpm run adr-no-dup && pnpm run docs-nav-guard && pnpm run docs-structured-data-guard && pnpm run content-dup-guard && pnpm run readyz-coverage-guard && pnpm run deploy-env-parity-guard && pnpm run mcp-registry-guard && pnpm run trigger-copy-guard && pnpm run test:scripts",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run no-early-db-close && pnpm run cap-cron-sync-guard && pnpm run cron-dispatch-guard && pnpm run subrequest-budget-guard && pnpm run deploy-token-pr-guard && pnpm run hyperdrive-binding-guard && pnpm run tracing-safety-guard && pnpm run remote-db-test-guard && pnpm run workflow-timeout-guard && pnpm run overrides-guard && pnpm run adr-no-dup && pnpm run docs-nav-guard && pnpm run docs-structured-data-guard && pnpm run content-dup-guard && pnpm run readyz-coverage-guard && pnpm run deploy-env-parity-guard && pnpm run mcp-registry-guard && pnpm run trigger-copy-guard && pnpm run plugin-manifest-guard && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -50,6 +50,7 @@
     "readyz-coverage-guard": "node scripts/readyz-coverage-guard.mjs",
     "deploy-env-parity-guard": "node scripts/deploy-env-parity-guard.mjs",
     "mcp-registry-guard": "node scripts/mcp-registry-guard.mjs",
+    "plugin-manifest-guard": "node scripts/plugin-manifest-guard.mjs",
     "trigger-copy-guard": "node scripts/trigger-copy-guard.mjs"
   },
   "devDependencies": {
