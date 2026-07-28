@@ -54,6 +54,7 @@ import {
 } from "@webhook-co/db";
 import {
   AwsKmsProvider,
+  LocalKmsProvider,
   b64ToBytes,
   type EncryptionContext,
   importAuditKey,
@@ -182,6 +183,16 @@ export interface Env {
   AWS_ACCESS_KEY_ID: SecretsStoreSecret;
   /** Secret access key of that principal. */
   AWS_SECRET_ACCESS_KEY: SecretsStoreSecret;
+  // LOCAL DEV ONLY. `KMS_MODE=local` swaps the AWS custodian for the hermetic LocalKmsProvider so a
+  // developer — or an external contributor, who will never have AWS credentials — can create an
+  // endpoint at all. It is NEVER emitted into the production wrangler config (asserted by
+  // scripts/kms-mode-guard.mjs), and kmsProviderFromEnv additionally REFUSES it in any environment
+  // that carries AWS KMS config. Two independent fences, because a local KEK in production would
+  // seal secrets under a key nobody custodies.
+  /** `"local"` selects the dev KEK custodian. Unset everywhere else, including every deploy. */
+  KMS_MODE?: string;
+  /** 32 random bytes, base64 — the dev KEK. Stable across restarts so sealed rows stay openable. */
+  LOCAL_KEK?: SecretsStoreSecret | string;
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** Hyperdrive config for the webhook_reconciler cross-org due-delivery read (query caching off). */
@@ -304,6 +315,50 @@ function memoizeIsolate<A, T>(factory: (arg: A) => Promise<T>): (arg: A) => Prom
   };
 }
 
+/** Present = a non-empty string or a Secrets Store binding. Never calls `.get()`, so it is safe on
+ * an environment where the binding is absent. */
+function kmsBindingPresent(value: unknown): boolean {
+  if (typeof value === "string") return value.length > 0;
+  return typeof (value as { get?: unknown } | null)?.get === "function";
+}
+
+/** The AWS KMS fields whose presence means "this environment is provisioned for a real custodian". */
+const AWS_KMS_FIELDS = [
+  "KMS_KEY_ARN",
+  "AWS_REGION",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+] as const;
+
+/**
+ * The hermetic dev KEK custodian.
+ *
+ * Fence: refuse outright if ANY AWS KMS field is bound. An environment provisioned for AWS is not one
+ * where a throwaway KEK may be substituted — honouring the flag there would seal provider secrets and
+ * ingest tokens under a key nobody custodies, and they would be unrecoverable. Partial config counts:
+ * it still says "provisioned for AWS".
+ */
+async function localKmsFromEnv(env: Env): Promise<KmsProvider> {
+  const provisioned = AWS_KMS_FIELDS.filter((f) => kmsBindingPresent(env[f]));
+  if (provisioned.length > 0) {
+    throw new Error(
+      `refusing KMS_MODE=local: this environment is provisioned for AWS KMS (${provisioned.join(", ")} bound). ` +
+        `A local KEK would seal secrets under a key nobody custodies.`,
+    );
+  }
+  const raw = kmsBindingPresent(env.LOCAL_KEK)
+    ? await readSecretBinding(env.LOCAL_KEK as SecretsStoreSecret | string)
+    : "";
+  if (!raw) {
+    throw new Error(
+      "KMS_MODE=local requires LOCAL_KEK (32 random bytes, base64). Run `pnpm dev:secrets`.",
+    );
+  }
+  const bytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+  // `return await` for the same reason as the caller: a bare return adopts fromRawKek's promise.
+  return await LocalKmsProvider.fromRawKek(bytes, "local-dev-kek");
+}
+
 /**
  * Build the production KEK custodian — AWS KMS (ADR-0007 / ADR-0009 day-one KMS), behind the shared
  * KmsProvider seam so callers never branch on the custodian. Fails fast (like the credential pepper)
@@ -311,6 +366,13 @@ function memoizeIsolate<A, T>(factory: (arg: A) => Promise<T>): (arg: A) => Prom
  * first unseal. `AwsKmsProvider.fromConfig` is synchronous and makes no network call here.
  */
 export async function kmsProviderFromEnv(env: Env): Promise<KmsProvider> {
+  // Exact-match only. A loose parse (truthiness, case-insensitive, "1"/"true") would be the entire
+  // vulnerability: a stray value must never silently select the dev custodian.
+  // `return await`, not a bare `return`: returning the inner promise makes it an adopted,
+  // momentarily-unhandled rejection, which workerd reports as an unhandled error and Vitest warns
+  // "might cause false positive tests".
+  if (env.KMS_MODE === "local") return await localKmsFromEnv(env);
+
   const [keyArn, region, accessKeyId, secretAccessKey] = await Promise.all([
     readSecretBinding(env.KMS_KEY_ARN),
     readSecretBinding(env.AWS_REGION),
