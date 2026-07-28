@@ -442,3 +442,41 @@ test("the mismatch error names the apps but never any secret material", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("checkExamples flags an example whose CONTENT drifted, not just a missing one", () => {
+  // Absence-only coverage would let an existence check pass this suite while a committed example
+  // carried a filled-in secret — the same vacuous-pass class the orphan test avoids. This is the
+  // case that actually matters: a secret pasted into a committed file.
+  const dir = tmp();
+  try {
+    allApps(dir);
+    for (const app of APP_NAMES) {
+      writeFileSync(join(dir, "apps", app, "dev.vars.example"), renderExample(app));
+    }
+    assert.deepEqual(checkExamples(dir), [], "freshly rendered examples must not read as drifted");
+
+    const p = join(dir, "apps", "api", "dev.vars.example");
+    writeFileSync(
+      p,
+      renderExample("api").replace("STRIPE_SECRET_KEY=", "STRIPE_SECRET_KEY=sk_test_pasted"),
+    );
+    assert.deepEqual(checkExamples(dir), ["apps/api/dev.vars.example"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checkExamples flags a drifted KEY SET, not only a drifted value", () => {
+  const dir = tmp();
+  try {
+    allApps(dir);
+    for (const app of APP_NAMES) {
+      writeFileSync(join(dir, "apps", app, "dev.vars.example"), renderExample(app));
+    }
+    const p = join(dir, "apps", "mcp", "dev.vars.example");
+    writeFileSync(p, `${renderExample("mcp")}STALE_KEY_FROM_AN_OLD_MANIFEST=\n`);
+    assert.deepEqual(checkExamples(dir), ["apps/mcp/dev.vars.example"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
