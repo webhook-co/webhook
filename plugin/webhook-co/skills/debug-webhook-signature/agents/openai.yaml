@@ -5,5 +5,5 @@
 # invocation, so it is left at its default rather than set.)
 interface:
   display_name: "Debug a webhook signature"
-  short_description: "Turn a failed signature check into a specific cause"
+  short_description: "Diagnose a failing signature"
   default_prompt: "My webhook signature check is failing and I can't tell why — help me find the actual cause."

@@ -18,6 +18,12 @@ static export with no endpoint behind it. They paste the request and get a named
 
 This is almost always the fastest step, and it works whether or not you have a shell.
 
+**Never ask the user to paste a signing secret into the chat.** You do not need to see it to diagnose
+this: send them to the page, where it stays in their browser, or have them set it in the environment
+and read it from there. A signing secret is a live credential — pasting it into a conversation sends
+it to a model provider and puts it in the transcript. The same goes for a full production payload,
+which routinely carries customer data.
+
 If you do have a shell and they'd rather stay local, the same engine is on npm:
 
 ```sh
@@ -28,7 +34,8 @@ npm install @webhook-co/webhooks-spec
 import { getAdapterForScheme } from "@webhook-co/webhooks-spec";
 
 // rawBody MUST be the exact bytes that arrived — see "Cause 1" below.
-const result = await getAdapterForScheme("stripe").verify({
+const adapter = getAdapterForScheme("stripe"); // undefined for an unknown slug
+const result = await adapter.verify({
   rawBody,
   headers: [...request.headers],
   secrets: [process.env.WEBHOOK_SECRET],
@@ -51,6 +58,7 @@ when two share a header.
 | `MISSING_HEADER` | The signature header isn't there | Proxy stripping headers, or the wrong provider |
 | `MALFORMED_SIGNATURE` | Header present, wrong shape | Usually a missing prefix (`sha256=`) or the wrong encoding |
 | `NO_MATCHING_KEY` | No usable secret was supplied | An empty or wrongly-shaped secret |
+| `TIMESTAMP_IN_FUTURE` | Signed timestamp is ahead of now | Usually the millisecond/second mix-up below, not clock drift |
 
 `RAW_BODY_MODIFIED` is the one worth trusting: it is established by re-computing the MAC over
 candidate transformations of the body, not guessed.
@@ -86,7 +94,9 @@ looks correct and rejects every real webhook. Confirm the scheme before writing 
 - **Mailgun** signs `{timestamp}{token}` from inside the JSON. The body is never signed.
 - **Adyen** puts the signature *inside* the body, and signs 8 colon-joined fields of each
   notification item. `notificationItems` is an array — verify **every** entry, not just the first.
-- **Twilio** signs the full URL plus sorted form fields, with no separator.
+- **Twilio** has two runtime modes: for form bodies it signs the full URL plus sorted form fields
+  with no separator; for JSON bodies the URL carries a `bodySHA256` query param, and you must
+  check both the URL signature and that the body hashes to that value.
 - **Square**, **Trello** and **Box** all combine the body with a URL or timestamp, in an order that
   differs per provider.
 
@@ -119,7 +129,7 @@ Be straight with the user about the boundary:
   service, and webhook.co is one, but that is a separate step and not what this skill does.
 - 6 providers need a key fetched from the provider at verification time and cannot be checked fully
   offline.
-- 14 providers compare a static shared token rather than a signature. Verifying one proves the
+- 14 providers compare a static shared token or Basic credential rather than a signature. Verifying one proves the
   sender knew a secret, not that a message was signed — don't describe it as signature verification.
 
 ## If the provider isn't covered

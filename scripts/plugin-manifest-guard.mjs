@@ -180,6 +180,20 @@ export function check(opts = {}) {
   }
 
   const dirName = "dirName" in opts ? opts.dirName : basename(PLUGIN_DIR);
+
+  // Validate the tree the MANIFEST points at, not a hardcoded one. `skills` is the only field
+  // connecting the manifest to the thing being shipped; repoint it or drop it and a guard that walks
+  // `skills/` regardless would keep printing OK while the published plugin loads a tree it never
+  // opened. Pinned to the one supported value: the directory path is fixed by the platform
+  // ("`skills` must resolve to the root `skills/` directory"), so anything else is a defect, not a
+  // configuration.
+  if (manifest.skills !== "./skills/") {
+    problems.push(
+      `plugin.json \`skills\` is ${JSON.stringify(manifest.skills)}; it must be "./skills/". The path ` +
+        `is fixed by the platform, and this guard validates that directory — a different value would ` +
+        `ship a skill tree nothing checked.`,
+    );
+  }
   const skills = "skills" in opts ? opts.skills : discoverSkills();
   const assetPaths =
     "assetPaths" in opts
@@ -264,6 +278,12 @@ export function check(opts = {}) {
       );
     }
   }
+  if (iface.defaultPrompt !== undefined && !Array.isArray(iface.defaultPrompt)) {
+    // A bare string is accepted by neither the schema nor the caps below — gating the length checks
+    // on `Array.isArray` alone made both of them dead for that shape, and `agents/openai.yaml` uses a
+    // bare `default_prompt` string, so the confusion is one copy-paste away.
+    problems.push("interface.defaultPrompt must be an array of strings.");
+  }
   if (Array.isArray(iface.defaultPrompt)) {
     if (iface.defaultPrompt.length > MAX.defaultPrompts) {
       problems.push(
@@ -281,6 +301,12 @@ export function check(opts = {}) {
 
   // ---- assets resolve
   for (const declared of declaredAssets(iface)) {
+    // "present in the plugin directory" has to mean inside it. `join()` resolves `..`, so without
+    // this an asset could point at a file outside the published tree and still read as present.
+    if (declared.includes("..")) {
+      problems.push(`interface asset "${declared}" escapes the plugin directory.`);
+      continue;
+    }
     if (!assetPaths.includes(declared)) {
       problems.push(
         `interface asset "${declared}" is declared but not present in the plugin directory.`,

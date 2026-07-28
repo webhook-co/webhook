@@ -284,6 +284,36 @@ test("a combined plugin:skill identifier over 64 chars fails", () => {
   assert.match(problems[0], /64/);
 });
 
+test("a manifest whose `skills` field is repointed or dropped fails", () => {
+  // The guard walks a fixed directory, so without this rule repointing `skills` (or deleting it)
+  // would ship a tree nothing validated while the guard still printed OK.
+  for (const patch of [{ skills: "./skills-v2/" }, { skills: undefined }]) {
+    const problems = check(withManifest(patch));
+    assert.equal(problems.length, 1, `${JSON.stringify(patch)} should be exactly one problem`);
+    assert.match(problems[0], /skills/);
+  }
+});
+
+test("a defaultPrompt that is a bare string fails instead of skipping both caps", () => {
+  const problems = check(withInterface({ defaultPrompt: "a single string, not an array" }));
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /defaultPrompt must be an array/);
+});
+
+test("an asset path that escapes the plugin directory fails", () => {
+  const problems = check(
+    sources({
+      manifestSource: JSON.stringify({
+        ...OK,
+        interface: { ...OK.interface, logo: "../../package.json" },
+      }),
+      assetPaths: ["./assets/mark.svg", "../../package.json"],
+    }),
+  );
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /escapes/);
+});
+
 // ---------------------------------------------------------------- accumulation
 
 test("three simultaneous defects are all reported, not just the first", () => {
