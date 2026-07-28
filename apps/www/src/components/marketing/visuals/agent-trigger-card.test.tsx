@@ -34,9 +34,10 @@ describe("AgentTriggerCard", () => {
 
   // The name check above is necessary and was NOT sufficient. This card shipped
   // `triggers.create { endpointId, eventTypes: [...] }` — both tool names real, the argument invented
-  // (it belongs to subscriptions.create). The input schema strips unknown keys instead of rejecting
-  // them, so following the card would have silently produced an UNFILTERED trigger. A guard that
-  // checks names while the lie lives in the arguments reports coverage it does not have.
+  // (it belongs to subscriptions.create). Following the card produced an UNFILTERED trigger and no
+  // error, because capability inputs stripped unknown keys. They are STRICT now, so an invented field
+  // is a parse failure rather than a silent drop — which turns parse() itself into the check this
+  // test previously had to fake with a key-set comparison.
   it("shows only arguments that exist on the real capability input schema", () => {
     for (const tool of TRIGGER_TOOLS) {
       const capability = CAPABILITY_REGISTRY.get(tool);
@@ -45,20 +46,26 @@ describe("AgentTriggerCard", () => {
       const shown = SHOWN_ARGS[tool];
       expect(Object.keys(shown).length, `${tool} pins no arguments`).toBeGreaterThan(0);
 
-      // parse() throws on a bad field only if the schema is strict; it is not. So assert on the
-      // schema's OWN key set — the only thing that distinguishes "accepted" from "silently dropped".
       const accepted = new Set(Object.keys(capability!.input.shape));
       expect(accepted.size, `${tool} input schema looks empty`).toBeGreaterThan(0);
       for (const field of Object.keys(shown)) {
-        expect(
-          accepted,
-          `${tool} has no "${field}" input — it would be silently ignored`,
-        ).toContain(field);
+        expect(accepted, `${tool} has no "${field}" input`).toContain(field);
       }
-      // And the values we show must actually satisfy it (uuid fields excepted — the card elides them).
-      expect(() =>
-        capability!.input.parse({ ...shown, endpointId: UUID, triggerId: UUID }),
-      ).not.toThrow();
+
+      // The values we show must actually satisfy the schema. The card elides ids as "…", so supply a
+      // real uuid for whichever id THIS capability declares — injecting a foreign one (triggerId on
+      // triggers.create) is now correctly rejected, so it can no longer be sprayed at every tool.
+      const ids = Object.fromEntries(
+        ["endpointId", "triggerId"].filter((k) => accepted.has(k)).map((k) => [k, UUID]),
+      );
+      expect(() => capability!.input.parse({ ...shown, ...ids })).not.toThrow();
+
+      // And prove the strictness this test now leans on is real: the exact historical lie must throw.
+      // Without this, the assertion above passes for a loose schema too, and the guard means nothing.
+      expect(
+        () => capability!.input.parse({ ...shown, ...ids, eventTypes: ["issue.updated"] }),
+        `${tool} input silently accepted an invented eventTypes — strictness regressed`,
+      ).toThrow(/unrecognized_key/i);
     }
   });
 

@@ -5585,12 +5585,14 @@
                     },
                     "required": [
                       "include"
-                    ]
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
                   "mode"
-                ]
+                ],
+                "additionalProperties": false
               },
               {
                 "type": "null"
@@ -5600,7 +5602,8 @@
         },
         "required": [
           "name"
-        ]
+        ],
+        "additionalProperties": false
       },
       "EndpointsUpdateRequest": {
         "type": "object",
@@ -5649,12 +5652,14 @@
                     },
                     "required": [
                       "include"
-                    ]
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
                   "mode"
-                ]
+                ],
+                "additionalProperties": false
               },
               {
                 "type": "null"
@@ -5664,7 +5669,8 @@
         },
         "required": [
           "dedupConfig"
-        ]
+        ],
+        "additionalProperties": false
       },
       "EndpointsAddProviderSecretRequest": {
         "type": "object",
@@ -5842,6 +5848,7 @@
           "provider",
           "secret"
         ],
+        "additionalProperties": false,
         "description": "The server additionally validates the secret shape per provider (e.g. a Standard-Webhooks secret must be base64 key material); a malformed value is rejected with 400 VALIDATION_ERROR."
       },
       "EventsReplayRequest": {
@@ -5864,7 +5871,8 @@
                 "required": [
                   "kind",
                   "sessionId"
-                ]
+                ],
+                "additionalProperties": false
               },
               {
                 "type": "object",
@@ -5882,7 +5890,8 @@
                 "required": [
                   "kind",
                   "destinationId"
-                ]
+                ],
+                "additionalProperties": false
               }
             ]
           },
@@ -5894,7 +5903,8 @@
         "required": [
           "target",
           "idempotencyKey"
-        ]
+        ],
+        "additionalProperties": false
       },
       "ReplayDestinationsCreateRequest": {
         "type": "object",
@@ -5913,6 +5923,7 @@
         "required": [
           "url"
         ],
+        "additionalProperties": false,
         "description": "`url` must be a public HTTPS URL (no IP-literal host, credentials, disallowed port, or bare hostname); the server rejects a non-conforming URL with 400 VALIDATION_ERROR."
       },
       "ReplayDestinationsSetOrderedRequest": {
@@ -5924,7 +5935,8 @@
         },
         "required": [
           "ordered"
-        ]
+        ],
+        "additionalProperties": false
       },
       "SubscriptionsCreateRequest": {
         "type": "object",
@@ -5967,7 +5979,8 @@
         "required": [
           "sourceEndpointId",
           "destinationId"
-        ]
+        ],
+        "additionalProperties": false
       },
       "TriggersCreateRequest": {
         "type": "object",
@@ -5985,7 +5998,8 @@
         },
         "required": [
           "endpointId"
-        ]
+        ],
+        "additionalProperties": false
       },
       "Error": {
         "type": "object",

@@ -1,6 +1,6 @@
 # @webhook-co/webhooks-spec
 
-**Verify an inbound webhook signature from 141 providers, behind one interface.**
+**Verify an inbound webhook signature from 144 providers, behind one interface.**
 
 [![npm](https://img.shields.io/npm/v/%40webhook-co%2Fwebhooks-spec?label=npm&logo=npm)](https://www.npmjs.com/package/@webhook-co/webhooks-spec)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/webhook-co/webhook/blob/main/LICENSE)
@@ -57,7 +57,7 @@ Heuristic sub-diagnoses carry a `confidence` field and never assert a cause that
 
 ## What's in the box
 
-- **141 providers** — Stripe, GitHub, Shopify, Slack, Twilio, Square, Adyen, Braintree, HubSpot,
+- **144 providers** — Stripe, GitHub, Shopify, Slack, Twilio, Square, Adyen, Braintree, HubSpot,
   Zoom, Linear, Vercel, Clerk, Supabase, Xero, Razorpay, and every
   [Standard Webhooks](https://www.standardwebhooks.com/) adopter, among many others.
 - **Scheme detection** from the request headers, so you don't have to know who's calling.

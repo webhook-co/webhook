@@ -16,7 +16,8 @@ import {
   readSecretBinding,
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
-import type { z } from "zod";
+// A VALUE import: whoami declares an explicit strict empty input (see its registration below).
+import { z } from "zod";
 
 import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
 import { grantPropsToAuthContext } from "./grant";
@@ -109,12 +110,24 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
- * Every capability input is a `z.object` (a contract invariant), so its `.shape` is the MCP tool's
- * parameter schema — advertised to clients for discovery. The shared handler re-validates the input
- * against the full schema, so this is the discovery surface, not the authoritative gate.
+ * Every capability input is a `z.object` (a contract invariant), and the WHOLE schema is advertised
+ * as the tool's parameter schema — not its `.shape`. The distinction is the point: capability inputs
+ * are strict, and `z.toJSONSchema(input, { io: "input" })` only emits `additionalProperties: false`
+ * for the schema itself. Handing over the bare shape drops that, and an agent inventing a plausible
+ * sibling field (`eventTypes`, which is real on `subscriptions.create`) would see nothing forbidding
+ * it — discovery is exactly where a model makes the decision.
+ *
+ * This also MOVES the rejection. The SDK validates arguments against whatever schema it was given
+ * before it calls the handler, and it previously wrapped the bare `.shape` in a non-strict object, so
+ * unknown keys were stripped and the shared handler's own `safeParse` was the first thing to see
+ * them. Handing over the real schema makes the SDK the first and only gate for this class: it answers
+ * a JSON-RPC `-32602` InvalidParams, NOT the `{"error":"VALIDATION_ERROR"}` envelope
+ * `apps/mcp/src/tools.ts` builds. That is a deliberate trade — an earlier, stricter rejection with
+ * the offending key named, at the cost of this one error class not carrying a capability error code
+ * on mcp. The two `.superRefine` inputs move with it, for the same reason.
  */
-function inputShape(cap: AnyCapability): z.ZodRawShape {
-  return (cap.input as z.ZodObject<z.ZodRawShape>).shape;
+function inputSchema(cap: AnyCapability): z.ZodTypeAny {
+  return cap.input;
 }
 
 export class WebhookMcp extends McpAgent<McpEnv> {
@@ -153,7 +166,7 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     for (const cap of MCP_BOUND_CAPABILITIES) {
       this.server.registerTool(
         cap.name,
-        { description: TOOL_DESCRIPTIONS[cap.name] ?? cap.name, inputSchema: inputShape(cap) },
+        { description: TOOL_DESCRIPTIONS[cap.name] ?? cap.name, inputSchema: inputSchema(cap) },
         async (args: unknown) => {
           const result = await this.runTool(cap.name, args);
           // The single point where an McpToolResult becomes the SDK's (mutable) CallToolResult.
@@ -168,6 +181,11 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     // whoami — identity, NOT a capability (binds no resource), so registered outside the capability loop.
     // Returns org/user/scopes always; name+email only when the token carries the consented `profile` scope,
     // resolved on-demand via the auth. RPC (kept off the introspection hot path).
+    // Deliberately NOT strict, unlike every capability tool. whoami takes no arguments, so there is no
+    // field to misspell and strictness protects nothing — while its only reachable effect is to reject
+    // a client that sends a placeholder argument for a no-parameter tool, which real MCP clients do.
+    // whoami is the canonical "is my connection working" call, so that failure would land on the first
+    // thing a new user runs, to buy nothing but symmetry.
     this.server.registerTool(
       "whoami",
       { description: WHOAMI_DESCRIPTION, inputSchema: {} },

@@ -402,7 +402,11 @@ export function createSubscriptionHandlers(deps: SubscriptionHandlerDeps): Capab
   handlers.set(subscriptionsList.name, async (ctx, input) => {
     ensureScope(ctx, subscriptionsList);
     const parsed = subscriptionsList.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const items = await listSubscriptions(deps.tenant, ctx.orgId, parsed.data.sourceEndpointId);
     return { items };
   });
@@ -410,7 +414,11 @@ export function createSubscriptionHandlers(deps: SubscriptionHandlerDeps): Capab
   handlers.set(subscriptionsDelete.name, async (ctx, input) => {
     ensureScope(ctx, subscriptionsDelete);
     const parsed = subscriptionsDelete.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const removed = await deleteSubscription(deps.tenant, ctx.orgId, parsed.data.subscriptionId, {
       auditKey: deps.auditKey,
       actor: requireAuditActor(ctx),

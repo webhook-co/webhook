@@ -175,7 +175,11 @@ export function createReplayHandler(deps: { readonly tenant: Sql }): ReplayHandl
       throw new CapabilityFault("FORBIDDEN", `missing required scope: ${eventsReplay.auth.scope}`);
     }
     const parsed = eventsReplay.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success)
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
     const { eventId, target, idempotencyKey } = parsed.data;
 
     return withTenant(deps.tenant, ctx.orgId, async (tx) => {

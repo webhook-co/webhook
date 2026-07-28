@@ -1,4 +1,5 @@
-import type { z } from "zod";
+// A VALUE import, not `import type`: defineCapability narrows on `instanceof z.ZodObject` at runtime.
+import { z } from "zod";
 
 // The transport-agnostic capability registry. A capability is a typed
 // descriptor — stable name, Zod input/output, typed error taxonomy, auth scope, and
@@ -119,11 +120,52 @@ export interface CapabilityDef<
   readonly surfaceExempt?: Partial<Record<SurfaceId, string>>;
 }
 
-/** Identity helper that fixes a capability descriptor while preserving its IO types. */
+/**
+ * Fixes a capability descriptor while preserving its IO types, and makes its input STRICT.
+ *
+ * Zod objects strip unknown keys by default, which meant every surface accepted a field it did not
+ * understand, dropped it, and answered 200. An agent that invented `eventTypes` on `triggers.create`
+ * — plausible, because it IS a real field on the sibling `subscriptions.create` — got a success and
+ * a trigger that ignored it, on the API, the CLI, the SDKs and MCP alike.
+ *
+ * Strictness is applied HERE rather than on each of the ~34 declarations so the next one cannot
+ * forget it: every capability funnels through this call, and `cap.input.safeParse` is the single
+ * parse behind all 26 handler sites. It also changes what MCP and the OpenAPI spec ADVERTISE —
+ * `z.toJSONSchema(input, { io: "input" })` emits `additionalProperties: false` only for a strict
+ * object — so a client is told the key is illegal before it sends it, instead of after.
+ *
+ * WHAT THIS DOES NOT COVER, so the claim above is not read wider than it is:
+ *   • Only the OUTER object. Nested objects are strictened at their own declaration sites with
+ *     `z.strictObject` (`filter`, `DedupConfigSchema`, `TargetSchema`) — `events.list` used to accept
+ *     `{filter:{bogus:1}}` and return an UNFILTERED page. `parity.test.ts` walks every input and fails
+ *     on a loose nested object, which is what stops the next one re-opening it.
+ *   • Only the BODY on the REST surface. Undeclared query parameters never reach the schema at all:
+ *     `routes.ts` `buildInput` reads only the params a route declares, so `?eventTypes=…` is dropped
+ *     before parsing and still returns 200. Closing that means rejecting unknown query keys in the
+ *     router, which is a separate change.
+ *
+ * Deliberately a runtime narrowing, not a type-level one: `I` stays the declared schema type so every
+ * existing `z.infer<typeof cap.input>` keeps resolving. A non-object input would pass through
+ * untouched — no capability has one, and `parity.test.ts` asserts strictness per capability, so such a
+ * skip fails loudly rather than going unnoticed.
+ */
 export function defineCapability<I extends z.ZodTypeAny, O extends z.ZodTypeAny>(
   def: CapabilityDef<I, O>,
 ): CapabilityDef<I, O> {
-  return def;
+  if (!(def.input instanceof z.ZodObject)) return def;
+  // `.strict()` OVERWRITES a catchall rather than composing with it, so a deliberate typed metadata
+  // bag would be destroyed here silently — and the strictness assertion in parity.test.ts would pass,
+  // because `.strict()` is what made it true. Refuse rather than quietly rewrite the author's intent.
+  const catchall = (
+    def.input as unknown as { _zod: { def: { catchall?: { _zod: { def: { type: string } } } } } }
+  )._zod.def.catchall;
+  if (catchall !== undefined && catchall._zod.def.type !== "never") {
+    throw new Error(
+      `defineCapability(${def.name}): input declares a catchall, which .strict() would silently ` +
+        "override. Drop the catchall, or teach this helper how to compose the two.",
+    );
+  }
+  return { ...def, input: def.input.strict() as unknown as I };
 }
 
 export type AnyCapability = CapabilityDef;

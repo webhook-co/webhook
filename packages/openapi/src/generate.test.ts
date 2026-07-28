@@ -156,6 +156,42 @@ describe("drift guard L2 — the paths bijection with the route manifest", () =>
 });
 
 describe("drift guard L1 — schema completeness + integrity", () => {
+  // The spec is what the SDK generators read, so it has to describe what the server DOES. Capability
+  // inputs are strict — an unknown property is a 400 VALIDATION_ERROR, not a silent drop — but
+  // `requestBodySchema` rebuilds the body to strip path params, and an earlier version rebuilt it as
+  // `{ type, properties, required }` and dropped everything else. The published schema then said
+  // nothing about unknown properties, so a generated client would send an extra field, believe it
+  // was accepted, and get a 400 from a server the spec described as permissive.
+  it("declares additionalProperties:false on every request body, matching strict inputs", () => {
+    // Operations reference their body by `$ref` into components.schemas, so the ref must be
+    // resolved — reading `additionalProperties` off the `{ $ref }` wrapper finds nothing and would
+    // fail every operation for the wrong reason.
+    const resolve = (schema: JsonObject): JsonObject => {
+      const ref = schema.$ref as string | undefined;
+      if (!ref) return schema;
+      const target = components.schemas[ref.replace("#/components/schemas/", "")];
+      expect(target, `unresolvable request-body $ref: ${ref}`).toBeDefined();
+      return target!;
+    };
+
+    const bodies: { op: string; schema: JsonObject }[] = [];
+    for (const item of Object.values(paths)) {
+      for (const [method, op] of Object.entries(item)) {
+        const body = op.requestBody as JsonObject | undefined;
+        if (!body) continue;
+        const schema = ((body.content as JsonObject)["application/json"] as JsonObject)
+          .schema as JsonObject;
+        bodies.push({ op: `${method} ${op.operationId as string}`, schema: resolve(schema) });
+      }
+    }
+    // Anti-vacuity: if no operation had a request body this would pass having checked nothing.
+    expect(bodies.length, "no request bodies found in the spec").toBeGreaterThan(3);
+    const permissive = bodies
+      .filter(({ schema }) => schema.additionalProperties !== false)
+      .map(({ op }) => op);
+    expect(permissive, "these request bodies permit properties the server rejects").toEqual([]);
+  });
+
   it("exposes every API-surface capability as an operation (via responseRef)", () => {
     const apiCaps = CAPABILITIES.filter((c) => requiredSurfaces(c).includes("api")).map(
       (c) => c.name,
