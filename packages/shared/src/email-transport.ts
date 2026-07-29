@@ -16,12 +16,21 @@
 // Store binding — an object with `.get()`, which is the shape ONLY the deploy overlay produces
 // (gen-wrangler-prod.mjs emits `secrets_store_secrets`; dev and test pass plain strings).
 //
-// SCOPE, precisely, because a fence that is trusted beyond its reach is worse than none. This runtime check
-// catches the deployed shape. It does NOT catch a hand-run `wrangler deploy --var EMAIL_MODE:log` against a
-// Worker whose Resend key was set with `wrangler secret put` (a plain string). That route is covered by the
-// SECOND fence — scripts/dev-mode-guard.mjs, which keeps EMAIL_MODE out of every committed Worker config,
-// the deploy overlay, and the workflows. Two fences with different coverage, deliberately; neither is
-// claimed to be total on its own.
+// SCOPE, precisely, because a fence that is trusted beyond its reach is worse than none. There are two
+// fences and they cover different things:
+//
+//   this runtime check          — every deployed Worker whose Resend key is a Secrets Store binding, which
+//                                 is what the overlay produces. So: a var typed into the Cloudflare
+//                                 dashboard, a `wrangler secret put EMAIL_MODE`, a stray build-time env.
+//   scripts/dev-mode-guard.mjs  — every committed Worker config, the deploy overlay, and the workflows
+//                                 (`wrangler deploy --var EMAIL_MODE:log` inside a workflow is caught here).
+//
+// One route is covered by NEITHER: a hand-run `wrangler deploy --var EMAIL_MODE:log` against a Worker whose
+// Resend key was set with `wrangler secret put` rather than Secrets Store — the guard never sees the command
+// because it was never committed, and the runtime fence sees a plain string. It is not reachable as this
+// repo deploys (gen-wrangler-prod.mjs binds RESEND_API_KEY via `secrets_store_secrets` unconditionally for
+// both auth and web, and a Worker cannot hold both a store binding and a `secret put` secret of the same
+// name), but it is honest to say it is uncovered rather than to assign it to the other fence.
 
 /** Where transactional mail goes. `send` is production; `log` is the hermetic local substitute. */
 export type EmailMode = "send" | "log";

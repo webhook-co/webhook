@@ -140,6 +140,28 @@ export function resolveOAuthMode(env: Record<string, unknown>): OAuthMode {
   return "optional";
 }
 
+/**
+ * Which social providers are configured, for the LOGIN PAGE to decide which buttons to render.
+ *
+ * Without this the page renders "Continue with Google" unconditionally, and under OAUTH_MODE=optional that
+ * button posts to a provider Better Auth was never given — producing exactly the broken button that
+ * buildAuthConfig's `socialProviders` goes out of its way to avoid. The server decides; the form is told.
+ *
+ * This tests PRESENCE (`secretPresent`), whereas buildAuthConfig tests the RESOLVED value being non-empty.
+ * The two can only disagree for a Secrets Store binding that resolves to an empty string — and in that case
+ * resolveAuthSecrets throws before any page renders, so the disagreement is unreachable rather than merely
+ * unlikely.
+ */
+export function configuredSocialProviders(env: Record<string, unknown>): {
+  google: boolean;
+  github: boolean;
+} {
+  return {
+    google: secretPresent(env.GOOGLE_CLIENT_ID) && secretPresent(env.GOOGLE_CLIENT_SECRET),
+    github: secretPresent(env.GITHUB_CLIENT_ID) && secretPresent(env.GITHUB_CLIENT_SECRET),
+  };
+}
+
 /** The secrets the hermetic flags have made optional for this env (empty in production). */
 function relaxedSecrets(env: Record<string, unknown>): ReadonlySet<string> {
   const relaxed = new Set<string>();

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  configuredSocialProviders,
   readAuthEnv,
   readIntrospectEnv,
   readSweepEnv,
@@ -66,6 +67,42 @@ describe("readAuthEnv — OAUTH_MODE=optional", () => {
 
   it("throws on an unknown OAUTH_MODE rather than guessing", () => {
     expect(() => readAuthEnv({ ...RAW, OAUTH_MODE: "opitonal" })).toThrow(/OAUTH_MODE/);
+  });
+});
+
+describe("configuredSocialProviders", () => {
+  it("reports both configured in the production shape", () => {
+    expect(configuredSocialProviders(RAW)).toEqual({ google: true, github: true });
+  });
+
+  it("reports a provider unconfigured when either half is missing", () => {
+    const { GOOGLE_CLIENT_SECRET: _o, ...partial } = RAW;
+    expect(configuredSocialProviders(partial)).toEqual({ google: false, github: true });
+  });
+
+  it("reports neither when no OAuth secret is set at all", () => {
+    const {
+      GOOGLE_CLIENT_ID: _a,
+      GOOGLE_CLIENT_SECRET: _b,
+      GITHUB_CLIENT_ID: _c,
+      GITHUB_CLIENT_SECRET: _d,
+      ...partial
+    } = RAW;
+    expect(configuredSocialProviders(partial)).toEqual({ google: false, github: false });
+  });
+
+  it("treats an empty string as unconfigured, not as configured", () => {
+    expect(configuredSocialProviders({ ...RAW, GITHUB_CLIENT_ID: "" })).toEqual({
+      google: true,
+      github: false,
+    });
+  });
+
+  it("counts a Secrets Store binding as configured (the production shape)", () => {
+    expect(configuredSocialProviders({ ...RAW, GOOGLE_CLIENT_ID: STORE })).toEqual({
+      google: true,
+      github: true,
+    });
   });
 });
 

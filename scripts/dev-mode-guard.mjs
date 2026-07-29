@@ -15,12 +15,24 @@
 //                     has to fail loudly, not quietly remove the Google button.
 //
 // SCOPE, precisely. This guard covers what is IN THE REPO: every committed Worker config, the deploy
-// overlay, and the workflows that invoke wrangler. It cannot cover out-of-band routes — a
-// `wrangler secret put KMS_MODE`, a var typed into the Cloudflare dashboard, or a
-// `wrangler deploy --var` run by hand. Those are caught by the RUNTIME fence in kmsProviderFromEnv,
-// which refuses each hermetic mode against the PRODUCTION SECRET SHAPE (a Secrets Store binding, which is
-// what the overlay emits and what only a deployed Worker has). Two fences with different coverage,
-// deliberately — neither is claimed to be total on its own.
+// overlay, and the workflows that invoke wrangler (so a committed `wrangler deploy --var KMS_MODE:local`
+// IS caught). It cannot see anything that was never committed — a `wrangler secret put`, a var typed into
+// the Cloudflare dashboard, or a deploy command run by hand from a laptop.
+//
+// Most of those are caught instead by the RUNTIME fence, one per flag — kmsProviderFromEnv for KMS_MODE /
+// LOCAL_KEK (apps/engine/src/index.ts), resolveEmailMode for EMAIL_MODE (packages/shared), and
+// resolveOAuthMode for OAUTH_MODE (apps/auth/src/runtime/env.ts). Each refuses its hermetic mode against
+// the PRODUCTION SECRET SHAPE: a Secrets Store binding, which is what the overlay emits and what only a
+// deployed Worker has.
+//
+// That runtime fence only bites if the relevant secret is ACTUALLY store-bound in production, which is why
+// gen-wrangler-prod.mjs injecting them unconditionally is load-bearing rather than incidental: the engine's
+// four AWS secrets, auth's four OAuth secrets, and RESEND_API_KEY for both auth and web are all emitted
+// with no condition, so in production each fence always has something to see.
+//
+// The one route covered by NEITHER fence is a hand-run `wrangler deploy --var` against a Worker whose
+// matching secret is a plain string rather than a store binding. Not reachable as this repo deploys, but
+// stated here rather than quietly assigned to the other fence.
 //
 // Why a config scan and not just "don't do that": the deploy overlay (scripts/gen-wrangler-prod.mjs)
 // only PREPENDS top-level keys — it does not strip `vars`. So anything committed in a wrangler.jsonc

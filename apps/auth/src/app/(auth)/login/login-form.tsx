@@ -60,12 +60,21 @@ const GithubGlyph = () => (
   </svg>
 );
 
+/** Which social buttons to offer. Decided on the SERVER from what is actually configured — see
+ *  configuredSocialProviders. Defaults to both, which is the production shape. */
+export interface ConfiguredProviders {
+  google: boolean;
+  github: boolean;
+}
+
 export function LoginForm({
   actions = mockAuthActions,
   Captcha = Turnstile,
+  providers = { google: true, github: true },
 }: {
   actions?: AuthActions;
   Captcha?: React.ComponentType<CaptchaWidgetProps>;
+  providers?: ConfiguredProviders;
 }) {
   const [email, setEmail] = React.useState("");
   const [pending, setPending] = React.useState<Pending>(null);
@@ -161,32 +170,45 @@ export function LoginForm({
       {/* `loading` (not just `disabled`) is the point: a disabled button says "unavailable", a busy one says
           "heard you, working on it". The glyph is passed as `icon` so the spinner REPLACES it — otherwise the
           button would show two marks and grow wider at the exact moment the user is looking at it. */}
-      <div className="flex flex-col gap-2.5">
-        <Button
-          variant="secondary"
-          icon={<GoogleGlyph />}
-          loading={pending === "google"}
-          disabled={busy}
-          onClick={() => handleProvider("google")}
-        >
-          Continue with Google
-        </Button>
-        <Button
-          variant="secondary"
-          icon={<GithubGlyph />}
-          loading={pending === "github"}
-          disabled={busy}
-          onClick={() => handleProvider("github")}
-        >
-          Continue with GitHub
-        </Button>
-      </div>
+      {/* A provider with no credentials is not wired into Better Auth, so offering its button would just
+          produce an error at the far end. Under OAUTH_MODE=optional (local dev) that is the normal case;
+          in production both are always configured and this renders exactly as before. */}
+      {providers.google || providers.github ? (
+        <div className="flex flex-col gap-2.5">
+          {providers.google ? (
+            <Button
+              variant="secondary"
+              icon={<GoogleGlyph />}
+              loading={pending === "google"}
+              disabled={busy}
+              onClick={() => handleProvider("google")}
+            >
+              Continue with Google
+            </Button>
+          ) : null}
+          {providers.github ? (
+            <Button
+              variant="secondary"
+              icon={<GithubGlyph />}
+              loading={pending === "github"}
+              disabled={busy}
+              onClick={() => handleProvider("github")}
+            >
+              Continue with GitHub
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
-      <div className="flex items-center gap-3 font-mono text-xs uppercase tracking-mono-label text-fg-faint">
-        <span className="h-px flex-1 bg-hairline" />
-        magic link
-        <span className="h-px flex-1 bg-hairline" />
-      </div>
+      {/* The divider separates the social options from the magic-link form. With no social options there is
+          nothing to separate, so it goes too rather than heading an empty section. */}
+      {providers.google || providers.github ? (
+        <div className="flex items-center gap-3 font-mono text-xs uppercase tracking-mono-label text-fg-faint">
+          <span className="h-px flex-1 bg-hairline" />
+          magic link
+          <span className="h-px flex-1 bg-hairline" />
+        </div>
+      ) : null}
 
       <form className="flex flex-col gap-3" onSubmit={handleMagicLink} noValidate>
         <Field

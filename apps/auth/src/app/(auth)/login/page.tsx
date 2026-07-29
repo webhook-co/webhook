@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { LoginActions } from "./login-actions";
+import { socialProvidersForLogin } from "./social-providers";
 import { resolvePostLoginTarget } from "./post-login-target";
 import { isSignedIn } from "./resolve-signed-in";
 
@@ -104,7 +105,7 @@ export default async function LoginPage({
         </p>
       }
     >
-      <LoginActions />
+      <LoginActions providers={await socialProvidersForLogin()} />
     </AuthShell>
   );
 }

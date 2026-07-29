@@ -444,7 +444,10 @@ export function getEmailMode(): EmailMode {
   const worker = workerEnv() as Record<string, unknown>;
   return resolveEmailMode({
     EMAIL_MODE: (worker.EMAIL_MODE as string | undefined) ?? process.env.EMAIL_MODE,
-    RESEND_API_KEY: worker.RESEND_API_KEY,
+    // The SAME fallback chain the flag itself uses, and the same one getResendApiKey uses. Reading the flag
+    // from two places but the fence's input from only one would make the fence blind exactly when the key
+    // arrived by the second route.
+    RESEND_API_KEY: worker.RESEND_API_KEY ?? process.env.RESEND_API_KEY,
   });
 }
 

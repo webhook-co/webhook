@@ -36,6 +36,67 @@ function renderForm(
   return render(<LoginForm actions={actions} Captcha={Captcha} />);
 }
 
+// Under OAUTH_MODE=optional a provider with no credentials is not wired into Better Auth at all, so its
+// button must not render — clicking it would post to a provider the server has never heard of. The server
+// decides (configuredSocialProviders) and passes the answer down; the default is both, which is production.
+describe("LoginForm — social buttons follow what the server configured", () => {
+  it("renders both provider buttons by default (the production shape)", () => {
+    render(<LoginForm actions={makeActions()} Captcha={AutoCaptcha} />);
+    expect(screen.getByRole("button", { name: /continue with google/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue with github/i })).toBeInTheDocument();
+  });
+
+  it("hides the Google button when Google is not configured", () => {
+    render(
+      <LoginForm
+        actions={makeActions()}
+        Captcha={AutoCaptcha}
+        providers={{ google: false, github: true }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /continue with google/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /continue with github/i })).toBeInTheDocument();
+  });
+
+  it("hides the GitHub button when GitHub is not configured", () => {
+    render(
+      <LoginForm
+        actions={makeActions()}
+        Captcha={AutoCaptcha}
+        providers={{ google: true, github: false }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /continue with github/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /continue with google/i })).toBeInTheDocument();
+  });
+
+  // With neither provider, magic link is the only way in — the email field and its submit must survive,
+  // otherwise hiding the buttons would have removed the last route to a session.
+  it("keeps the magic-link form when no provider is configured", () => {
+    render(
+      <LoginForm
+        actions={makeActions()}
+        Captcha={AutoCaptcha}
+        providers={{ google: false, github: false }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /continue with google/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /continue with github/i })).toBeNull();
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+  });
+
+  it("drops the 'magic link' divider when it would separate nothing", () => {
+    render(
+      <LoginForm
+        actions={makeActions()}
+        Captcha={AutoCaptcha}
+        providers={{ google: false, github: false }}
+      />,
+    );
+    expect(screen.queryByText(/^magic link$/i)).toBeNull();
+  });
+});
+
 describe("LoginForm", () => {
   it("renders the OAuth options, the magic-link form, and a disabled SSO option", () => {
     renderForm(makeActions());
