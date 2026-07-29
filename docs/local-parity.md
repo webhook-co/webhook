@@ -1,40 +1,40 @@
 # What you cannot test locally
 
-Local development is deliberately **hermetic**: no shared credentials, no third-party accounts, works
-offline. That buys a lot, and it costs some fidelity. This page is the honest list of what it costs.
+**Local dev is meant to match production** — same code paths, same providers, same class of credential. That
+is a hard rule ([`AGENTS.md`](../AGENTS.md)), not an aspiration: real Google and GitHub OAuth, real Resend
+delivery, the real Turnstile widget. If a capability ships in prod you should be able to exercise it here.
 
-It exists because the alternative is worse. A gap nobody wrote down is a gap someone rediscovers at 2am,
+This page is the short list of places that is not yet true, and it is deliberately short. Every entry says
+what differs, **why**, and what to do if you need the real thing.
+
+It exists because the alternative is worse. A gap nobody wrote down is one someone rediscovers at 2am,
 usually as "why does this work on my machine and not in production" — or, more dangerously, the reverse.
 
-Every entry says what is different, why it is that way, and what to do if you genuinely need the real thing.
+⚠️ **Before adding an entry here, check the real dependency is genuinely unavailable.** The captcha entry
+below was written on sound reasoning and was still wrong: the credential existed the whole time. An entry on
+this page is a last resort, not the first thing you reach for.
 
 ---
 
-## The captcha gate is not exercised
+## ~~The captcha gate is not exercised~~ — CLOSED
 
-**What runs locally:** the login form renders Cloudflare's published always-pass **test sitekey** on
-localhost, so the submit button enables and the magic-link flow works. `TURNSTILE_SECRET_KEY` is unset, so
-Better Auth's captcha plugin is **not wired** and nothing is verified server-side.
+This used to say the captcha gate could not be exercised locally, on the reasoning that Cloudflare's
+always-pass TEST secret returns `hostname: "example.com"` and would be rejected by our `allowedHostnames`
+pin. That reasoning was sound; the conclusion was wrong. **The fix was never the test keys — it was the real
+widget, which already permitted localhost.**
 
-**Why not just use the test secret key too:** because it breaks login rather than exercising it. Verified
-against the live endpoint:
+The `webhook-auth login` widget's Cloudflare-side domain list is `["127.0.0.1", "auth.webhook.co",
+"localhost"]`. So the real sitekey solves locally and the real secret verifies those tokens. Local now runs
+the same captcha plugin, against the same widget, with the same secret as production:
 
 ```
-$ curl -X POST https://challenges.cloudflare.com/turnstile/v0/siteverify \
-    -d secret=<the published always-pass TEST secret> -d response=XXXX.DUMMY.TOKEN.XXXX
-{"success":true,"hostname":"example.com","metadata":{"result_with_testing_key":true}}
+POST /api/auth/sign-in/magic-link  (no token)     → 400 MISSING_RESPONSE
+POST /api/auth/sign-in/magic-link  (bogus token)  → 403 VERIFICATION_FAILED
 ```
 
-`hostname` comes back as `example.com`, and there is no `action` field. Our plugin pins `allowedHostnames`
-(locally `["localhost"]`) and `expectedAction`, so every magic-link send would be **rejected**.
-
-Adding `example.com` to `allowedHostnames` in dev was rejected as a fix: loosening a security control's
-configuration to suit development is how that control quietly stops meaning anything.
-
-**If you need to test it:** point a local instance at a real Turnstile widget whose domain list includes
-`localhost`, and set the matching real secret.
-
----
+Kept here rather than deleted, as a worked example of the failure mode this page exists to prevent: a gap
+recorded on good evidence, which was really a substitute nobody had checked was necessary. **Verify that the
+real dependency is genuinely unavailable before writing an entry here.**
 
 ## RLS is only partly enforced
 
@@ -66,22 +66,36 @@ see below.
 
 ---
 
-## Things that are substituted, not missing
+## What matches prod by default
 
-These are hermetic stand-ins. The code path is real; the dependency is not.
+With the team's credentials in `.dev.vars`, these run exactly as production does — same code path, same
+provider, same key:
 
-| Area | Locally | Flag |
-| --- | --- | --- |
-| Transactional email | printed to the console, link included | `EMAIL_MODE=log` |
-| Social login | only providers with both halves configured are wired; magic link always works | `OAUTH_MODE=optional` |
-| KMS / envelope encryption | a process-local KEK from `.dev.vars` | `KMS_MODE=local` |
-| Billing | Stripe **test** mode; blank keys mean the plan picker does not render | `BILLING_MODE=test` |
+| Area | Locally |
+| --- | --- |
+| Social login | real Google + GitHub OAuth (GitHub uses its own dev app; GitHub permits one callback per app) |
+| Transactional email | really sends via Resend, from the verified `mail.webhook.co` sender |
+| Captcha | the real Turnstile widget and secret — its domain list includes `localhost` |
+| Billing | Stripe **test** mode, which is what a non-production environment should use |
 
-Each mode flag is refused outright if it is ever seen on a deployed Worker, and kept out of every committed
-config by `scripts/dev-mode-guard.mjs`.
+### The opt-outs, for contributors with no credentials
 
-**To use the real thing:** put real credentials in the app's `.dev.vars` and drop the corresponding flag.
-`pnpm dev:secrets` writes a commented template listing exactly which values each app wants.
+An external contributor cannot have any of the above, so each has an explicit escape hatch. **None is the
+default**, and each is refused outright if it is ever seen on a deployed Worker
+(`scripts/dev-mode-guard.mjs` keeps them out of every committed config):
+
+| Flag | Effect |
+| --- | --- |
+| `EMAIL_MODE=log` | mail prints to the console, link included, instead of sending |
+| `OAUTH_MODE=optional` | providers without both halves configured are not wired; magic link still works |
+| `KMS_MODE=local` | a process-local KEK instead of AWS KMS, so endpoints can be created without AWS |
+
+`KMS_MODE=local` is the one that has no alternative today: the engine is the sole KEK custodian and nobody
+should hold production AWS credentials to develop. The other two are conveniences, and using them means
+accepting that you are not testing what production does.
+
+**Setting them:** put the value in the app's `.dev.vars`. `pnpm dev:secrets` writes a commented template
+listing exactly what each app wants and which values are required for parity.
 
 ---
 
