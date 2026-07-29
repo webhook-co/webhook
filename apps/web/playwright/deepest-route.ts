@@ -124,3 +124,38 @@ export function isRouteTableReady(
 ): boolean {
   return status === 307 && (location ?? "").startsWith(authOrigin);
 }
+
+// ── Waiting for the SCAN, not for a request ──────────────────────────────────────────────────────────
+//
+// The HTTP probe above answers "is the deep route serving?", which is the right final question. What it
+// cannot do is distinguish "not registered YET" from "never will be" — so on a loaded CI runner it can
+// spend its entire budget asking before `next dev` has finished scanning src/app, and report a timeout
+// against a server that was healthy throughout.
+//
+// `next dev` writes the COMPLETE route table to a types file as soon as that scan finishes — before, and
+// independently of, compiling anything. So the file appearing WITH the deepest route in it is a
+// scan-completion signal that races with nothing.
+//
+// ⚠️ This is undocumented and version-dependent: `typedRoutes` defaults to FALSE and apps/web does not
+// enable it, yet Next 16.2 emits this file in dev anyway. So it is used as an OPTIMISATION, never as a
+// precondition — if the file never appears, the caller falls through to the HTTP probe and behaves exactly
+// as it did before. Worst case is today's behaviour; best case the probe never starts too early.
+
+/** Where `next dev` writes the scanned route table, relative to the app root. */
+export const ROUTE_TYPES_FILE = ".next/dev/types/routes.d.ts";
+
+/** Every route literal in the generated types file, across all of its union types. */
+export function routeTypesListRoutes(text: string): readonly string[] {
+  return [...text.matchAll(/"(\/[^"]*)"/g)].flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
+}
+
+/**
+ * Does the generated route table already list `route`?
+ *
+ * Compares the full URL path, so a PREFIX of the route (its parent, which the scan reaches first) does not
+ * count as a match — that is precisely the state we are waiting to leave.
+ */
+export function routeTypesInclude(text: string, route: readonly string[]): boolean {
+  const want = `/${urlSegments(route).join("/")}`;
+  return routeTypesListRoutes(text).includes(want);
+}
