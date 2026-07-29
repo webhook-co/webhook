@@ -93,6 +93,11 @@ const TOKEN = {
   // unset → "" → the engine cron treats it as uncapped (fail-safe, no Free-pause enforcement). Set the
   // FREE_EVENT_CAP GH repo var + this workflow env to ENABLE Free enforcement.
   "<FREE_EVENT_CAP>": process.env.FREE_EVENT_CAP ?? "",
+  // The OpenAI plugin-directory domain-verification token (ADR-0132), served verbatim at
+  // /.well-known/openai-apps-challenge on mcp. OPTIONAL (not reqEnv): unset → "" → the route 404s, which is
+  // correct whenever no submission is in flight. Not a secret (the endpoint publishes it unauthenticated);
+  // it lives in a GH var only so it can be set and rotated without a code change.
+  "<OPENAI_APPS_CHALLENGE_TOKEN>": process.env.OPENAI_APPS_CHALLENGE_TOKEN ?? "",
   // Billing config VARS (S4.4/S4.5) — all OPTIONAL: unset → "" → the code fail-closes (BILLING_MODE ""→off,
   // empty price/meter → disabled). An empty var is a valid wrangler var, so — unlike the optional Hyperdrive
   // bindings — these substitute in unconditionally. No price/tier figure lives here (ids/names only).
@@ -258,6 +263,9 @@ const APPS = {
       // FREE_EVENT_CAP (S4.3b) — the usage.get tool shows a rowless org the cap it is enforced at; same
       // optional GH var as engine (unset → "" → uncapped). Identical across every worker rendering usage.
       "<FREE_EVENT_CAP>",
+      // OPENAI_APPS_CHALLENGE_TOKEN (ADR-0132) — mcp ONLY: the domain-verification token is served from the
+      // MCP host because OpenAI requires the MCP host or a PARENT of it, and `www.` is neither.
+      "<OPENAI_APPS_CHALLENGE_TOKEN>",
     ],
     // AUTH_ISSUER (A8) — the service binding to auth.'s IssuerIntrospect WorkerEntrypoint, so mcp validates
     // opaque OAuth provider tokens by introspection. Deploy-injected here (NOT committed) because of the

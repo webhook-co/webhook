@@ -44,6 +44,17 @@ export interface ResourceHandlerDeps {
   readonly resourceMetadata: ProtectedResourceMetadata;
   /** The PRM well-known path (GET, public, DB-free). */
   readonly prmPath: string;
+  /**
+   * The OpenAI plugin-directory domain-verification token, or undefined/blank when unconfigured.
+   *
+   * OpenAI fetches `/.well-known/openai-apps-challenge` on the MCP host — or a PARENT host — to prove we
+   * control the domain serving the MCP server. `www.webhook.co` cannot do it (not a parent of `mcp.`, and
+   * the apex 301s), so this host is the only viable one and the route lives here beside the PRM.
+   *
+   * ONE token per host: their docs forbid returning JSON, a list, or several tokens from this URL, so a
+   * second plugin submitted against this same host would collide here rather than compose.
+   */
+  readonly appsChallengeToken?: string;
   /** Hand an authenticated request to the McpAgent DO (WebhookMcp.serve("/mcp").fetch). */
   readonly serveMcp: (
     request: Request,
@@ -61,6 +72,7 @@ export interface ResourceHandlerDeps {
 
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/healthz";
+const APPS_CHALLENGE_PATH = "/.well-known/openai-apps-challenge";
 const SESSION_HEADER = "mcp-session-id";
 
 function notFound(): Response {
@@ -105,6 +117,18 @@ export async function handleResourceRequest(
   // Public, DB-free routes.
   if (request.method === "GET" && url.pathname === deps.prmPath) {
     return Response.json(deps.resourceMetadata);
+  }
+  // Domain verification. The body is the token and NOTHING else — no JSON envelope, no trailing newline
+  // (`.trim()`, because a secret store or a shell heredoc appends one). A blank value is treated as
+  // UNCONFIGURED rather than as a valid empty token: serving `200 ""` would read as a working route while
+  // verification silently fails. The token is never taken from the request, only from config.
+  if (request.method === "GET" && url.pathname === APPS_CHALLENGE_PATH) {
+    const token = deps.appsChallengeToken?.trim();
+    if (token === undefined || token.length === 0) return notFound();
+    return new Response(token, {
+      status: 200,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
   if (request.method === "GET" && url.pathname === HEALTH_PATH) {
     return new Response("mcp ok", {

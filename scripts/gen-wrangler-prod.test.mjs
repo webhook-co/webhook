@@ -216,6 +216,37 @@ test("every billing env var the generator reads is forwarded by its deploy workf
   );
 });
 
+// The test above only looks at BILLING-prefixed names, so it cannot fail for a var outside that set — the
+// "a gate whose input is scoped cannot fail" shape. OPENAI_APPS_CHALLENGE_TOKEN (ADR-0132) was read by the
+// generator and forwarded by NO workflow, and that test stayed green. This one DISCOVERS every optional var
+// the generator reads instead of listing prefixes, so the next one is covered without editing a regex.
+//
+// An unforwarded optional var does not crash: it substitutes to "" and the feature silently stays dark. That
+// is the failure mode worth a test — a deploy that looks clean and ships a disabled feature.
+test("every optional env var the generator reads is forwarded by some deploy workflow", () => {
+  const gen = readFileSync(GEN, "utf8");
+  // `process.env.X` is how the generator reads OPTIONAL vars; required ones go through reqEnv("X") and
+  // throw at generation time, so they cannot fail silently and are out of scope here.
+  const read = [...new Set([...gen.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].map((m) => m[1]))];
+  assert.ok(read.length > 0, "expected the generator to read some optional env vars");
+
+  const forwarded = new Set(
+    ["deploy.yml", "deploy-web.yml", "deploy-auth.yml"]
+      .map((f) => readFileSync(join(REPO, ".github", "workflows", f), "utf8"))
+      .flatMap((w) =>
+        [...w.matchAll(/^\s{6}([A-Z][A-Z0-9_]*):\s*\$\{\{\s*vars\./gm)].map((m) => m[1]),
+      ),
+  );
+
+  const missing = read.filter((n) => !forwarded.has(n));
+  assert.deepEqual(
+    missing,
+    [],
+    `the generator reads these optional vars but no deploy workflow forwards them, so they would ` +
+      `substitute to "" and ship dark: ${missing}`,
+  );
+});
+
 test("STRIPE_METER_ID + the transport Hyperdrive: bound when provisioned, stripped when dark", () => {
   // Provisioned: the meter id lands as an engine var and the transport Hyperdrive binding is present.
   gen({

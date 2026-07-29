@@ -21,13 +21,14 @@
     "shopify"
   ],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "webhook.co",
     "shortDescription": "Debug webhook signatures",
     "longDescription": "Work out why an inbound webhook signature won't verify. The failure modes look identical from the outside and have completely different fixes: the wrong secret, a body your framework re-serialized before you saw it, a timestamp outside the replay window, or a provider whose signed message isn't what you'd guess. This walks you to a specific diagnosis using the open Apache-2.0 registry of 144 provider schemes that webhook.co is built on.",
     "developerName": "webhook.co",
     "category": "Developer Tools",
-    "capabilities": ["Interactive"],
+    "capabilities": ["Interactive", "Read", "Write"],
     "websiteURL": "https://www.webhook.co",
     "privacyPolicyURL": "https://www.webhook.co/privacy",
     "termsOfServiceURL": "https://www.webhook.co/terms",

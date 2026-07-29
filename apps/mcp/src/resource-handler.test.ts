@@ -244,3 +244,93 @@ describe("handleResourceRequest", () => {
     expect(setProps).not.toHaveBeenCalled();
   });
 });
+
+// The OpenAI plugin-directory domain-verification challenge. OpenAI fetches
+// `/.well-known/openai-apps-challenge` on the MCP host (or a PARENT of it) and the body must be ONLY
+// the token — their docs explicitly forbid JSON, a list of tokens, or several tokens from one URL.
+// `www.webhook.co` cannot serve it: it is not a parent of `mcp.`, and the apex 301s. So this host is
+// the only viable one, which is why the route lives here beside the PRM.
+describe("openai apps challenge", () => {
+  const CHALLENGE_PATH = "/.well-known/openai-apps-challenge";
+  const TOKEN = "abc123-openai-apps-challenge-token";
+
+  it("serves the token as the ENTIRE body — no JSON, no newline, no extra text", async () => {
+    const serveMcp = vi.fn(async () => SERVED.clone());
+    const verifyBearer = vi.fn<VerifyBearer>(async () => CTX);
+    const res = await handleResourceRequest(
+      deps({
+        appsChallengeToken: TOKEN,
+        serveMcp,
+        authDeps: { verifyBearer, resource: RESOURCE, resourceMetadataUrl: PRM_URL },
+      }),
+      req(CHALLENGE_PATH),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(200);
+    // Byte-exact: `toBe`, not `toContain`. A trailing "\n" is a different body and this must catch it.
+    expect(await res.text()).toBe(TOKEN);
+    expect(res.headers.get("content-type")).toMatch(/^text\/plain/);
+    // Public and DB-free, exactly like the PRM: the verifier presents no credential.
+    expect(serveMcp).not.toHaveBeenCalled();
+    expect(verifyBearer).not.toHaveBeenCalled();
+  });
+
+  it("404s when no token is configured, rather than serving an empty 200", async () => {
+    // An empty 200 would read to a human as "the route works" while verification fails. `deps()` omits
+    // the token, so this is also the default posture before the secret is ever set.
+    const res = await handleResourceRequest(deps(), req(CHALLENGE_PATH), {}, fakeCtx());
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain(TOKEN);
+  });
+
+  it("treats a blank or whitespace-only token as UNCONFIGURED, not as a valid empty token", async () => {
+    // A secret that failed to substitute arrives as "" or " " and is otherwise indistinguishable from
+    // unset — the same class of bug as an unsubstituted <PLACEHOLDER>. Serving 200 "" here would claim
+    // success while verification fails.
+    for (const blank of ["", "   ", "\n", "\t\n "]) {
+      const res = await handleResourceRequest(
+        deps({ appsChallengeToken: blank }),
+        req(CHALLENGE_PATH),
+        {},
+        fakeCtx(),
+      );
+      expect(res.status).toBe(404);
+    }
+  });
+
+  it("trims whitespace a secret store or shell heredoc appended", async () => {
+    const res = await handleResourceRequest(
+      deps({ appsChallengeToken: `  ${TOKEN}\n` }),
+      req(CHALLENGE_PATH),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(TOKEN);
+  });
+
+  it("ignores a token supplied in the request — it can only ever serve the configured one", async () => {
+    // Reflecting request input would let a caller choose the body, which is the whole ballgame for a
+    // proof-of-control endpoint. The fixture supplies a DIFFERENT token in the query and a header.
+    const res = await handleResourceRequest(
+      deps({ appsChallengeToken: TOKEN }),
+      req(`${CHALLENGE_PATH}?token=attacker-chosen`, { headers: { "x-token": "attacker-chosen" } }),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(TOKEN);
+  });
+
+  it("does not serve the token to a non-GET request", async () => {
+    const res = await handleResourceRequest(
+      deps({ appsChallengeToken: TOKEN }),
+      req(CHALLENGE_PATH, { method: "POST" }),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain(TOKEN);
+  });
+});

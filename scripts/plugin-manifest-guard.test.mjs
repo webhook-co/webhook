@@ -28,6 +28,7 @@ const OK = {
   license: "Apache-2.0",
   keywords: ["webhook"],
   skills: "./skills/",
+  mcpServers: "./.mcp.json",
   interface: {
     displayName: "webhook.co",
     shortDescription: "Debug webhook signatures",
@@ -52,6 +53,15 @@ function sources(overrides = {}) {
     dirName: "webhook-co",
     skills: [{ dir: "debug-webhook-signature", name: "debug-webhook-signature", description: "d" }],
     assetPaths: ["./assets/mark.svg", "./assets/logo.png"],
+    mcpSource: JSON.stringify({
+      mcpServers: {
+        webhook: {
+          type: "http",
+          url: "https://mcp.webhook.co/mcp",
+          oauth_resource: "https://mcp.webhook.co",
+        },
+      },
+    }),
     ...overrides,
   };
 }
@@ -87,21 +97,123 @@ test("an unparseable manifest fails with a parse error, not a crash", () => {
   assert.match(problems[0], /does not parse/i);
 });
 
-test("a plugin with no skills at all fails — a skills-only plugin must ship a skill", () => {
+test("a plugin with no skills fails, even though it also ships an MCP server", () => {
+  // The MCP server alone would be a non-empty runtime surface, so nothing external forces a skill here.
+  // We require one anyway: it is the only part that works without an account, and dropping it would turn
+  // the listing into pure OAuth-gated surface without anyone noticing.
   const problems = check(sources({ skills: [] }));
   assert.equal(problems.length, 1);
   assert.match(problems[0], /no skills/i);
 });
 
-// ---------------------------------------------------------------- skills-only invariants
+// ------------------------------------------------- MCP-backed invariants (ADR-0132 supersedes ADR-0131)
+//
+// This plugin was skills-only and is now skills + MCP. The old guard asserted the OPPOSITE — that
+// `mcpServers` must be absent — on the strength of a claimed `mcp_configuration_excluded` rejection. That
+// claim was FALSE: 8 of the 180 curated plugins (github, linear, notion, figma, cloudflare and OpenAI's own
+// openai-developers among them) ship skills AND mcpServers, and the string appears nowhere in the shipped
+// validator or spec. The spec's own sample manifest carries skills, hooks, mcpServers and apps together.
 
-test("declaring an MCP server fails: a skills-only submission must not carry one", () => {
-  const problems = check(withManifest({ mcpServers: "./.mcp.json" }));
+test("a manifest with NO mcpServers fails — this is an MCP-backed submission", () => {
+  const { mcpServers, ...withoutMcp } = OK;
+  assert.ok(mcpServers !== undefined, "fixture must have had mcpServers to remove");
+  const problems = check(sources({ manifestSource: JSON.stringify(withoutMcp) }));
   assert.equal(problems.length, 1);
   assert.match(problems[0], /mcpServers/);
 });
 
-test("declaring apps fails for the same reason", () => {
+test("mcpServers pointing somewhere other than ./.mcp.json fails", () => {
+  // The guard validates the contents of ./.mcp.json. Repointing the field would leave that file
+  // validated but unused, and the real config unvalidated, while the guard still printed OK.
+  const problems = check(withManifest({ mcpServers: "./somewhere-else.json" }));
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /\.mcp\.json/);
+});
+
+test("an unparseable .mcp.json fails rather than being skipped", () => {
+  const problems = check(sources({ mcpSource: "{not json" }));
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /does not parse/i);
+});
+
+test("a missing .mcp.json fails — never a pass over an absent file", () => {
+  const problems = check(sources({ mcpSource: null }));
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /cannot read|missing/i);
+});
+
+test("a stdio/local MCP server is rejected — a published plugin must not run a local process", () => {
+  const problems = check(
+    sources({
+      mcpSource: JSON.stringify({
+        mcpServers: { webhook: { command: "npx", args: ["-y", "@webhook-co/mcp"] } },
+      }),
+    }),
+  );
+  assert.ok(problems.length >= 1);
+  assert.match(problems.join("\n"), /http|command/i);
+});
+
+test("the MCP url must be our real endpoint, not a placeholder or another host", () => {
+  for (const url of [
+    "https://mcp.example.com/mcp",
+    "http://mcp.webhook.co/mcp", // plaintext
+    "https://mcp.webhook.co/sse", // /sse is a 404 on our server — streamable-http only
+  ]) {
+    const problems = check(
+      sources({
+        mcpSource: JSON.stringify({
+          mcpServers: { webhook: { type: "http", url, oauth_resource: "https://mcp.webhook.co" } },
+        }),
+      }),
+    );
+    assert.ok(problems.length >= 1, `expected ${url} to be rejected`);
+  }
+});
+
+test("oauth_resource must equal the PRM `resource`, or the OAuth audience silently mismatches", () => {
+  // Our live PRM declares resource = "https://mcp.webhook.co". RFC 8707 binds the token to that exact
+  // audience, so an oauth_resource of ".../mcp" sends clients to request the wrong audience.
+  const problems = check(
+    sources({
+      mcpSource: JSON.stringify({
+        mcpServers: {
+          webhook: {
+            type: "http",
+            url: "https://mcp.webhook.co/mcp",
+            oauth_resource: "https://mcp.webhook.co/mcp",
+          },
+        },
+      }),
+    }),
+  );
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /oauth_resource/);
+});
+
+test("declaring more than one MCP server fails — the listing is one server", () => {
+  const problems = check(
+    sources({
+      mcpSource: JSON.stringify({
+        mcpServers: {
+          webhook: {
+            type: "http",
+            url: "https://mcp.webhook.co/mcp",
+            oauth_resource: "https://mcp.webhook.co",
+          },
+          other: {
+            type: "http",
+            url: "https://mcp.webhook.co/mcp",
+            oauth_resource: "https://mcp.webhook.co",
+          },
+        },
+      }),
+    }),
+  );
+  assert.ok(problems.length >= 1);
+});
+
+test("declaring apps still fails — we ship no ChatGPT Apps SDK custom UI", () => {
   const problems = check(withManifest({ apps: "./.app.json" }));
   assert.equal(problems.length, 1);
   assert.match(problems[0], /apps/);
@@ -322,7 +434,9 @@ test("three simultaneous defects are all reported, not just the first", () => {
       manifestSource: JSON.stringify({
         ...OK,
         version: "0.1",
-        mcpServers: "./.mcp.json",
+        // `apps`, not `mcpServers`: since ADR-0132 an mcpServers reference is REQUIRED, so using it here
+        // would leave this fixture with two defects and the count assertion would pass for the wrong reason.
+        apps: "./.app.json",
         interface: { ...OK.interface, displayName: "x".repeat(31) },
       }),
     }),

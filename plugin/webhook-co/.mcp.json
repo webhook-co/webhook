@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "webhook": {
+      "type": "http",
+      "url": "https://mcp.webhook.co/mcp",
+      "oauth_resource": "https://mcp.webhook.co"
+    }
+  }
+}
