@@ -58,25 +58,25 @@
     "dev-mode-guard": "node scripts/dev-mode-guard.mjs"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.7",
-    "@cloudflare/workers-types": "^5.20260722.1",
+    "@cloudflare/vitest-pool-workers": "^0.19.0",
+    "@cloudflare/workers-types": "^5.20260729.1",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",
-    "eslint": "^10.7.0",
+    "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-security": "^4.0.1",
-    "globals": "^17.7.0",
+    "globals": "^17.8.0",
     "husky": "^9.1.7",
     "jsonc-parser": "^3.3.1",
-    "lint-staged": "^17.1.1",
+    "lint-staged": "^17.2.0",
     "prettier": "^3.9.6",
-    "turbo": "^2.10.5",
+    "turbo": "^2.10.7",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10",
-    "wrangler": "^4.113.0",
+    "wrangler": "^4.115.0",
     "yaml": "^2.9.0"
   }
 }

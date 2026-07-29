@@ -5,12 +5,12 @@ packages:
   - "infra"
 
 catalog:
-  remotion: 4.0.496
-  "@remotion/cli": 4.0.496
-  "@remotion/bundler": 4.0.496
-  "@remotion/renderer": 4.0.496
-  "@remotion/google-fonts": 4.0.496
-  "@remotion/tailwind-v4": 4.0.496
+  remotion: 4.0.500
+  "@remotion/cli": 4.0.500
+  "@remotion/bundler": 4.0.500
+  "@remotion/renderer": 4.0.500
+  "@remotion/google-fonts": 4.0.500
+  "@remotion/tailwind-v4": 4.0.500
   react: 19.2.7
   react-dom: 19.2.7
 
@@ -24,8 +24,16 @@ onlyBuiltDependencies:
 # pnpm 10 reads `overrides` from here (same as the settings above), not package.json.
 #   esbuild 0.28.1 -> fixes GHSA-gv7w-rqvm-qjhr (#8, high) + GHSA-g7r4-m6w7-qqqr (#7, low);
 #     within vite 8's supported "^0.27.0 || ^0.28.0", no build-API breaking changes for our targets.
-#   postcss 8.5.15 -> fixes CVE-2026-41305 / GHSA-qx2v-qp2m-jg93 (#1, medium); >= 8.5.10,
-#     dedupes with vite's existing 8.5.15 and satisfies @tailwindcss/postcss's ^8.5.10.
+#   postcss 8.5.18 -> fixes GHSA-r28c-9q8g-f849 (#32, high; `map: { prev: ... }` auto-loading follows
+#     a `sourceMappingURL` out of the source's directory, so compiling attacker-authored CSS discloses
+#     an arbitrary `.map` file) and, still, CVE-2026-41305 / GHSA-qx2v-qp2m-jg93 (#1, medium).
+#     BUMPED from 8.5.15, which this bare key was actively HOLDING at a vulnerable version — a bare pin
+#     rewrites every copy, so the stale value is a floor AND a ceiling. It had also drifted BELOW two
+#     consumers' declared ranges (@tailwindcss/postcss 4.3.3 wants ^8.5.16, vite 8.1.5 wants ^8.5.17);
+#     8.5.18 satisfies both, so this bump restores range compliance rather than straining it.
+#     NB `next` declares an EXACT `postcss: 8.4.31`, which this bare key has crossed since #1; the
+#     advisory's precondition is "processing untrusted CSS" and every stylesheet compiled here is
+#     first-party, so the residual risk is build-time only.
 # The range-scoped pins below were stranded in package.json's "pnpm.overrides" (pnpm 10 stopped
 # reading that field, silently making them inert). Moved here so they apply again. Range-scoped
 # (`name@<fixed`) so only the vulnerable versions are bumped:
@@ -50,6 +58,51 @@ onlyBuiltDependencies:
 #     expansion of consecutive `{}` groups). Only the 1.x band is vulnerable here — the tree's 2.1.2 and
 #     5.0.7 are already at/above their own fix floors, and the `<1.1.16` key deliberately leaves them
 #     alone (a wider key would drag minimatch@3 across a major). 1.1.16 satisfies its parent's ^1.1.7.
+#     DELIBERATELY NOT RETARGETED for GHSA-mh99-v99m-4gvg / CVE-2026-14257 (#33, high; unbounded
+#     expansion LENGTH — `'{a,b}'.repeat(1500)` stays under the 100k count cap while making each result
+#     ~1500 chars, exhausting memory). That advisory has ONE band, `<=5.0.7`, so it covers all three
+#     copies in this tree, but the fix must NOT be expressed as a wider key here. Upstream fixed it per
+#     major line, and the majors are NOT API-compatible: 1.x/2.x are `module.exports = expandTop` (a
+#     callable default), while 5.x is `exports.expand` (a named export, tshy dual-build). minimatch@3
+#     does `var expand = require('brace-expansion'); expand(pattern)`, so a `brace-expansion@<5.0.8` key
+#     — the only shape scripts/overrides-guard.mjs can parse — would match 1.1.16 and 2.1.3 too and
+#     break them with "expand is not a function" at lint time. Per line, and how each is covered:
+#       5.x (>=5.0.8) — the ONLY prod-reachable copy (apps/mcp -> agents -> just-bash -> minimatch@10);
+#         already at 5.0.8 in the lockfile via #808/#809/#810, and minimatch@10 calls the named export.
+#       2.x (>=2.1.3) — backported 2026-07-28 (upstream `v2` branch, "fix: backport GHSA-mh99-v99m-4gvg");
+#         already at 2.1.3. Dev-only (@redocly/openapi-core -> minimatch@5, glob@9 -> minimatch@8).
+#       1.x — NO FIX PUBLISHED, and none can be pinned. Upstream's `v1` branch still ends at 1.1.16
+#         (2026-07-08) and 1.1.16 still defaults `max` to Infinity. Its consumers cannot be upgraded
+#         out of it either: eslint-plugin-jsx-a11y@6.10.2 is the LATEST release and still declares
+#         minimatch ^3.1.2, and glob@7.2.3 arrives via rimraf@3. RESOLVED INSTEAD by bumping the
+#         intermediate PARENT — see the `minimatch@<4.0.0` key below. No 1.x copy remains in the tree,
+#         so no `brace-expansion@<1.1.17` key is needed unless a 1.x copy reappears.
+#   minimatch >=5.1.9 -> the fix for GHSA-mh99-v99m-4gvg's last unpatched copy. brace-expansion 1.x has
+#     NO upstream fix (v1 branch ends at 1.1.16, still `max = Infinity`), and it cannot be pinned
+#     directly because 5.x is not API-compatible with 1.x (see above). The only remaining lever is the
+#     PARENT: minimatch@3.1.5 declares `brace-expansion ^1.1.7`, while minimatch@5 declares `^2.0.1`,
+#     which resolves to the PATCHED 2.1.3 — so bumping the parent retires the 1.x line entirely.
+#     Safe because minimatch 3 -> 5 is a same-shape CJS bump, verified rather than assumed:
+#       - Both are plain CJS (`main: minimatch.js`, no `exports` map, no `type: module`) and both
+#         `module.exports` a callable, so `require("minimatch")(path, pattern)` is unchanged. The
+#         exported surface is IDENTICAL — same 8 top-level keys (GLOBSTAR, Minimatch, braceExpand,
+#         defaults, filter, makeRe, match, sep) and the same 12 Minimatch.prototype members.
+#       - A differential run over 6,090 (pattern, path, options) combinations found 5 diffs, ALL on the
+#         single extglob `*(a|b)*` matching a leading-dot path (v5 matches `.hidden`, v3 did not).
+#         Unreachable for both consumers: eslint-plugin-jsx-a11y passes JSX COMPONENT NAMES (plain
+#         identifiers) to `minimatch(name, control)`, and rimraf@3 passes filesystem paths to glob@7.
+#     Both consumers are dev-only (eslint-plugin-jsx-a11y@6.10.2 is the LATEST release and still
+#     declares `minimatch ^3.1.2`; glob@7.2.3 <- rimraf@3.0.2 <- chrome-launcher, i.e. lighthouse), so
+#     this crosses their declared ranges deliberately — there is no in-range option, and upstream will
+#     not publish one. The key is scoped `<4.0.0` so it touches ONLY the 3.x copy; the tree's
+#     minimatch 5.1.9 / 8.0.7 / 10.2.6 are above the floor and left alone.
+#     Behaviour was also proven end-to-end, not just at the module boundary: jsx-a11y's
+#     `label-has-associated-control` with `controlComponents: ["Custom*Input"]` (which routes through
+#     mayContainChildComponent -> minimatch) still accepts `<CustomTextInput/>` and still REJECTS
+#     `<Widget/>` — identical results on 3.1.5 and 5.1.9, and the reject case proves the assertion is
+#     not vacuous. glob@7 on minimatch@5 still expands braces (`{apps,packages}/*/package.json` -> 23
+#     matches vs 11 unbraced) and still walks globstars.
+#     Drop this key if eslint-plugin-jsx-a11y ever widens its range or brace-expansion ships a 1.1.17.
 #   body-parser >=1.20.6 -> fixes GHSA-v422-hmwv-36x6 / CVE-2026-12590 (#25, low; an invalid `limit`
 #     silently disables size enforcement). Only the 1.x band: express@5's body-parser@2.3.0 is already
 #     patched and the key does not match it. 1.20.6 satisfies express@4's declared ~1.20.5.
@@ -102,13 +155,14 @@ onlyBuiltDependencies:
 #   binary from every install. Drop this key once next and miniflare both ship a >=0.35 default.
 overrides:
   esbuild: 0.28.1
-  postcss: 8.5.15
+  postcss: 8.5.18
   "tmp@<0.2.6": "^0.2.6"
   "uuid@<11.1.1": "^11.1.1"
   "js-yaml@<4.3.0": "^4.3.0"
   "form-data@<4.0.6": "^4.0.6"
   "undici@<7.28.0": "^7.28.0"
   "brace-expansion@<1.1.16": "^1.1.16"
+  "minimatch@<4.0.0": "^5.1.9"
   "body-parser@<1.20.6": "^1.20.6"
   "fast-uri@<3.1.3": "^3.1.3"
   "hono@<4.12.27": "^4.12.27"
