@@ -203,9 +203,13 @@ export const APPS = {
       },
       {
         name: "EMAIL_MODE",
-        scope: "local",
-        value: "log",
-        note: "Invite emails print to the console (link included) instead of being sent. Without it, an unconfigured Resend key silently falls back to the copy-link path, so the invite EMAIL path is never exercised locally.",
+        scope: "external",
+        note: 'LEAVE BLANK so invite mail really sends, exactly as in prod. Set it to "log" only if you have no Resend key; invites then print to the console with their link.',
+      },
+      {
+        name: "RESEND_API_KEY",
+        scope: "external",
+        note: "REQUIRED for prod parity — apps/web sends the INVITE email and reads this via getResendApiKey(). It was missing from this manifest entirely, so invite mail could never send locally and silently fell back to the copy-link path. Same key as prod and as apps/auth.",
       },
       {
         name: "STRIPE_SECRET_KEY",
@@ -241,32 +245,30 @@ export const APPS = {
       },
       {
         name: "OAUTH_MODE",
-        scope: "local",
-        value: "optional",
-        note: "Social login is optional locally: providers without BOTH halves configured are simply not wired, and you sign in by magic link. Refused outright if an OAuth secret is a Secrets Store binding (the prod shape).",
+        scope: "external",
+        note: 'LEAVE BLANK. Local must match prod, so real Google/GitHub OAuth is the default and the buttons work exactly as they do in production. Set it to "optional" ONLY if you have no OAuth credentials at all (an external contributor) — that drops unconfigured providers and leaves magic link as the way in. See docs/local-parity.md.',
       },
       {
         name: "EMAIL_MODE",
-        scope: "local",
-        value: "log",
-        note: "Transactional mail is PRINTED to the console instead of sent — this is how you get your magic-link URL locally. Refused outright if RESEND_API_KEY is a Secrets Store binding (the prod shape).",
+        scope: "external",
+        note: 'LEAVE BLANK. Local must match prod, so mail really sends via Resend using the team key. Set it to "log" ONLY if you have no Resend key — magic links then print to the console instead. See docs/local-parity.md.',
       },
       {
         name: "GOOGLE_CLIENT_ID",
         scope: "external",
-        note: "Google OAuth dev app with an http://localhost:3001 callback. OPTIONAL now that OAUTH_MODE=optional is set: leave it blank and the Google button is simply absent.",
+        note: "REQUIRED for prod parity. The SAME Google OAuth app prod uses — its callback list already includes http://localhost:3001. The team value is in the shared credential store; ask rather than inventing a substitute.",
       },
       { name: "GOOGLE_CLIENT_SECRET", scope: "external", note: "Pairs with GOOGLE_CLIENT_ID." },
       {
         name: "GITHUB_CLIENT_ID",
         scope: "external",
-        note: "GitHub OAuth dev app. Optional — see GOOGLE_CLIENT_ID.",
+        note: "REQUIRED for prod parity. A SEPARATE GitHub OAuth app from prod's (GitHub allows one callback URL per app, so dev needs its own with http://localhost:3001/api/auth/callback/github). The team value is in the shared credential store.",
       },
       { name: "GITHUB_CLIENT_SECRET", scope: "external", note: "Pairs with GITHUB_CLIENT_ID." },
       {
         name: "RESEND_API_KEY",
         scope: "external",
-        note: "Transactional email. OPTIONAL now that EMAIL_MODE=log is set — leave it blank and mail prints to the console. Set it only to exercise real delivery.",
+        note: "REQUIRED for prod parity — the same Resend key prod uses, so local really sends. Only if you cannot have it, set EMAIL_MODE=log and mail prints to the console instead.",
       },
       {
         name: "TURNSTILE_SECRET_KEY",

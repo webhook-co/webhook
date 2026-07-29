@@ -78,6 +78,11 @@ describe("resolveOAuthMode", () => {
     expect(resolveOAuthMode({})).toBe("required");
   });
 
+  // `.dev.vars` writes an unset key as `OAUTH_MODE=` — an empty string. See the email-transport note.
+  it("treats an empty value as unset — a blank .dev.vars line must not throw", () => {
+    expect(resolveOAuthMode({ OAUTH_MODE: "" })).toBe("required");
+  });
+
   it("accepts an explicit required", () => {
     expect(resolveOAuthMode({ OAUTH_MODE: "required" })).toBe("required");
   });
@@ -113,9 +118,10 @@ describe("resolveOAuthMode", () => {
     expect(err).toContain("GITHUB_CLIENT_ID");
   });
 
+  // "" is UNSET (covered above), not an unknown value. A real typo still fails closed.
   it("throws on an unknown value rather than guessing", () => {
-    expect(() => resolveOAuthMode({ OAUTH_MODE: "" })).toThrow(/OAUTH_MODE/);
     expect(() => resolveOAuthMode({ OAUTH_MODE: "OPTIONAL" })).toThrow(/OAUTH_MODE/);
+    expect(() => resolveOAuthMode({ OAUTH_MODE: "opitonal" })).toThrow(/OAUTH_MODE/);
   });
 });
 

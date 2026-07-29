@@ -21,25 +21,25 @@ BETTER_AUTH_SECRET=
 # GENERATED: HMAC key for the OAuth consent ticket.
 CONSENT_TICKET_KEY=
 
-# LOCAL: Social login is optional locally: providers without BOTH halves configured are simply not wired, and you sign in by magic link. Refused outright if an OAuth secret is a Secrets Store binding (the prod shape).
-OAUTH_MODE=optional
+# EXTERNAL: LEAVE BLANK. Local must match prod, so real Google/GitHub OAuth is the default and the buttons work exactly as they do in production. Set it to "optional" ONLY if you have no OAuth credentials at all (an external contributor) — that drops unconfigured providers and leaves magic link as the way in. See docs/local-parity.md.
+OAUTH_MODE=
 
-# LOCAL: Transactional mail is PRINTED to the console instead of sent — this is how you get your magic-link URL locally. Refused outright if RESEND_API_KEY is a Secrets Store binding (the prod shape).
-EMAIL_MODE=log
+# EXTERNAL: LEAVE BLANK. Local must match prod, so mail really sends via Resend using the team key. Set it to "log" ONLY if you have no Resend key — magic links then print to the console instead. See docs/local-parity.md.
+EMAIL_MODE=
 
-# EXTERNAL: Google OAuth dev app with an http://localhost:3001 callback. OPTIONAL now that OAUTH_MODE=optional is set: leave it blank and the Google button is simply absent.
+# EXTERNAL: REQUIRED for prod parity. The SAME Google OAuth app prod uses — its callback list already includes http://localhost:3001. The team value is in the shared credential store; ask rather than inventing a substitute.
 GOOGLE_CLIENT_ID=
 
 # EXTERNAL: Pairs with GOOGLE_CLIENT_ID.
 GOOGLE_CLIENT_SECRET=
 
-# EXTERNAL: GitHub OAuth dev app. Optional — see GOOGLE_CLIENT_ID.
+# EXTERNAL: REQUIRED for prod parity. A SEPARATE GitHub OAuth app from prod's (GitHub allows one callback URL per app, so dev needs its own with http://localhost:3001/api/auth/callback/github). The team value is in the shared credential store.
 GITHUB_CLIENT_ID=
 
 # EXTERNAL: Pairs with GITHUB_CLIENT_ID.
 GITHUB_CLIENT_SECRET=
 
-# EXTERNAL: Transactional email. OPTIONAL now that EMAIL_MODE=log is set — leave it blank and mail prints to the console. Set it only to exercise real delivery.
+# EXTERNAL: REQUIRED for prod parity — the same Resend key prod uses, so local really sends. Only if you cannot have it, set EMAIL_MODE=log and mail prints to the console instead.
 RESEND_API_KEY=
 
 # EXTERNAL: Leave it UNSET locally. Unset means the captcha plugin is not wired, and the login widget renders Cloudflare's always-pass test sitekey on localhost. Wiring the test SECRET would break local login: siteverify returns hostname example.com, which the plugin's allowedHostnames pin rejects.

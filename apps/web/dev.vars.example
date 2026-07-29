@@ -36,8 +36,11 @@ SESSION_TOKEN_SECRET=
 # LOCAL: See api.
 BILLING_MODE=test
 
-# LOCAL: Invite emails print to the console (link included) instead of being sent. Without it, an unconfigured Resend key silently falls back to the copy-link path, so the invite EMAIL path is never exercised locally.
-EMAIL_MODE=log
+# EXTERNAL: LEAVE BLANK so invite mail really sends, exactly as in prod. Set it to "log" only if you have no Resend key; invites then print to the console with their link.
+EMAIL_MODE=
+
+# EXTERNAL: REQUIRED for prod parity — apps/web sends the INVITE email and reads this via getResendApiKey(). It was missing from this manifest entirely, so invite mail could never send locally and silently fell back to the copy-link path. Same key as prod and as apps/auth.
+RESEND_API_KEY=
 
 # EXTERNAL: See api. Without it the plan picker does not render.
 STRIPE_SECRET_KEY=

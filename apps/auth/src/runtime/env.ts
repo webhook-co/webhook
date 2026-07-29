@@ -120,8 +120,10 @@ export type OAuthMode = "required" | "optional";
  * `optional` is refused outright when any OAuth secret arrives as a Secrets Store binding.
  */
 export function resolveOAuthMode(env: Record<string, unknown>): OAuthMode {
-  const mode = env.OAUTH_MODE;
-  if (mode === undefined || mode === "required") return "required";
+  // Blank is UNSET, not a typo — `.dev.vars` writes an unconfigured key as `OAUTH_MODE=`. See the same
+  // note in @webhook-co/shared/email-transport.
+  const mode = typeof env.OAUTH_MODE === "string" ? env.OAUTH_MODE.trim() : env.OAUTH_MODE;
+  if (mode === undefined || mode === "" || mode === "required") return "required";
   if (mode !== "optional") {
     throw new Error(`OAUTH_MODE must be "required" or "optional" (got ${JSON.stringify(mode)})`);
   }

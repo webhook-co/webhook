@@ -28,6 +28,17 @@ describe("resolveEmailMode", () => {
     expect(resolveEmailMode({})).toBe("send");
   });
 
+  // `.dev.vars` writes an unset key as `EMAIL_MODE=` — an EMPTY STRING, not undefined. Treating that as a
+  // typo made every app that read a generated .dev.vars throw at the request boundary: a 500 with an empty
+  // body, on a config file our own generator produced. Blank means unset.
+  it("treats an empty value as unset — that is what a blank .dev.vars line yields", () => {
+    expect(resolveEmailMode({ EMAIL_MODE: "" })).toBe("send");
+  });
+
+  it("treats whitespace as unset too", () => {
+    expect(resolveEmailMode({ EMAIL_MODE: "   " })).toBe("send");
+  });
+
   it("accepts an explicit send", () => {
     expect(resolveEmailMode({ EMAIL_MODE: "send" })).toBe("send");
   });
