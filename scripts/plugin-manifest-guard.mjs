@@ -218,6 +218,25 @@ function checkMcpConfig(opts) {
     );
     return problems;
   }
+  // NO CREDENTIAL MATERIAL. `headers` is where a static `Authorization: Bearer …` lives in an MCP client
+  // config, and `env` is its stdio equivalent. This file ships to every installer, so a secret here is a
+  // secret published to strangers. Our server authenticates with OAuth, so neither field has a use.
+  for (const field of ["headers", "env"]) {
+    if (server?.[field] !== undefined) {
+      problems.push(
+        `.mcp.json server "${names[0]}" declares \`${field}\`, which is where credential material lives ` +
+          `in an MCP config. This file ships to every installer — anything in it is published. Our ` +
+          `server uses OAuth, so remove the field rather than putting a token in it. (The offending ` +
+          `value is deliberately not printed here.)`,
+      );
+    }
+  }
+
+  // The three shape checks below name the EXPECTED constant and the offending FIELD — never the value they
+  // found. CodeQL's js/clear-text-logging (HIGH) fired on the previous version, which interpolated
+  // `oauth_resource` into a message that reaches console.error. Today these are public URLs, so it would
+  // have been easy to dismiss — but the finding is about the SHAPE, and `headers` above proves this file
+  // can hold a real secret. The value is one `cat .mcp.json` away for anyone debugging.
   if (server?.type !== "http") {
     problems.push(
       `.mcp.json server "${names[0]}" must be \`type: "http"\` (streamable-http). Our /sse endpoint is a ` +
@@ -226,15 +245,15 @@ function checkMcpConfig(opts) {
   }
   if (server?.url !== MCP_URL) {
     problems.push(
-      `.mcp.json url is ${JSON.stringify(server?.url)}; it must be exactly "${MCP_URL}" (https, and the ` +
-        `/mcp path — /sse 404s).`,
+      `.mcp.json \`url\` does not match; it must be exactly "${MCP_URL}" (https, and the /mcp path — ` +
+        `/sse 404s). See the file for the current value.`,
     );
   }
   if (server?.oauth_resource !== MCP_OAUTH_RESOURCE) {
     problems.push(
-      `.mcp.json oauth_resource is ${JSON.stringify(server?.oauth_resource)}; it must be exactly ` +
-        `"${MCP_OAUTH_RESOURCE}" — the \`resource\` our PRM declares. RFC 8707 binds the token to that ` +
-        `audience, so a mismatch makes every client's token be rejected as the wrong audience.`,
+      `.mcp.json \`oauth_resource\` does not match; it must be exactly "${MCP_OAUTH_RESOURCE}" — the ` +
+        `\`resource\` our PRM declares. RFC 8707 binds the token to that audience, so a mismatch makes ` +
+        `every client's token rejected as the wrong audience. See the file for the current value.`,
     );
   }
   return problems;

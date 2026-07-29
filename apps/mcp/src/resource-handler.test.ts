@@ -299,6 +299,41 @@ describe("openai apps challenge", () => {
     }
   });
 
+  it("treats an UNSUBSTITUTED <PLACEHOLDER> as unconfigured, not as a token", async () => {
+    // `wrangler dev` does not run the prod overlay, so the committed var arrives as the literal
+    // "<OPENAI_APPS_CHALLENGE_TOKEN>". That is non-empty, so a blank check alone lets it through and the
+    // endpoint answers 200 with the placeholder AS the verification token — a confidently wrong answer,
+    // which is worse than 404. dev-flag-parity-guard catches the config half; this catches the code half.
+    for (const placeholder of [
+      "<OPENAI_APPS_CHALLENGE_TOKEN>",
+      "  <OPENAI_APPS_CHALLENGE_TOKEN>  ",
+      "<ANYTHING_AT_ALL>",
+    ]) {
+      const res = await handleResourceRequest(
+        deps({ appsChallengeToken: placeholder }),
+        req(CHALLENGE_PATH),
+        {},
+        fakeCtx(),
+      );
+      expect(res.status).toBe(404);
+      expect(await res.text()).not.toContain("OPENAI_APPS_CHALLENGE_TOKEN");
+    }
+  });
+
+  it("still serves a real token that merely CONTAINS angle brackets", async () => {
+    // The placeholder rule must not swallow a legitimate token. Only a value that is ENTIRELY
+    // <UPPER_SNAKE> is a placeholder.
+    const odd = "abc<def>ghi";
+    const res = await handleResourceRequest(
+      deps({ appsChallengeToken: odd }),
+      req(CHALLENGE_PATH),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(odd);
+  });
+
   it("trims whitespace a secret store or shell heredoc appended", async () => {
     const res = await handleResourceRequest(
       deps({ appsChallengeToken: `  ${TOKEN}\n` }),

@@ -27,6 +27,18 @@ export function requiredEnvNames(source) {
   return [...source.matchAll(/reqEnv\(\s*"([A-Z0-9_]+)"\s*\)/g)].map((m) => m[1]).sort();
 }
 
+/**
+ * Names read as `process.env.X` — the OPTIONAL ones. Unlike `reqEnv()`, these do not throw when absent:
+ * they substitute to `""` and the feature they gate silently ships DARK, with every gate green. That is
+ * the failure this half exists for. De-duplicated, since one var is usually read once but referenced from
+ * several app blocks.
+ */
+export function optionalEnvNames(source) {
+  return [
+    ...new Set([...source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)].map((m) => m[1])),
+  ].sort();
+}
+
 /** Workflow files that invoke the generator. */
 export function workflowsRunningGenerator(dir = WORKFLOWS) {
   return readdirSync(dir)
@@ -41,12 +53,19 @@ export function check({ repo = REPO, workflowsDir = WORKFLOWS, generatorSource }
   // rather than against whatever the real generator happens to require today.
   const source = generatorSource ?? readFileSync(join(repo, GENERATOR), "utf8");
   const required = requiredEnvNames(source);
+  const optional = optionalEnvNames(source);
   const workflows = workflowsRunningGenerator(workflowsDir);
 
   if (required.length < 5) {
     problems.push(
       `discovery floor: found only ${required.length} reqEnv() names in ${GENERATOR} (expected >= 5). ` +
         `Detection is broken — this guard would otherwise pass vacuously.`,
+    );
+  }
+  if (optional.length < 5) {
+    problems.push(
+      `discovery floor: found only ${optional.length} optional process.env names in ${GENERATOR} ` +
+        `(expected >= 5). Detection is broken — the optional-var check below would pass over an empty set.`,
     );
   }
   if (workflows.length < 2) {
@@ -66,6 +85,28 @@ export function check({ repo = REPO, workflowsDir = WORKFLOWS, generatorSource }
           `Worker it belongs to is deployed elsewhere.`,
       );
     }
+  }
+
+  // Optional vars need only ONE workflow — the one that deploys the Worker reading them. Demanding all of
+  // them would force noise into workflows that render a config they never ship. But forwarded by NOBODY
+  // means the generator substitutes "" on every path and the feature is dark everywhere, silently.
+  const forwarded = new Set(
+    workflows.flatMap((wf) =>
+      [
+        ...readFileSync(join(workflowsDir, wf), "utf8").matchAll(
+          /^\s{6}([A-Z][A-Z0-9_]*):\s*\$\{\{\s*vars\./gm,
+        ),
+      ].map((m) => m[1]),
+    ),
+  );
+  const dark = optional.filter((name) => !forwarded.has(name));
+  if (dark.length > 0) {
+    problems.push(
+      `${GENERATOR} reads these optional vars but NO workflow forwards them: ${dark.join(", ")}. ` +
+        `They substitute to "" on every deploy path, so the features they gate ship dark while every ` +
+        `check stays green. Add each to the \`env:\` block of the workflow that deploys the Worker ` +
+        `reading it.`,
+    );
   }
   return problems;
 }

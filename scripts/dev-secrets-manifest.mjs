@@ -293,6 +293,12 @@ export const APPS = {
         note: "See api.",
       },
       {
+        name: "OPENAI_APPS_CHALLENGE_TOKEN",
+        scope: "local",
+        value: "local-openai-apps-challenge-token",
+        note: "The plugin-directory domain-verification token served at /.well-known/openai-apps-challenge (ADR-0132). A local value so the route is EXERCISABLE locally rather than dark — curl it and you should get exactly this string back. The committed var is the deploy-time placeholder <OPENAI_APPS_CHALLENGE_TOKEN>, which is non-empty, so without a local override the endpoint would have served the literal placeholder as the token; the handler now rejects any /^<[A-Z0-9_]+>$/ value as well.",
+      },
+      {
         name: "MCP_SESSION_KEY",
         scope: "generated",
         note: "Signs the principal-bound Mcp-Session-Id. No dev fallback — missing it surfaces as an anonymous TypeError from readSecretBinding, not a named error.",

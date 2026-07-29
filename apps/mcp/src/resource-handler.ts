@@ -73,6 +73,13 @@ export interface ResourceHandlerDeps {
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/healthz";
 const APPS_CHALLENGE_PATH = "/.well-known/openai-apps-challenge";
+/**
+ * A committed wrangler var that the prod overlay never substituted, e.g. "<OPENAI_APPS_CHALLENGE_TOKEN>".
+ * `wrangler dev` does not run the overlay, so this is what the Worker actually reads locally — and it is
+ * NON-EMPTY, so a blank check alone would serve it as the verification token. Anchored and UPPER_SNAKE
+ * only, so a real token that merely contains angle brackets still works.
+ */
+const UNSUBSTITUTED_PLACEHOLDER = /^<[A-Z0-9_]+>$/;
 const SESSION_HEADER = "mcp-session-id";
 
 function notFound(): Response {
@@ -125,6 +132,9 @@ export async function handleResourceRequest(
   if (request.method === "GET" && url.pathname === APPS_CHALLENGE_PATH) {
     const token = deps.appsChallengeToken?.trim();
     if (token === undefined || token.length === 0) return notFound();
+    // An unsubstituted placeholder is worse than unset: it is non-empty, so without this the endpoint
+    // would answer 200 with "<OPENAI_APPS_CHALLENGE_TOKEN>" as the token.
+    if (UNSUBSTITUTED_PLACEHOLDER.test(token)) return notFound();
     return new Response(token, {
       status: 200,
       headers: { "content-type": "text/plain; charset=utf-8" },

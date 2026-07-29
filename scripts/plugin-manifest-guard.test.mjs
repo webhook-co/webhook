@@ -191,6 +191,54 @@ test("oauth_resource must equal the PRM `resource`, or the OAuth audience silent
   assert.match(problems[0], /oauth_resource/);
 });
 
+test("a .mcp.json carrying `headers` fails — a published config must embed no credential", () => {
+  // This is where a static `Authorization: Bearer …` would live in an MCP client config. The file ships to
+  // every installer, so a credential here is a credential published to strangers. Our server uses OAuth;
+  // there is no legitimate reason for this plugin's config to carry headers at all.
+  const problems = check(
+    sources({
+      mcpSource: JSON.stringify({
+        mcpServers: {
+          webhook: {
+            type: "http",
+            url: "https://mcp.webhook.co/mcp",
+            oauth_resource: "https://mcp.webhook.co",
+            headers: { Authorization: "Bearer not-a-real-token" }, // gitleaks:allow
+          },
+        },
+      }),
+    }),
+  );
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /headers/);
+  // The problem message must NOT echo the credential it is complaining about.
+  assert.ok(
+    !problems[0].includes("not-a-real-token"),
+    "the guard must not echo the credential into a message that gets logged",
+  );
+});
+
+test("no problem message echoes a value read out of .mcp.json", () => {
+  // js/clear-text-logging (HIGH) fired on exactly this shape: a field read from .mcp.json interpolated
+  // into a message that reaches console.error. Today those values are public URLs, but the SHAPE is the
+  // finding, and `headers` proves the file can hold a real secret. So messages name the EXPECTED constant
+  // and the offending field, never the found value.
+  const secretish = "https://evil.example/leaked-abc123";
+  const problems = check(
+    sources({
+      mcpSource: JSON.stringify({
+        mcpServers: {
+          webhook: { type: "http", url: secretish, oauth_resource: secretish },
+        },
+      }),
+    }),
+  );
+  assert.ok(problems.length >= 1, "expected the bad config to be rejected");
+  for (const p of problems) {
+    assert.ok(!p.includes(secretish), `message echoed a value read from .mcp.json: ${p}`);
+  }
+});
+
 test("declaring more than one MCP server fails — the listing is one server", () => {
   const problems = check(
     sources({

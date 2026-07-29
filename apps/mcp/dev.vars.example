@@ -18,5 +18,8 @@ INGEST_BASE_URL=http://localhost:8787
 # LOCAL: See api.
 FREE_EVENT_CAP=5000
 
+# LOCAL: The plugin-directory domain-verification token served at /.well-known/openai-apps-challenge (ADR-0132). A local value so the route is EXERCISABLE locally rather than dark — curl it and you should get exactly this string back. The committed var is the deploy-time placeholder <OPENAI_APPS_CHALLENGE_TOKEN>, which is non-empty, so without a local override the endpoint would have served the literal placeholder as the token; the handler now rejects any /^<[A-Z0-9_]+>$/ value as well.
+OPENAI_APPS_CHALLENGE_TOKEN=local-openai-apps-challenge-token
+
 # GENERATED: Signs the principal-bound Mcp-Session-Id. No dev fallback — missing it surfaces as an anonymous TypeError from readSecretBinding, not a named error.
 MCP_SESSION_KEY=
