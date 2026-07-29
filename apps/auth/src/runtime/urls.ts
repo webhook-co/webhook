@@ -12,9 +12,9 @@ export const MAGIC_LINK_FROM = "login@mail.webhook.co";
 /** The verified Resend sender for service notifications (auto-disable emails etc.), same domain, named. */
 export const NOTIFICATIONS_FROM = "webhook.co <notifications@mail.webhook.co>";
 
-// The sitekey (and the localhost test-key substitution) lives in its own module. Re-exported here for the
-// two names that already had importers through this module; TURNSTILE_TEST_SITEKEY is deliberately NOT
-// re-exported — nothing imports it from here, and only turnstile-sitekey.ts and its tests should need it.
+// The sitekey lives in its own module, re-exported here for the names that already had importers through
+// this module. There is no longer a localhost substitution: the real widget permits localhost, so local
+// exercises the real captcha gate. See turnstile-sitekey.ts.
 export { TURNSTILE_SITEKEY, resolveTurnstileSitekey } from "./turnstile-sitekey";
 /**
  * The Turnstile `action` — set as the widget's render action AND asserted server-side (the captcha plugin's
