@@ -10,7 +10,13 @@ import { redirect } from "next/navigation";
 
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
-import { getAppBaseUrl, getAuditChainKey, getCredentialPepper, getResendApiKey } from "./env";
+import {
+  getAppBaseUrl,
+  getAuditChainKey,
+  getCredentialPepper,
+  getEmailMode,
+  getResendApiKey,
+} from "./env";
 import { clearInviteCookie, readInviteCookie } from "./invite-cookie";
 import { sendInviteEmail } from "./invite-email";
 import { requireOrgAccess } from "./org-access";
@@ -74,10 +80,13 @@ async function tryEmailInvite(input: {
   invitedBy: string;
 }): Promise<boolean> {
   try {
+    // EMAIL_MODE=log prints the invite (link included) to the console instead of sending it — that IS a
+    // successful delivery for a local developer, so it must not fall through to the copy-link path.
+    const mode = getEmailMode();
     const apiKey = await getResendApiKey();
-    if (!apiKey) return false; // mail not configured (dev, or the binding isn't provisioned yet)
+    if (mode === "send" && !apiKey) return false; // mail not configured (the binding isn't provisioned yet)
     await sendInviteEmail(
-      { apiKey, from: INVITE_FROM },
+      { apiKey: apiKey ?? "", from: INVITE_FROM, mode },
       {
         to: input.to,
         url: `${getAppBaseUrl()}${input.acceptPath}`,

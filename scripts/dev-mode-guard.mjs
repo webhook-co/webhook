@@ -1,17 +1,26 @@
-// KMS_MODE / LOCAL_KEK must never appear in a committed Worker config or in the deploy overlay.
+// The local-dev mode flags must never appear in a committed Worker config or in the deploy overlay.
 //
-// `KMS_MODE=local` swaps the AWS KEK custodian for a process-local one so a developer — or an
-// external contributor, who will never have AWS credentials — can create an endpoint at all. In
-// production it would seal provider secrets and ingest tokens under a throwaway key nobody custodies,
-// and those rows would be permanently unopenable.
+// Each one swaps a real dependency for a hermetic local substitute so a developer — or an external
+// contributor, who will never have our AWS, Google, GitHub or Resend credentials — can run the whole stack.
+// Each would be a production incident:
+//
+//   KMS_MODE=local    swaps the AWS KEK custodian for a process-local one. In production it would seal
+//                     provider secrets and ingest tokens under a throwaway key nobody custodies, and those
+//                     rows would be permanently unopenable.
+//   LOCAL_KEK         the throwaway key itself.
+//   EMAIL_MODE=log    prints mail to the console instead of sending it. In production that writes
+//                     single-use sign-in links into log storage AND silently stops every transactional
+//                     email.
+//   OAUTH_MODE=optional  drops social login when it is unconfigured. In production a missing OAuth secret
+//                     has to fail loudly, not quietly remove the Google button.
 //
 // SCOPE, precisely. This guard covers what is IN THE REPO: every committed Worker config, the deploy
 // overlay, and the workflows that invoke wrangler. It cannot cover out-of-band routes — a
 // `wrangler secret put KMS_MODE`, a var typed into the Cloudflare dashboard, or a
 // `wrangler deploy --var` run by hand. Those are caught by the RUNTIME fence in kmsProviderFromEnv,
-// which refuses local mode whenever any AWS KMS field is bound; the engine's four AWS secrets are
-// injected unconditionally by the overlay, so in production that fence always has something to see.
-// Two fences with different coverage, deliberately — neither is claimed to be total on its own.
+// which refuses each hermetic mode against the PRODUCTION SECRET SHAPE (a Secrets Store binding, which is
+// what the overlay emits and what only a deployed Worker has). Two fences with different coverage,
+// deliberately — neither is claimed to be total on its own.
 //
 // Why a config scan and not just "don't do that": the deploy overlay (scripts/gen-wrangler-prod.mjs)
 // only PREPENDS top-level keys — it does not strip `vars`. So anything committed in a wrangler.jsonc
@@ -25,7 +34,7 @@ import { fileURLToPath } from "node:url";
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Keys that must never appear in a committed Worker config or the deploy overlay. */
-export const FORBIDDEN_IN_DEPLOYED_CONFIG = ["KMS_MODE", "LOCAL_KEK"];
+export const FORBIDDEN_IN_DEPLOYED_CONFIG = ["KMS_MODE", "LOCAL_KEK", "EMAIL_MODE", "OAUTH_MODE"];
 
 /**
  * Find forbidden keys in one config's text.
@@ -94,7 +103,7 @@ export function findViolations(repo = REPO) {
   // There are 12 apps, most with a wrangler config, plus the overlay.
   if (configs.length < 9) {
     throw new Error(
-      `kms-mode-guard: expected at least 9 deployed configs, found ${configs.length} — the discovery glob is broken`,
+      `dev-mode-guard: expected at least 9 deployed configs, found ${configs.length} — the discovery glob is broken`,
     );
   }
   return configs
@@ -112,14 +121,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   }
   if (violations.length) {
     console.error(
-      `❌ KMS_MODE/LOCAL_KEK must not appear in a committed Worker config, the deploy overlay, or a workflow:\n` +
+      `❌ a local-dev mode flag must not appear in a committed Worker config, the deploy overlay, or a workflow:\n` +
         violations.map((v) => `   ${v.path}: ${v.keys.join(", ")}`).join("\n") +
         `\n\n   Keep them in .dev.vars, which \`wrangler deploy\` never sends.` +
         `\n   A committed \`vars\` entry survives verbatim into production: the deploy overlay only` +
-        `\n   prepends top-level keys, it does not strip vars. A local KEK in production would seal` +
-        `\n   secrets under a key nobody custodies.`,
+        `\n   prepends top-level keys, it does not strip vars. Each of these flags is a` +
+        `\n   production incident on its own — see the header of this file.`,
     );
     process.exit(1);
   }
-  console.log("✅ no KMS_MODE/LOCAL_KEK in any deployed Worker config");
+  console.log("✅ no local-dev mode flag in any deployed Worker config");
 }

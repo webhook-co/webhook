@@ -46,6 +46,68 @@ const ENV: AuthEnv = {
   RESEND_API_KEY: "re_test",
 };
 
+// --- Social providers under OAUTH_MODE=optional ------------------------------------------------------
+// With no Google/GitHub OAuth app configured, the provider must be OMITTED rather than wired with empty
+// credentials. Better Auth would otherwise advertise a sign-in route that redirects to the provider with
+// an empty client_id and fails at the far end — a broken button instead of an absent one.
+describe("buildAuthConfig — social providers", () => {
+  it("wires both providers when both are configured (the production shape)", () => {
+    const cfg = buildAuthConfig(input(), cfgDeps());
+    expect(Object.keys(cfg.socialProviders ?? {}).sort()).toEqual(["github", "google"]);
+  });
+
+  it("omits google when its credentials are empty", () => {
+    const cfg = buildAuthConfig(
+      {
+        baseURL: "http://localhost:8788",
+        secrets: { ...SECRETS, googleClientId: "", googleClientSecret: "" },
+      },
+      cfgDeps(),
+    );
+    expect(Object.keys(cfg.socialProviders ?? {})).toEqual(["github"]);
+  });
+
+  it("omits github when its credentials are empty", () => {
+    const cfg = buildAuthConfig(
+      {
+        baseURL: "http://localhost:8788",
+        secrets: { ...SECRETS, githubClientId: "", githubClientSecret: "" },
+      },
+      cfgDeps(),
+    );
+    expect(Object.keys(cfg.socialProviders ?? {})).toEqual(["google"]);
+  });
+
+  it("omits both when neither is configured — magic link is still a complete way in", () => {
+    const cfg = buildAuthConfig(
+      {
+        baseURL: "http://localhost:8788",
+        secrets: {
+          ...SECRETS,
+          googleClientId: "",
+          googleClientSecret: "",
+          githubClientId: "",
+          githubClientSecret: "",
+        },
+      },
+      cfgDeps(),
+    );
+    expect(Object.keys(cfg.socialProviders ?? {})).toEqual([]);
+    // The magic-link plugin is what carries local sign-in, so it must survive the OAuth drop.
+    expect(cfg.plugins?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  // A HALF-configured provider is a misconfiguration, not a hermetic state: wiring it would produce a
+  // button that fails at the provider. Dropping it is the honest reading.
+  it("omits a provider whose id is set but whose secret is not", () => {
+    const cfg = buildAuthConfig(
+      { baseURL: "http://localhost:8788", secrets: { ...SECRETS, googleClientSecret: "" } },
+      cfgDeps(),
+    );
+    expect(Object.keys(cfg.socialProviders ?? {})).toEqual(["github"]);
+  });
+});
+
 describe("magicLinkOptions", () => {
   it("expires in 5 minutes and stores tokens hashed (never plaintext in the DB)", () => {
     const o = magicLinkOptions({ sendEmail: vi.fn(async () => {}) });

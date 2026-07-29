@@ -9,7 +9,7 @@ import {
   findViolations,
   forbiddenKeysIn,
   FORBIDDEN_IN_DEPLOYED_CONFIG,
-} from "./kms-mode-guard.mjs";
+} from "./dev-mode-guard.mjs";
 
 // A guard's tests must RUN the guard, not restate its list.
 
@@ -44,8 +44,19 @@ test("flags LOCAL_KEK anywhere, including a secrets list", () => {
   assert.deepEqual(forbiddenKeysIn('secrets: ["CREDENTIAL_PEPPER", "LOCAL_KEK"]'), ["LOCAL_KEK"]);
 });
 
-test("flags both keys when both are present", () => {
-  assert.deepEqual(forbiddenKeysIn("KMS_MODE LOCAL_KEK"), FORBIDDEN_IN_DEPLOYED_CONFIG);
+test("flags every key when all are present", () => {
+  assert.deepEqual(
+    forbiddenKeysIn("KMS_MODE LOCAL_KEK EMAIL_MODE OAUTH_MODE"),
+    FORBIDDEN_IN_DEPLOYED_CONFIG,
+  );
+});
+
+test("flags EMAIL_MODE in a vars block — log mode in prod leaks sign-in links into logs", () => {
+  assert.deepEqual(forbiddenKeysIn('{ "vars": { "EMAIL_MODE": "log" } }'), ["EMAIL_MODE"]);
+});
+
+test("flags OAUTH_MODE in a vars block", () => {
+  assert.deepEqual(forbiddenKeysIn('{ "vars": { "OAUTH_MODE": "optional" } }'), ["OAUTH_MODE"]);
 });
 
 test("clean text yields nothing — the guard is not flagging everything", () => {
@@ -54,7 +65,7 @@ test("clean text yields nothing — the guard is not flagging everything", () =>
 });
 
 test("findViolations reports a planted violation, with its path", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kmsguard-"));
+  const dir = mkdtempSync(join(tmpdir(), "devmodeguard-"));
   try {
     mkdirSync(join(dir, "scripts"), { recursive: true });
     writeFileSync(join(dir, "scripts", "gen-wrangler-prod.mjs"), "// clean\n");
@@ -79,7 +90,7 @@ test("findViolations reports a planted violation, with its path", () => {
 test("the zero-input floor fires when discovery breaks", () => {
   // Without this, a glob that stopped matching would make the guard pass on an empty set — green,
   // and completely blind.
-  const dir = mkdtempSync(join(tmpdir(), "kmsguard-"));
+  const dir = mkdtempSync(join(tmpdir(), "devmodeguard-"));
   try {
     mkdirSync(join(dir, "apps"), { recursive: true });
     mkdirSync(join(dir, "scripts"), { recursive: true });
@@ -91,7 +102,7 @@ test("the zero-input floor fires when discovery breaks", () => {
 });
 
 test("a violation in the deploy overlay is caught too", () => {
-  const dir = mkdtempSync(join(tmpdir(), "kmsguard-"));
+  const dir = mkdtempSync(join(tmpdir(), "devmodeguard-"));
   try {
     mkdirSync(join(dir, "scripts"), { recursive: true });
     for (let i = 0; i < 10; i += 1) {

@@ -1,4 +1,5 @@
 import { renderBrandedEmail } from "@webhook-co/shared/email-shell";
+import { deliverEmail, type EmailMode } from "@webhook-co/shared/email-transport";
 
 import { NOTIFICATIONS_FROM } from "./urls";
 
@@ -13,10 +14,10 @@ import { NOTIFICATIONS_FROM } from "./urls";
 // The OTP mail deliberately has NO button: a code is typed back into a screen the user already has open, so
 // there is nothing here to click, and a link would only teach the habit this ceremony guards against.
 
-const RESEND_ENDPOINT = "https://api.resend.com/emails";
-
 export interface EmailSenderDeps {
   readonly apiKey: string;
+  /** "send" (Resend, the production default) or "log" (console, local dev). See email-transport. */
+  readonly mode?: EmailMode;
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -24,19 +25,15 @@ async function send(
   deps: EmailSenderDeps,
   message: { to: string; subject: string; html: string; text: string },
 ): Promise<void> {
-  const doFetch = deps.fetchImpl ?? fetch;
-  const res = await doFetch(RESEND_ENDPOINT, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${deps.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
+  await deliverEmail(
+    {
+      mode: deps.mode ?? "send",
+      apiKey: deps.apiKey,
       from: NOTIFICATIONS_FROM,
-      to: message.to,
-      subject: message.subject,
-      html: message.html,
-      text: message.text,
-    }),
-  });
-  if (!res.ok) throw new Error(`email-change email send failed with status ${res.status}`);
+      fetchImpl: deps.fetchImpl,
+    },
+    { ...message, kind: "email-change" },
+  );
 }
 
 /** The 6-digit step-up code, to the user's CURRENT email (proves control of the address on record). */

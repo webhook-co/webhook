@@ -8,6 +8,7 @@ import type {
   OnboardingStateDto,
 } from "@webhook-co/contract";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { resolveEmailMode, type EmailMode } from "@webhook-co/shared/email-transport";
 
 import {
   parseBillingMode,
@@ -430,6 +431,21 @@ export function getResendApiKey(): Promise<string | null> {
         ? process.env.RESEND_API_KEY
         : null),
   );
+}
+
+/**
+ * Where transactional mail goes for this surface. Resolved from EMAIL_MODE across BOTH the Worker env and
+ * `process.env` — apps/web runs under OpenNext, where a `.dev.vars` entry surfaces in either place
+ * depending on how the dev server was started, and getResendApiKey already reads both for the same reason.
+ *
+ * The fence (refusing log mode against a Secrets Store binding) lives in the shared resolver.
+ */
+export function getEmailMode(): EmailMode {
+  const worker = workerEnv() as Record<string, unknown>;
+  return resolveEmailMode({
+    EMAIL_MODE: (worker.EMAIL_MODE as string | undefined) ?? process.env.EMAIL_MODE,
+    RESEND_API_KEY: worker.RESEND_API_KEY,
+  });
 }
 
 /** This app's own origin — used to turn a relative accept path into the absolute link an email must carry. */

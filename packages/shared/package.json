@@ -11,6 +11,7 @@
     "./audit": "./src/audit.ts",
     "./bytes": "./src/bytes.ts",
     "./email-shell": "./src/email-shell.ts",
+    "./email-transport": "./src/email-transport.ts",
     "./plans": "./src/plans.ts",
     "./first-touch-cookie": "./src/first-touch-cookie.ts",
     "./health": "./src/health.ts",
