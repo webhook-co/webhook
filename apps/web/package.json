@@ -22,12 +22,12 @@
     "@webhook-co/ui": "workspace:*",
     "@webhook-co/webhooks-spec": "workspace:*",
     "geist": "^1.7.2",
-    "lucide-react": "^1.25.0",
-    "motion": "^12.42.2",
-    "next": "^16.2.11",
+    "lucide-react": "^1.27.0",
+    "motion": "^12.43.0",
+    "next": "^16.2.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-easy-crop": "^6.2.2"
+    "react-easy-crop": "^6.2.3"
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "1.20.2",
