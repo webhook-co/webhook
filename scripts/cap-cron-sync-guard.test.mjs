@@ -12,7 +12,7 @@ import {
 } from "./cap-cron-sync-guard.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const INDEX_SRC = readFileSync(join(ROOT, "apps/engine/src/index.ts"), "utf8");
+const INDEX_SRC = readFileSync(join(ROOT, "apps/engine/src/cron-schedule.ts"), "utf8");
 const WRANGLER_TEXT = readFileSync(join(ROOT, "apps/engine/wrangler.jsonc"), "utf8");
 
 // The invariant, proven against the REAL committed config — this is the guard running against production.
@@ -81,7 +81,7 @@ test("cronSyncViolations FAILS CLOSED when either side is unreadable", () => {
   assert.deepEqual(cronSyncViolations(["0 * * * *"], []).length, 1);
 });
 
-test("checkCronSync FAILS CLOSED when a constant is missing from the index source", () => {
+test("checkCronSync FAILS CLOSED when a constant is missing from the schedule source", () => {
   const v = checkCronSync('export const HOURLY_CRON = "0 * * * *";', WRANGLER_TEXT);
   assert.equal(v.length, 1);
   assert.match(v[0], /could not read/);

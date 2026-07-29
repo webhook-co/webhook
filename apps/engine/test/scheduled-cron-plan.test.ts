@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { CAP_PRODUCER_CRON, HOURLY_CRON, scheduledCronPlan } from "../src/index";
+import { scheduledCronPlan } from "../src/index";
+import { CAP_PRODUCER_CRON, HOURLY_CRON } from "../src/cron-schedule";
 
 // The cron dispatch split (S4): scheduled() runs the soft-cap producer on its OWN frequent trigger so a
 // pause lands within minutes, and the heavy hourly jobs (rollup/reconcilers/purges) on the hourly trigger.

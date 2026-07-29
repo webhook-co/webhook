@@ -24,7 +24,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const INDEX = join(ROOT, "apps/engine/src/index.ts");
+// The cron STRINGS moved to their own module: workerd rejects a non-handler named export from a
+// Worker entry module, which stopped `wrangler dev` from starting the engine at all.
+const CRON_SCHEDULE = join(ROOT, "apps/engine/src/cron-schedule.ts");
 const WRANGLER = join(ROOT, "apps/engine/wrangler.jsonc");
 
 /** Normalise a cron expression the SAME way scheduledCronPlan does, so a reformatted trigger still matches.
@@ -113,27 +115,29 @@ export function cronSyncViolations(handled, wrangler) {
 }
 
 /**
- * Top-level check the guard runs: extract the two constants from index.ts source + the crons from wrangler
- * text, then decide. This is exactly what main() calls, so the test drives the real path with file contents.
- * @param {string} indexSrc @param {string} wranglerText @returns {string[]}
+ * Top-level check the guard runs: extract the two constants from the cron-schedule source + the crons from
+ * wrangler text, then decide. Stays PURE — it takes the source text, so main() and the tests drive the same
+ * path. (The constants moved out of index.ts because workerd rejects a non-handler named export from a
+ * Worker entry module, which stopped `wrangler dev` from starting the engine.)
+ * @param {string} scheduleSrc @param {string} wranglerText @returns {string[]}
  */
-export function checkCronSync(indexSrc, wranglerText) {
-  const cap = extractCronConst(indexSrc, "CAP_PRODUCER_CRON");
-  const hourly = extractCronConst(indexSrc, "HOURLY_CRON");
+export function checkCronSync(scheduleSrc, wranglerText) {
+  const cap = extractCronConst(scheduleSrc, "CAP_PRODUCER_CRON");
+  const hourly = extractCronConst(scheduleSrc, "HOURLY_CRON");
   if (cap === null || hourly === null) {
     return [
-      "could not read CAP_PRODUCER_CRON / HOURLY_CRON string constants from apps/engine/src/index.ts",
+      "could not read CAP_PRODUCER_CRON / HOURLY_CRON string constants from apps/engine/src/cron-schedule.ts",
     ];
   }
   return cronSyncViolations([cap, hourly], readWranglerCrons(wranglerText));
 }
 
 async function main() {
-  const [indexSrc, wranglerText] = await Promise.all([
-    readFile(INDEX, "utf8"),
+  const [scheduleSrc, wranglerText] = await Promise.all([
+    readFile(CRON_SCHEDULE, "utf8"),
     readFile(WRANGLER, "utf8"),
   ]);
-  const violations = checkCronSync(indexSrc, wranglerText);
+  const violations = checkCronSync(scheduleSrc, wranglerText);
   if (violations.length > 0) {
     console.error(
       "✖ engine cron config drift — index.ts scheduled() and wrangler.jsonc triggers.crons disagree:\n",
@@ -141,7 +145,7 @@ async function main() {
     for (const v of violations) console.error(`  ${v}`);
     console.error(
       "\nKeep apps/engine/wrangler.jsonc triggers.crons EXACTLY the set {CAP_PRODUCER_CRON, HOURLY_CRON} " +
-        "from apps/engine/src/index.ts.",
+        "from apps/engine/src/cron-schedule.ts.",
     );
     process.exit(1);
   }

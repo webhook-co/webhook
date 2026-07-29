@@ -6,6 +6,11 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".wrangler/**", ".next/**", "out/**"]
     },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "dependsOn": ["^build"]
+    },
     "typecheck": {
       "dependsOn": ["^build"]
     },
