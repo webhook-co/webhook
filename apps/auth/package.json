@@ -16,13 +16,13 @@
     "auth:generate": "pnpm dlx @better-auth/cli@latest generate --config src/auth.ts --yes --output ../../packages/db/db/migrations/.better-auth.schema.sql"
   },
   "dependencies": {
-    "@better-auth/api-key": "^1.6.23",
+    "@better-auth/api-key": "^1.6.25",
     "@cloudflare/workers-oauth-provider": "^0.8.2",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*",
     "@webhook-co/ui": "workspace:*",
-    "better-auth": "^1.6.23",
+    "better-auth": "^1.6.25",
     "geist": "^1.7.2",
     "lucide-react": "^1.25.0",
     "motion": "^12.42.2",
