@@ -12,6 +12,12 @@ AUDIT_CHAIN_HMAC_KEY=
 # GENERATED: HMAC key for keyset pagination cursors. Read by api, engine and mcp; a cursor issued by one must verify in another.
 CURSOR_KEY=
 
+# LOCAL: The ingest apex the endpoints.create response builds its one-time URL from. The committed wrangler var is the PROD apex (https://wbhk.my), so without this override a locally-created endpoint hands you a URL that points at production — which you cannot receive on.
+INGEST_BASE_URL=http://localhost:8787
+
+# LOCAL: Free-tier cap, matching the canonical plans catalog ("5,000 events, once"). The committed var is the deploy-time placeholder <FREE_EVENT_CAP>, and parseFreeEventCap fail-safes anything non-numeric to null = NO CAP — so locally the cap silently does not exist.
+FREE_EVENT_CAP=5000
+
 # LOCAL: off | test | live. `test` locally so the Stripe sandbox path is exercised; the client asserts the key prefix matches the mode.
 BILLING_MODE=test
 

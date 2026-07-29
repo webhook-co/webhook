@@ -68,6 +68,18 @@ export const APPS = {
     shared: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "CURSOR_KEY"],
     own: [
       {
+        name: "INGEST_BASE_URL",
+        scope: "local",
+        value: "http://localhost:8787",
+        note: "The ingest apex the endpoints.create response builds its one-time URL from. The committed wrangler var is the PROD apex (https://wbhk.my), so without this override a locally-created endpoint hands you a URL that points at production — which you cannot receive on.",
+      },
+      {
+        name: "FREE_EVENT_CAP",
+        scope: "local",
+        value: "5000",
+        note: 'Free-tier cap, matching the canonical plans catalog ("5,000 events, once"). The committed var is the deploy-time placeholder <FREE_EVENT_CAP>, and parseFreeEventCap fail-safes anything non-numeric to null = NO CAP — so locally the cap silently does not exist.',
+      },
+      {
         name: "BILLING_MODE",
         scope: "local",
         value: "test",
@@ -94,6 +106,22 @@ export const APPS = {
   engine: {
     shared: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "CURSOR_KEY", "LISTEN_TICKET_KEY"],
     own: [
+      {
+        name: "ORPHAN_SWEEP_DELETE",
+        scope: "local",
+        value: "true",
+        note: 'Enables the orphan-sweep DELETE rather than count-only, matching prod. The committed var is the placeholder <ORPHAN_SWEEP_DELETE> and the check is === "true", so locally the sweep only ever counts — you can never see it actually delete.',
+      },
+      {
+        name: "STRIPE_METER_EVENT_NAME",
+        scope: "external",
+        note: "Stripe billing-meter event name from your sandbox. Leave blank unless exercising metering; the meter-reporter cron no-ops without it.",
+      },
+      {
+        name: "STRIPE_METER_ID",
+        scope: "external",
+        note: "Stripe billing-meter id from your sandbox. Pairs with STRIPE_METER_EVENT_NAME.",
+      },
       {
         name: "KMS_MODE",
         scope: "local",
@@ -128,6 +156,34 @@ export const APPS = {
   web: {
     shared: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "LISTEN_TICKET_KEY"],
     own: [
+      {
+        name: "INGEST_BASE_URL",
+        scope: "local",
+        value: "http://localhost:8787",
+        note: "See api. The dashboard's create/rotate actions build the one-time ingest URL from this.",
+      },
+      {
+        name: "FREE_EVENT_CAP",
+        scope: "local",
+        value: "5000",
+        note: "See api.",
+      },
+      {
+        name: "ASYNC_ORG_DELETION",
+        scope: "local",
+        value: "true",
+        note: 'Routes org deletion through the async reaper, which is what production does (#665). The committed var is the placeholder <ASYNC_ORG_DELETION>, and the check is === "true", so locally you exercise the SYNC path — a different code path from the one that runs in prod.',
+      },
+      {
+        name: "STRIPE_PLANS",
+        scope: "external",
+        note: "Stripe price ids per plan. Needs a Stripe sandbox; leave blank and the plan picker does not render. Account identifiers, so never committed.",
+      },
+      {
+        name: "STRIPE_PORTAL_CONFIGURATION_ID",
+        scope: "external",
+        note: "Billing Portal configuration id from your Stripe sandbox. Leave blank unless you are exercising the portal.",
+      },
       {
         name: "AUTH_BASE_URL",
         scope: "local",
@@ -222,6 +278,18 @@ export const APPS = {
   mcp: {
     shared: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "CURSOR_KEY"],
     own: [
+      {
+        name: "INGEST_BASE_URL",
+        scope: "local",
+        value: "http://localhost:8787",
+        note: "See api. Must match api's value and the local engine's port, or the MCP tool hands out a URL nothing is listening on.",
+      },
+      {
+        name: "FREE_EVENT_CAP",
+        scope: "local",
+        value: "5000",
+        note: "See api.",
+      },
       {
         name: "MCP_SESSION_KEY",
         scope: "generated",

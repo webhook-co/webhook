@@ -12,5 +12,11 @@ AUDIT_CHAIN_HMAC_KEY=
 # GENERATED: HMAC key for keyset pagination cursors. Read by api, engine and mcp; a cursor issued by one must verify in another.
 CURSOR_KEY=
 
+# LOCAL: See api. Must match api's value and the local engine's port, or the MCP tool hands out a URL nothing is listening on.
+INGEST_BASE_URL=http://localhost:8787
+
+# LOCAL: See api.
+FREE_EVENT_CAP=5000
+
 # GENERATED: Signs the principal-bound Mcp-Session-Id. No dev fallback — missing it surfaces as an anonymous TypeError from readSecretBinding, not a named error.
 MCP_SESSION_KEY=
