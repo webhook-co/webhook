@@ -27,8 +27,67 @@ function committedLatest() {
   return out;
 }
 
+// ── Retry the TRANSPORT, never the ANSWER ───────────────────────────────────────────────────────────────
+//
+// This guard reads three live registries, so without a retry it measures network luck as well as registry
+// contents. On 2026-07-29 it reded a PR with `TypeError: fetch failed` / `read ECONNRESET` while the
+// versions were in fact correct — the same "teaches everyone to ignore a red check" failure the comments
+// below already work to avoid, arriving over the network instead of through a lagging field.
+//
+// The distinction that keeps this honest: a 5xx/429 or a dropped connection is the registry FAILING TO
+// ANSWER, and asking again is legitimate. A 404 is the registry ANSWERING — retrying it would turn a fast,
+// true failure (package renamed, deleted, typo'd) into a slow one that fails anyway. So 4xx is never
+// retried. This adds robustness without softening a single real finding.
+
+/** How many times to ask before giving up. */
+const ATTEMPTS = 3;
+
+/**
+ * Is this outcome worth another attempt?
+ *
+ * Pure and exported so that broadening it — say, to include 404 — is a visible test failure rather than a
+ * quiet loss of signal.
+ *
+ * @param {{status?: number, error?: unknown}} outcome
+ */
+export function isRetryable({ status, error }) {
+  if (error !== undefined) return true; // fetch rejected: DNS, TLS, ECONNRESET — never a real answer
+  return status === 429 || (status !== undefined && status >= 500);
+}
+
+/**
+ * `fetch`, retried on transport failures with a short linear backoff.
+ *
+ * `fetchImpl`/`sleep` are injectable purely so the retry behaviour is testable without real network or real
+ * waiting — a retry nobody has watched recover is a retry nobody knows works.
+ */
+export async function fetchRetrying(
+  url,
+  init,
+  { fetchImpl = fetch, attempts = ATTEMPTS, sleep } = {},
+) {
+  const wait = sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  let last;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let res;
+    try {
+      res = await fetchImpl(url, init);
+    } catch (error) {
+      last = error;
+      if (attempt === attempts) break;
+      await wait(attempt * 500);
+      continue;
+    }
+    // A real answer, good or bad, is returned as-is: the caller's own !res.ok check reports it.
+    if (!isRetryable({ status: res.status }) || attempt === attempts) return res;
+    last = new Error(`HTTP ${res.status}`);
+    await wait(attempt * 500);
+  }
+  throw new Error(`${url}: giving up after ${attempts} attempts — ${last}`, { cause: last });
+}
+
 async function npmLatest(pkg) {
-  const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(pkg)}/latest`);
+  const res = await fetchRetrying(`https://registry.npmjs.org/${encodeURIComponent(pkg)}/latest`);
   if (!res.ok) throw new Error(`npm ${pkg}: HTTP ${res.status}`);
   return (await res.json()).version;
 }
@@ -56,7 +115,7 @@ export function pickLatest(versions) {
 }
 
 async function pypiLatest(pkg) {
-  const res = await fetch(`https://pypi.org/pypi/${encodeURIComponent(pkg)}/json`);
+  const res = await fetchRetrying(`https://pypi.org/pypi/${encodeURIComponent(pkg)}/json`);
   if (!res.ok) throw new Error(`pypi ${pkg}: HTTP ${res.status}`);
   return pickLatest(Object.keys((await res.json()).releases ?? {}));
 }
@@ -71,9 +130,12 @@ async function pypiLatest(pkg) {
 async function goLatest() {
   const headers = { accept: "application/vnd.github+json" };
   if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  const res = await fetch("https://api.github.com/repos/webhook-co/webhook-go/releases/latest", {
-    headers,
-  });
+  const res = await fetchRetrying(
+    "https://api.github.com/repos/webhook-co/webhook-go/releases/latest",
+    {
+      headers,
+    },
+  );
   if (!res.ok) throw new Error(`github webhook-go releases: HTTP ${res.status}`);
   return (await res.json()).tag_name.replace(/^v/, "");
 }
