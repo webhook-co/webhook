@@ -1,4 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
+
+import { THIRD_PARTY_STATUS_BADGE } from "./axe-scope";
 import { expect, test, type Page } from "@playwright/test";
 
 /**
@@ -21,7 +23,10 @@ async function expectClean(page: Page) {
   // Non-vacuous guard: prove the light seed took effect, so a broken seed fails red instead of silently
   // scanning the dark default (mirrors a11y-dark.spec.ts).
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  const { violations } = await new AxeBuilder({ page }).withTags(WCAG).analyze();
+  const { violations } = await new AxeBuilder({ page })
+    .exclude(THIRD_PARTY_STATUS_BADGE)
+    .withTags(WCAG)
+    .analyze();
   expect(
     violations.map((v) => ({
       id: v.id,
