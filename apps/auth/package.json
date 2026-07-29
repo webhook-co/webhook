@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "opennextjs-cloudflare build && opennextjs-cloudflare preview -- --port 3001 --ip 127.0.0.1",
+    "dev:fast": "next dev -p 3001",
     "build": "next build",
     "build:cf": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",

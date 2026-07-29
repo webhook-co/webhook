@@ -1,7 +1,8 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import worker, { CAP_PRODUCER_CRON, HOURLY_CRON, type Env } from "../src/index";
+import worker, { type Env } from "../src/index";
+import { CAP_PRODUCER_CRON, HOURLY_CRON } from "../src/cron-schedule";
 
 // The scheduled() DISPATCH BODY (index.ts) — the fan-out itself, not the pure routing helper that
 // scheduled-cron-plan.test.ts already covers. Nothing else in the suite invokes the worker's default
