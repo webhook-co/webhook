@@ -444,10 +444,11 @@ export function getEmailMode(): EmailMode {
   const worker = workerEnv() as Record<string, unknown>;
   return resolveEmailMode({
     EMAIL_MODE: (worker.EMAIL_MODE as string | undefined) ?? process.env.EMAIL_MODE,
-    // The SAME fallback chain the flag itself uses, and the same one getResendApiKey uses. Reading the flag
-    // from two places but the fence's input from only one would make the fence blind exactly when the key
-    // arrived by the second route.
-    RESEND_API_KEY: worker.RESEND_API_KEY ?? process.env.RESEND_API_KEY,
+    // Only the Worker env is consulted for the fence's input, and deliberately so: the fence asks "is this
+    // a Secrets Store binding", and a process.env value is a string by construction, so it could never
+    // answer yes. Adding the process.env fallback here for symmetry with getResendApiKey would read as a
+    // protection while changing no verdict — the asymmetry is the honest shape.
+    RESEND_API_KEY: worker.RESEND_API_KEY,
   });
 }
 

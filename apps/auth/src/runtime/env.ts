@@ -148,9 +148,15 @@ export function resolveOAuthMode(env: Record<string, unknown>): OAuthMode {
  * buildAuthConfig's `socialProviders` goes out of its way to avoid. The server decides; the form is told.
  *
  * This tests PRESENCE (`secretPresent`), whereas buildAuthConfig tests the RESOLVED value being non-empty.
- * The two can only disagree for a Secrets Store binding that resolves to an empty string — and in that case
- * resolveAuthSecrets throws before any page renders, so the disagreement is unreachable rather than merely
- * unlikely.
+ * The two disagree for exactly one input: a Secrets Store binding that resolves to an empty string. That
+ * is REACHABLE, not merely unlikely — the login page's `isSignedIn()` short-circuits on a missing session
+ * cookie (resolve-signed-in.ts) and so never resolves a secret, which is precisely the signed-out visitor
+ * who sees this page. In that state the button renders and then 500s on click.
+ *
+ * That is accepted rather than fixed here: resolving all four OAuth secrets on every render of a public,
+ * signed-out page would add Secrets Store reads to the hottest unauthenticated path in the product, to
+ * detect a mis-provisioning that the same request already surfaces loudly the moment anyone clicks. An
+ * empty store secret is a deploy fault, and it is not this function's job to paper over one.
  */
 export function configuredSocialProviders(env: Record<string, unknown>): {
   google: boolean;

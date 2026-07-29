@@ -65,12 +65,14 @@ export function forbiddenKeysIn(text) {
 }
 
 /**
- * Every committed Worker config. Discovered, not listed — a new app must be covered automatically.
- * @returns {{path: string, text: string}[]}
+ * Every committed place a Worker var can be set. Discovered, not listed — a new app is covered
+ * automatically. Each entry carries its SOURCE so the floor below can be applied per source: a single
+ * total count cannot tell "all 12 app configs vanished" from "we gained a workflow".
+ * @returns {{path: string, text: string, source: "app-config"|"overlay"|"workflow"}[]}
  */
 export function deployedConfigs(repo = REPO) {
   const appsDir = join(repo, "apps");
-  /** @type {{path: string, text: string}[]} */
+  /** @type {{path: string, text: string, source: "app-config"|"overlay"|"workflow"}[]} */
   const out = [];
   for (const entry of readdirSync(appsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -81,6 +83,7 @@ export function deployedConfigs(repo = REPO) {
       out.push({
         path: `apps/${entry.name}/${file}`,
         text: readFileSync(join(appsDir, entry.name, file), "utf8"),
+        source: "app-config",
       });
     }
   }
@@ -88,6 +91,7 @@ export function deployedConfigs(repo = REPO) {
   out.push({
     path: "scripts/gen-wrangler-prod.mjs",
     text: readFileSync(join(repo, "scripts/gen-wrangler-prod.mjs"), "utf8"),
+    source: "overlay",
   });
   // ...and the workflows, because `wrangler deploy --var KMS_MODE:local` is committed code that sets a
   // Worker var without touching any config file. This is the one out-of-band route that lives in the
@@ -101,7 +105,11 @@ export function deployedConfigs(repo = REPO) {
     workflows = []; // no workflows dir in a synthetic tree
   }
   for (const f of workflows) {
-    out.push({ path: `.github/workflows/${f}`, text: readFileSync(join(wfDir, f), "utf8") });
+    out.push({
+      path: `.github/workflows/${f}`,
+      text: readFileSync(join(wfDir, f), "utf8"),
+      source: "workflow",
+    });
   }
   return out;
 }
@@ -109,14 +117,24 @@ export function deployedConfigs(repo = REPO) {
 /**
  * @returns {{path: string, keys: string[]}[]} violations
  */
+export const SOURCE_FLOORS = /** @type {const} */ ({
+  "app-config": 9,
+  overlay: 1,
+  workflow: 10,
+});
+
 export function findViolations(repo = REPO) {
   const configs = deployedConfigs(repo);
-  // Zero-input floor: a glob that silently stops matching would make this guard pass on everything.
-  // There are 12 apps, most with a wrangler config, plus the overlay.
-  if (configs.length < 9) {
-    throw new Error(
-      `dev-mode-guard: expected at least 9 deployed configs, found ${configs.length} — the discovery glob is broken`,
-    );
+  // Zero-input floor, PER SOURCE. A single total would be satisfied by the ~21 workflows alone: if the
+  // apps/ discovery loop broke entirely, the guard would still see 22 files, clear a total floor, and
+  // report green while covering zero Worker configs — the exact blindness the floor exists to prevent.
+  for (const [source, floor] of Object.entries(SOURCE_FLOORS)) {
+    const found = configs.filter((c) => c.source === source).length;
+    if (found < floor) {
+      throw new Error(
+        `dev-mode-guard: expected at least ${floor} ${source} file(s), found ${found} — discovery is broken`,
+      );
+    }
   }
   return configs
     .map(({ path, text }) => ({ path, keys: forbiddenKeysIn(text) }))

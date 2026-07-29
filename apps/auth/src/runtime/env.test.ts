@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   configuredSocialProviders,
   readAuthEnv,
+  resolveOAuthMode,
   readIntrospectEnv,
   readSweepEnv,
   readNotifyEnv,
@@ -67,6 +68,54 @@ describe("readAuthEnv — OAUTH_MODE=optional", () => {
 
   it("throws on an unknown OAUTH_MODE rather than guessing", () => {
     expect(() => readAuthEnv({ ...RAW, OAUTH_MODE: "opitonal" })).toThrow(/OAUTH_MODE/);
+  });
+});
+
+// The fence itself, tested directly rather than only through readAuthEnv — it is the thing standing
+// between a local-dev convenience and a production auth downgrade.
+describe("resolveOAuthMode", () => {
+  it("defaults to required when the flag is unset — production sets nothing", () => {
+    expect(resolveOAuthMode({})).toBe("required");
+  });
+
+  it("accepts an explicit required", () => {
+    expect(resolveOAuthMode({ OAUTH_MODE: "required" })).toBe("required");
+  });
+
+  it("returns optional for plain-string secrets (the dev shape)", () => {
+    expect(resolveOAuthMode({ ...RAW, OAUTH_MODE: "optional" })).toBe("optional");
+  });
+
+  it("returns optional when no OAuth secret is bound at all", () => {
+    expect(resolveOAuthMode({ OAUTH_MODE: "optional" })).toBe("optional");
+  });
+
+  it("REFUSES optional against the production secret shape", () => {
+    expect(() => resolveOAuthMode({ OAUTH_MODE: "optional", GITHUB_CLIENT_SECRET: STORE })).toThrow(
+      /refusing OAUTH_MODE=optional/,
+    );
+  });
+
+  it("names every store-bound secret it refused on", () => {
+    const err = (() => {
+      try {
+        resolveOAuthMode({
+          OAUTH_MODE: "optional",
+          GOOGLE_CLIENT_ID: STORE,
+          GITHUB_CLIENT_ID: STORE,
+        });
+        return "";
+      } catch (e) {
+        return String(e);
+      }
+    })();
+    expect(err).toContain("GOOGLE_CLIENT_ID");
+    expect(err).toContain("GITHUB_CLIENT_ID");
+  });
+
+  it("throws on an unknown value rather than guessing", () => {
+    expect(() => resolveOAuthMode({ OAUTH_MODE: "" })).toThrow(/OAUTH_MODE/);
+    expect(() => resolveOAuthMode({ OAUTH_MODE: "OPTIONAL" })).toThrow(/OAUTH_MODE/);
   });
 });
 

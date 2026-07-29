@@ -35,6 +35,9 @@
 /** Where transactional mail goes. `send` is production; `log` is the hermetic local substitute. */
 export type EmailMode = "send" | "log";
 
+/** The four transactional senders. One per caller of {@link deliverEmail}. */
+export type EmailKind = "magic-link" | "invite" | "email-change" | "notification";
+
 /** A secret as it arrives from the Worker env: a Secrets Store binding (prod) or a plain string (dev/test). */
 type MaybeSecret = unknown;
 
@@ -62,10 +65,12 @@ export interface OutboundEmail {
   readonly html: string;
   readonly text: string;
   /**
-   * Short label for this mail, e.g. "magic-link". Appears in the failure message
-   * (`<kind> email send failed with status N`) and heads the log-mode block.
+   * Short label for this mail. Appears in the failure message (`<kind> email send failed with status N`)
+   * and heads the log-mode block. A closed union rather than a string: the four values ARE the four
+   * senders, and each one is spliced into an error message that callers and tests match on, so a typo
+   * would silently change a contract rather than fail to compile.
    */
-  readonly kind: string;
+  readonly kind: EmailKind;
   /**
    * The one URL the mail exists to deliver, when it has one. Surfaced on its own line in log mode so a
    * developer never has to dig it out of rendered HTML. Absent for mails with nothing to click (the

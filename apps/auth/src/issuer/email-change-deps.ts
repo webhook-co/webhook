@@ -125,6 +125,14 @@ function makeOps(
   };
 }
 
+/** Resolve the Resend key for send mode, failing with a NAMED error when it is not bound. */
+function readRequiredResendKey(secret: Secret | undefined): Promise<string> {
+  if (secret === undefined || secret === null) {
+    throw new Error("email-change env: missing RESEND_API_KEY (required unless EMAIL_MODE=log)");
+  }
+  return readSecretBinding(secret);
+}
+
 async function withOps<T>(
   env: EmailChangeEnv,
   fn: (ops: EmailChangeOps) => Promise<T>,
@@ -135,7 +143,9 @@ async function withOps<T>(
     const mode = resolveEmailMode(env);
     const [pepper, apiKey] = await Promise.all([
       readSecretBinding(env.CREDENTIAL_PEPPER),
-      mode === "log" ? Promise.resolve("") : readSecretBinding(env.RESEND_API_KEY!),
+      // Not a `!`: in send mode an absent key is a real misconfiguration, and it should say so by name
+      // rather than die on `undefined.get()` several frames later.
+      mode === "log" ? Promise.resolve("") : readRequiredResendKey(env.RESEND_API_KEY),
     ]);
     return await fn(makeOps(authClient, env.RATELIMIT_KV, pepper, apiKey, mode));
   } finally {
