@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { createClient, DB_ROLES, withTenant, type Sql } from "@webhook-co/db";
@@ -7,7 +9,13 @@ import { createOrgWithOwner } from "@webhook-co/db/orgs";
 import { testAuditKey } from "../../../packages/db/test/audit-key";
 import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
-import { deepestAppRoute, isRouteTableReady, probeUrlFor } from "./deepest-route";
+import {
+  ROUTE_TYPES_FILE,
+  deepestAppRoute,
+  isRouteTableReady,
+  probeUrlFor,
+  routeTypesInclude,
+} from "./deepest-route";
 import { BASE_URL, PORT, writeFixture, type Fixture } from "./fixture";
 
 // The dashboard's first end-to-end harness.
@@ -168,6 +176,30 @@ async function routeTableIsComplete(probe: string): Promise<ProbeResult> {
   };
 }
 
+/** How long to wait for the route-table types file before giving up and probing anyway. */
+const SCAN_BUDGET_MS = 60_000;
+
+/**
+ * Resolve once `next dev` has scanned `src/app` far enough to know about `route` — or once the budget
+ * lapses, whichever comes first.
+ *
+ * Never throws. A missing or unreadable file is not a failure: the types file is undocumented and
+ * version-dependent (`typedRoutes` defaults to false, yet Next 16.2 emits it in dev anyway), so this must
+ * degrade to "probe anyway" rather than become a new way for the suite to fail.
+ */
+async function waitForRouteScan(route: readonly string[]): Promise<void> {
+  const file = resolve(process.cwd(), ROUTE_TYPES_FILE);
+  const deadline = Date.now() + SCAN_BUDGET_MS;
+  while (Date.now() < deadline) {
+    try {
+      if (routeTypesInclude(await readFile(file, "utf8"), route)) return;
+    } catch {
+      /* not written yet — keep waiting */
+    }
+    await sleep(250);
+  }
+}
+
 /** Boot `next dev` against the seeded database and resolve once it answers. */
 async function startDevServer(appConnectionString: string): Promise<ChildProcess> {
   // `-H 127.0.0.1` is not cosmetic. Next builds `request.url` from the hostname it was bound to, not from the
@@ -208,6 +240,19 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
   // on `probeUrlFor`. Hoisting the url here instead would reinstate the exact bug this loop exists to
   // survive, and every test would stay green while it did.
   const deepestRoute = deepestAppRoute();
+
+  // Wait for the SCAN before asking the server anything.
+  //
+  // The HTTP probe below is the right final authority — it proves the route is actually serving. But it
+  // cannot tell "not registered yet" from "never will be", so on a loaded runner it can spend its whole
+  // budget asking before `next dev` has finished scanning src/app, then report a timeout against a server
+  // that was healthy throughout. That is the shape of the flake this suite has been showing.
+  //
+  // `next dev` writes the complete route table to a types file as soon as the scan finishes, independently
+  // of compiling anything. Gate on that first. It is an OPTIMISATION, never a precondition: if the file
+  // never appears we fall through to the probe and behave exactly as before, so the worst case here is
+  // today's behaviour.
+  await waitForRouteScan(deepestRoute);
 
   let lastProbe: ProbeResult | undefined;
   const deadline = Date.now() + BOOT_TIMEOUT_MS;

@@ -4,9 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  ROUTE_TYPES_FILE,
   appRoutes,
   byDepthDesc,
   deepestAppRoute,
+  routeTypesInclude,
+  routeTypesListRoutes,
   isRouteTableReady,
   probeUrlFor,
   urlSegments,
@@ -23,6 +26,56 @@ function tree(spec: readonly string[]): string {
   }
   return root;
 }
+
+// ── The scan-completion gate ──────────────────────────────────────────────────────────────────────────
+// The HTTP probe cannot distinguish "the deep route is not registered YET" from "it never will be", so on
+// a loaded CI runner it can burn its whole budget asking a question the server is not ready to answer.
+// `next dev` writes the COMPLETE route table to a types file as soon as it has scanned src/app — before,
+// and independently of, compiling anything. Reading that file is therefore a scan-completion signal that
+// does not race with matching or compilation.
+describe("routeTypesInclude", () => {
+  // A trimmed copy of what `next dev` actually emits (Next 16.2).
+  const REAL = [
+    'type AppRoutes = "/" | "/[...legacy]" | "/org/[slug]/dashboard"',
+    'type AppRouteHandlerRoutes = "/dev-session" | "/org/[slug]/endpoints/[id]/events/[eventId]/payload" | "/readyz"',
+    "type PageRoutes = never",
+  ].join("\n");
+
+  const PAYLOAD = ["(app)", "org", "[slug]", "endpoints", "[id]", "events", "[eventId]", "payload"];
+
+  it("finds a route handler listed in AppRouteHandlerRoutes", () => {
+    expect(routeTypesInclude(REAL, PAYLOAD)).toBe(true);
+  });
+
+  it("finds a page listed in AppRoutes", () => {
+    expect(routeTypesInclude(REAL, ["(app)", "org", "[slug]", "dashboard"])).toBe(true);
+  });
+
+  // The whole point: BEFORE the scan reaches it, the deep route is absent and we must keep waiting.
+  it("returns false while the deepest route is still absent", () => {
+    const partial =
+      'type AppRoutes = "/" | "/[...legacy]"\ntype AppRouteHandlerRoutes = "/dev-session"';
+    expect(routeTypesInclude(partial, PAYLOAD)).toBe(false);
+  });
+
+  it("is not fooled by a PREFIX of the route", () => {
+    const prefix = 'type AppRouteHandlerRoutes = "/org/[slug]/endpoints/[id]/events/[eventId]"';
+    expect(routeTypesInclude(prefix, PAYLOAD)).toBe(false);
+  });
+
+  it("drops route groups, so (app) never appears in the compared path", () => {
+    expect(routeTypesListRoutes(REAL)).not.toContain("/(app)/org/[slug]/dashboard");
+  });
+
+  it("returns false on an empty or garbage file rather than throwing", () => {
+    expect(routeTypesInclude("", PAYLOAD)).toBe(false);
+    expect(routeTypesInclude("nothing to see here", PAYLOAD)).toBe(false);
+  });
+
+  it("points at the dev types file next writes", () => {
+    expect(ROUTE_TYPES_FILE).toMatch(/routes\.d\.ts$/);
+  });
+});
 
 describe("appRoutes", () => {
   it("finds every page, at every depth", () => {
