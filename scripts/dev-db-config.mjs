@@ -9,7 +9,9 @@
 // disagreement between local bindings about host/port/database/password is fatal — a half-provisioned
 // cluster is worse than none.
 
-const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+/** The only hosts any dev tooling may touch. Exported so there is ONE definition of "local" —
+ *  scripts/seed.ts fails closed against this same set. */
+export const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 // The database name and every role name reach a shell assignment AND raw SQL in scripts/dev-db.sh
 // (`rolname='$role'`, `createdb "$DB"`, the dbmate DATABASE_URL). They come from url.pathname and
