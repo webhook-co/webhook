@@ -12,13 +12,42 @@ merge model. Start with [`AGENTS.md`](AGENTS.md) for the product constitution an
 ## Setup
 
 ```bash
-pnpm install
+pnpm install         # dependencies
+pnpm dev:db          # start a local Postgres and run all migrations
+pnpm dev:secrets     # generate every app's .dev.vars (real values for what can be generated)
+pnpm seed            # create the dev user, two orgs and an endpoint in each
+pnpm dev             # start all 11 runnable apps on their pinned ports
 ```
+
+Then open **http://localhost:3000/dev-session** — it mints a session for the seeded user and drops you on
+the dashboard.
+
+No third-party account is needed for any of this. Magic-link emails print to your console, social login is
+skipped unless you configure it, and endpoint secrets are sealed with a local key. What that costs in
+fidelity is written down in **[docs/local-parity.md](docs/local-parity.md)** — read it before concluding
+that something is broken.
+
+`pnpm seed` is safe to re-run, and refuses to touch any database that is not on your machine.
+
+### Ports
+
+Every app has a pinned port, listed in [`scripts/dev-ports.mjs`](scripts/dev-ports.mjs) — the single source
+of truth, checked by `pnpm dev-ports-guard`. The ones you will use:
+
+| | |
+| --- | --- |
+| `:3000` | dashboard (`apps/web`) |
+| `:3001` | auth (`apps/auth`) |
+| `:8787` | engine — **this is what an ingest URL points at** (`apps/engine`) |
+
+### Repo layout
 
 This is a **Turborepo + pnpm workspaces** monorepo:
 
-- `apps/` — runnable services: `api`, `engine` (Workers + Durable Objects), `web`, `mcp`.
-- `packages/` — libraries: `cli`, `sdks`, `portal-sdk`, `webhooks-spec`, `shared`.
+- `apps/` — 12 apps. `engine` (ingest/verify/deliver, Workers + Durable Objects), `api`, `web` (dashboard),
+  `auth`, `mcp`, `www` (marketing), plus `play`, `get`, `health`, `dmarc`, `telemetry`, and `docs`
+  (Mintlify-hosted — no local server).
+- `packages/` — libraries: `cli`, `db`, `shared`, `contract`, `sdks`, `portal-sdk`, `webhooks-spec`, `ui`.
 - `ee/` — proprietary, license-fenced (excluded from self-host builds; open core must not import it).
 - `infra/` — infrastructure as code.
 
