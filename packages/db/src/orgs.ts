@@ -13,6 +13,13 @@ import { mintCredential, type CredentialHasher } from "./credential";
 import { INGEST_TOKEN_PREFIX } from "./endpoints";
 
 export interface CreateOrgInput {
+  /**
+   * Pin the org's id instead of minting one. Only the local-dev seed uses this, and only because
+   * `/dev-session` hard-codes the id it mints a session for — a random id there would mean the default dev
+   * principal names a tenant that does not exist. Every production caller omits it and gets a random UUID.
+   * A collision is a primary-key violation, i.e. loud.
+   */
+  readonly id?: string;
   /** URL-safe unique handle (citext unique in the schema). */
   readonly slug: string;
   readonly name: string;
@@ -34,7 +41,7 @@ export interface CreatedOrg {
  * new org's RLS context (the orgs insert policy gates on id = current_org_id()).
  */
 export async function createOrg(app: Sql, input: CreateOrgInput): Promise<CreatedOrg> {
-  const id = randomUUID();
+  const id = input.id ?? randomUUID();
   const region = input.region ?? "us";
   await withTenant(app, id, async (tx) => {
     // Explicit Free window — the column default is NULL = unlimited (0056, the fail-safe against pruning an
@@ -121,7 +128,7 @@ export async function createOrgWithOwner(
   const check = validateOrgSlug(input.slug);
   if (!check.ok) throw new InvalidOrgSlugError(input.slug, check.reason);
 
-  const id = randomUUID();
+  const id = input.id ?? randomUUID();
   const region = input.region ?? "us";
   try {
     await withTenant(app, id, async (tx) => {
