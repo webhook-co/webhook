@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { assertLocalTarget, resolveSeedUrl } from "./seed-target.mjs";
+import { DEFAULT_URL, assertLocalTarget, resolveSeedUrl } from "./seed-target.mjs";
 
 // `pnpm seed` writes fixed-UUID orgs, users, memberships and endpoints, signs their audit rows with a
 // PUBLISHED dev key, and hashes their ingest tokens with a PUBLISHED dev pepper. Pointed at a real database
@@ -32,9 +32,13 @@ test("REFUSES a Neon host", () => {
 });
 
 test("the refusal names the host it refused, so the mistake is obvious", () => {
+  // A predicate, not a regex. An unanchored host-shaped pattern is what CodeQL's
+  // js/regex/missing-regexp-anchor flags (HIGH), and rightly in general — it just happens to be an
+  // assertion on an error message here rather than a check on a URL. `includes` says what is meant
+  // exactly, so the rule has nothing to warn about and the assertion is more precise.
   assert.throws(
     () => assertLocalTarget("postgres://owner:pw@db.example.com/webhook"),
-    /db\.example\.com/,
+    (err) => err.message.includes("db.example.com"),
   );
 });
 
@@ -78,9 +82,9 @@ test("falls back to DATABASE_URL when DEV_DB is unset", () => {
 });
 
 test("falls back to the documented local default when neither is set", () => {
-  assert.match(resolveSeedUrl({}), /^postgres:\/\/postgres:postgres@127\.0\.0\.1:5432\//);
+  assert.equal(resolveSeedUrl({}), DEFAULT_URL);
 });
 
 test("an empty variable is treated as unset, not as a target", () => {
-  assert.match(resolveSeedUrl({ DEV_DB: "", DATABASE_URL: "" }), /127\.0\.0\.1/);
+  assert.equal(resolveSeedUrl({ DEV_DB: "", DATABASE_URL: "" }), DEFAULT_URL);
 });
