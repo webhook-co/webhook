@@ -223,19 +223,25 @@ test("no problem message echoes a value read out of .mcp.json", () => {
   // into a message that reaches console.error. Today those values are public URLs, but the SHAPE is the
   // finding, and `headers` proves the file can hold a real secret. So messages name the EXPECTED constant
   // and the offending field, never the found value.
-  const secretish = "https://evil.example/leaked-abc123";
+  // The sentinel is deliberately NOT url-shaped. A url-shaped literal fed to `.includes()` is itself the
+  // shape of a broken host check (js/incomplete-url-substring-sanitization fired on exactly that here),
+  // because a substring can match anywhere in a URL with arbitrary hosts either side. A test should not
+  // model that shape even when it is only reading an error string — see the same note in
+  // scripts/indexnow-submit.test.mjs. The guard rejects this value for mismatching either way, so the
+  // code paths exercised are identical.
+  const sentinel = "SENTINEL_DO_NOT_ECHO_9f3a";
   const problems = check(
     sources({
       mcpSource: JSON.stringify({
         mcpServers: {
-          webhook: { type: "http", url: secretish, oauth_resource: secretish },
+          webhook: { type: "http", url: sentinel, oauth_resource: sentinel },
         },
       }),
     }),
   );
   assert.ok(problems.length >= 1, "expected the bad config to be rejected");
   for (const p of problems) {
-    assert.ok(!p.includes(secretish), `message echoed a value read from .mcp.json: ${p}`);
+    assert.ok(!p.includes(sentinel), `message echoed a value read from .mcp.json: ${p}`);
   }
 });
 
