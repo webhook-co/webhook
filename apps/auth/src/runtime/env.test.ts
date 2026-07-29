@@ -125,6 +125,41 @@ describe("resolveOAuthMode", () => {
   });
 });
 
+// `pnpm dev:secrets` writes an unconfigured optional secret as `TURNSTILE_SECRET_KEY=` — an empty STRING.
+// Treating that as "present but broken" made EVERY /api/auth/* request 500 on a generated .dev.vars.
+// A Secrets Store binding that resolves empty is still a genuine prod misconfig and must still throw.
+describe("resolveAuthSecrets — optional Turnstile", () => {
+  it("treats an empty STRING as not configured (the .dev.vars shape)", async () => {
+    const secrets = await resolveAuthSecrets(
+      readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "" }) as AuthEnv,
+    );
+    expect(secrets.turnstileSecretKey).toBeUndefined();
+  });
+
+  it("treats whitespace as not configured too", async () => {
+    const secrets = await resolveAuthSecrets(
+      readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "   " }) as AuthEnv,
+    );
+    expect(secrets.turnstileSecretKey).toBeUndefined();
+  });
+
+  it("still resolves a real value", async () => {
+    const secrets = await resolveAuthSecrets(
+      readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "0x-real" }) as AuthEnv,
+    );
+    expect(secrets.turnstileSecretKey).toBe("0x-real");
+  });
+
+  // The prod invariant this check exists for, preserved: a BINDING that resolves empty is a misconfig.
+  it("STILL throws when a Secrets Store binding resolves empty", async () => {
+    await expect(
+      resolveAuthSecrets(
+        readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: { get: async () => "" } }) as AuthEnv,
+      ),
+    ).rejects.toThrow(/turnstileSecretKey/);
+  });
+});
+
 describe("configuredSocialProviders", () => {
   it("reports both configured in the production shape", () => {
     expect(configuredSocialProviders(RAW)).toEqual({ google: true, github: true });

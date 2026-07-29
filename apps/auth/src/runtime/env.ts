@@ -544,8 +544,18 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
     if (relaxedFields.has(name as keyof ResolvedAuthSecrets)) continue;
     if (value.length === 0) throw new Error(`auth env: resolved secret ${name} is empty`);
   }
-  // Turnstile is OPTIONAL: resolve it only when bound (prod). Present-but-empty is still a misconfig — fail
-  // closed rather than wire a keyless gate that would reject every magic-link send (or, worse, pass none).
+  // Turnstile is OPTIONAL: resolve it only when actually configured.
+  //
+  // A BLANK STRING means "not configured". `pnpm dev:secrets` writes every unconfigured optional secret as
+  // `TURNSTILE_SECRET_KEY=`, and treating that as present-but-broken made EVERY /api/auth/* request 500 on a
+  // .dev.vars our own generator produced — a silent, bodyless 500 with sign-in completely dead locally.
+  //
+  // A BINDING that resolves empty is a different thing entirely and still fails closed: that is a real
+  // production misconfiguration, and wiring a keyless gate would either reject every magic-link send or,
+  // worse, pass every one. The distinction is the SHAPE of the input, not the emptiness of the value.
+  if (typeof env.TURNSTILE_SECRET_KEY === "string" && env.TURNSTILE_SECRET_KEY.trim() === "") {
+    return resolved;
+  }
   if (env.TURNSTILE_SECRET_KEY !== undefined) {
     const turnstileSecretKey = await readSecretBinding(env.TURNSTILE_SECRET_KEY);
     if (turnstileSecretKey.length === 0) {
