@@ -2,7 +2,7 @@
   "name": "@webhook-co/root",
   "version": "0.0.0",
   "private": true,
-  "description": "Open-core webhook infrastructure \u2014 receive, inspect, replay-to-localhost, and reliably deliver webhooks.",
+  "description": "Open-core webhook infrastructure — receive, inspect, replay-to-localhost, and reliably deliver webhooks.",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.25.0",
@@ -55,7 +55,8 @@
     "plugin-test-cases-guard": "node scripts/plugin-test-cases-guard.mjs",
     "trigger-copy-guard": "node scripts/trigger-copy-guard.mjs",
     "dev-secrets-guard": "node scripts/dev-secrets.mjs --check",
-    "dev-mode-guard": "node scripts/dev-mode-guard.mjs"
+    "dev-mode-guard": "node scripts/dev-mode-guard.mjs",
+    "seed": "tsx scripts/seed.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.19.0",
@@ -63,6 +64,8 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",
+    "@webhook-co/db": "workspace:*",
+    "@webhook-co/shared": "workspace:*",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-jsx-a11y": "^6.10.2",
@@ -72,6 +75,7 @@
     "jsonc-parser": "^3.3.1",
     "lint-staged": "^17.2.0",
     "prettier": "^3.9.6",
+    "tsx": "^4.23.1",
     "turbo": "^2.10.7",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
