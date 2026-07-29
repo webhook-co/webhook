@@ -42,14 +42,16 @@ vi.mock("@webhook-co/db/credential", () => ({ createCredentialHasherFromBase64: 
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) as CryptoKey }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array(32) }));
 // vi.mock factories are hoisted above module scope, so anything they close over must come from vi.hoisted.
-const { resendKey, sendInviteEmail } = vi.hoisted(() => ({
+const { resendKey, emailMode, sendInviteEmail } = vi.hoisted(() => ({
   resendKey: vi.fn((): string | null => "re_key"),
+  emailMode: vi.fn((): "send" | "log" => "send"),
   sendInviteEmail: vi.fn(async () => {}),
 }));
 vi.mock("./env", () => ({
   getCredentialPepper: async () => "AA".repeat(16),
   getAuditChainKey: async () => "BB".repeat(32),
   getResendApiKey: async () => resendKey(),
+  getEmailMode: () => emailMode(),
   getAppBaseUrl: () => "https://app.webhook.co",
 }));
 vi.mock("./invite-email", () => ({
@@ -148,6 +150,20 @@ describe("createInviteAction", () => {
         url: "https://app.webhook.co/invite/accept?org=org_1&token=whinv_secret",
         invitedBy: "o@acme.test", // the INVITER's own authenticated email
       }),
+    );
+  });
+
+  // EMAIL_MODE=log prints the invite (link included) to the console. For a local developer that IS a
+  // delivered invite, so it must report emailed:true rather than falling through to the copy-link path —
+  // otherwise the email branch is never exercised locally at all.
+  it("reports emailed:true under EMAIL_MODE=log even with no Resend key", async () => {
+    emailMode.mockReturnValueOnce("log");
+    resendKey.mockReturnValueOnce(null);
+    const res = await createInviteAction("acme", form({ email: "bob@acme.test", role: "member" }));
+    expect(res).toMatchObject({ status: "ok", emailed: true });
+    expect(sendInviteEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "log", apiKey: "" }),
+      expect.objectContaining({ to: "bob@acme.test" }),
     );
   });
 

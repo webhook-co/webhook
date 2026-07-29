@@ -26,6 +26,7 @@ import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
 import { splitName } from "@webhook-co/shared";
+import { resolveEmailMode } from "@webhook-co/shared/email-transport";
 
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
@@ -135,6 +136,45 @@ function captchaPlugins(baseURL: string, secrets: ResolvedAuthSecrets) {
   ];
 }
 
+/**
+ * Build the social-provider map, including only the providers that are FULLY configured.
+ *
+ * In production both are always configured (readAuthEnv requires all four secrets, and resolveAuthSecrets
+ * rejects an empty one), so this returns both and nothing changes. It exists for OAUTH_MODE=optional: a
+ * contributor with no Google or GitHub OAuth app boots with neither, and signs in by magic link.
+ *
+ * A provider is included only when it has BOTH halves. Wiring one with an empty client id or secret would
+ * advertise a sign-in route that bounces the user to the provider and fails there — a broken button is
+ * worse than an absent one, and a half-set pair is a misconfiguration rather than a hermetic state.
+ *
+ * Map the provider's given/family name onto our columns. Google returns them directly; GitHub does NOT
+ * (it has only a single free-text `name`), so we split on the first space — "Ada Lovelace" -> Ada /
+ * Lovelace, "Prince" -> Prince / "". It is a guess, and onboarding lets the user correct it, which is
+ * the entire reason onboarding pre-fills rather than assumes. `name` is left to Better Auth's default so
+ * the existing composite-name behaviour is unchanged.
+ */
+function socialProviders(secrets: ResolvedAuthSecrets) {
+  const providers: NonNullable<AuthConfig["socialProviders"]> = {};
+  if (secrets.googleClientId && secrets.googleClientSecret) {
+    providers.google = {
+      clientId: secrets.googleClientId,
+      clientSecret: secrets.googleClientSecret,
+      mapProfileToUser: (profile: { given_name?: string; family_name?: string }) => ({
+        firstName: profile.given_name ?? undefined,
+        lastName: profile.family_name ?? undefined,
+      }),
+    };
+  }
+  if (secrets.githubClientId && secrets.githubClientSecret) {
+    providers.github = {
+      clientId: secrets.githubClientId,
+      clientSecret: secrets.githubClientSecret,
+      mapProfileToUser: (profile: { name?: string | null }) => splitName(profile.name),
+    };
+  }
+  return providers;
+}
+
 /** Build the runtime Better Auth options (pure; no instantiation) — the unit under test. */
 export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): AuthConfig {
   const { baseURL, secrets } = input;
@@ -169,26 +209,7 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
         imageKey: { type: "string", required: false, input: false },
       },
     },
-    socialProviders: {
-      // Map the provider's given/family name onto our columns. Google returns them directly; GitHub does NOT
-      // (it has only a single free-text `name`), so we split on the first space — "Ada Lovelace" -> Ada /
-      // Lovelace, "Prince" -> Prince / "". It is a guess, and onboarding lets the user correct it, which is
-      // the entire reason onboarding pre-fills rather than assumes. `name` is left to Better Auth's default so
-      // the existing composite-name behaviour is unchanged.
-      google: {
-        clientId: secrets.googleClientId,
-        clientSecret: secrets.googleClientSecret,
-        mapProfileToUser: (profile: { given_name?: string; family_name?: string }) => ({
-          firstName: profile.given_name ?? undefined,
-          lastName: profile.family_name ?? undefined,
-        }),
-      },
-      github: {
-        clientId: secrets.githubClientId,
-        clientSecret: secrets.githubClientSecret,
-        mapProfileToUser: (profile: { name?: string | null }) => splitName(profile.name),
-      },
-    },
+    socialProviders: socialProviders(secrets),
     // Captcha first (its onRequest gate runs before the magic-link send handler), then magic-link.
     plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
     // Compose the account OAuth-token stripping (data minimization — see account-token-hooks.ts) into the
@@ -288,8 +309,13 @@ export async function makeAuth(env: AuthEnv, ctx?: AuthExecutionContext): Promis
   const secrets = await resolveAuthSecrets(env);
   const baseURL = resolveBaseUrl(env.AUTH_BASE_URL);
   const pool = new Pool({ connectionString: env.HYPERDRIVE_AUTH.connectionString, max: 1 });
+  // EMAIL_MODE is resolved (and fenced against the production secret shape) in the shared transport.
+  const emailMode = resolveEmailMode(env);
   const sendEmail: EmailSender = (msg) =>
-    sendMagicLinkEmail({ apiKey: secrets.resendApiKey, from: MAGIC_LINK_FROM }, msg);
+    sendMagicLinkEmail(
+      { apiKey: secrets.resendApiKey, from: MAGIC_LINK_FROM, mode: emailMode },
+      msg,
+    );
   const databaseHooks = makeBootstrapHooks({
     tenantConnectionString: env.HYPERDRIVE_TENANT.connectionString,
     credentialPepper: secrets.credentialPepper,

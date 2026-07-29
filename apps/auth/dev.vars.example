@@ -21,20 +21,26 @@ BETTER_AUTH_SECRET=
 # GENERATED: HMAC key for the OAuth consent ticket.
 CONSENT_TICKET_KEY=
 
-# EXTERNAL: Google OAuth dev app with an http://localhost:3001 callback. In REQUIRED_SECRETS today, which is why apps/auth cannot boot locally without real credentials — PR3 makes social login optional in dev.
+# LOCAL: Social login is optional locally: providers without BOTH halves configured are simply not wired, and you sign in by magic link. Refused outright if an OAuth secret is a Secrets Store binding (the prod shape).
+OAUTH_MODE=optional
+
+# LOCAL: Transactional mail is PRINTED to the console instead of sent — this is how you get your magic-link URL locally. Refused outright if RESEND_API_KEY is a Secrets Store binding (the prod shape).
+EMAIL_MODE=log
+
+# EXTERNAL: Google OAuth dev app with an http://localhost:3001 callback. OPTIONAL now that OAUTH_MODE=optional is set: leave it blank and the Google button is simply absent.
 GOOGLE_CLIENT_ID=
 
 # EXTERNAL: Pairs with GOOGLE_CLIENT_ID.
 GOOGLE_CLIENT_SECRET=
 
-# EXTERNAL: GitHub OAuth dev app. See GOOGLE_CLIENT_ID.
+# EXTERNAL: GitHub OAuth dev app. Optional — see GOOGLE_CLIENT_ID.
 GITHUB_CLIENT_ID=
 
 # EXTERNAL: Pairs with GITHUB_CLIENT_ID.
 GITHUB_CLIENT_SECRET=
 
-# EXTERNAL: Transactional email. In REQUIRED_SECRETS, so auth hard-fails without it even though web already degrades gracefully — PR3 adds EMAIL_MODE=log so magic links print to the console.
+# EXTERNAL: Transactional email. OPTIONAL now that EMAIL_MODE=log is set — leave it blank and mail prints to the console. Set it only to exercise real delivery.
 RESEND_API_KEY=
 
-# EXTERNAL: Optional and already degrades correctly: unset means the captcha plugin is not wired. Cloudflare publishes always-pass test keys if you want to exercise the path.
+# EXTERNAL: Leave it UNSET locally. Unset means the captcha plugin is not wired, and the login widget renders Cloudflare's always-pass test sitekey on localhost. Wiring the test SECRET would break local login: siteverify returns hostname example.com, which the plugin's allowedHostnames pin rejects.
 TURNSTILE_SECRET_KEY=

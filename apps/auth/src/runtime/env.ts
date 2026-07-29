@@ -4,6 +4,7 @@
 // way regardless of source. Hyperdrive is typed structurally (just the connectionString we use).
 
 import { readSecretBinding } from "@webhook-co/shared";
+import { resolveEmailMode } from "@webhook-co/shared/email-transport";
 
 export interface HyperdriveBinding {
   /** The PostgreSQL connection URI Hyperdrive proxies (verify-full to Neon). */
@@ -42,6 +43,14 @@ export interface AuthEnv {
   GITHUB_CLIENT_SECRET: Secret;
   RESEND_API_KEY: Secret;
   /**
+   * Local-dev hermetic flags. Absent in production (kept out of every deployed config by
+   * scripts/dev-mode-guard.mjs); see the block above REQUIRED_SECRETS for what each relaxes and how each
+   * is fenced. `EMAIL_MODE=log` prints mail to the console; `OAUTH_MODE=optional` drops unconfigured
+   * social providers.
+   */
+  EMAIL_MODE?: string;
+  OAUTH_MODE?: string;
+  /**
    * Cloudflare Turnstile siteverify secret — keys the Better Auth captcha plugin gating the magic-link send
    * (defense-in-depth on the public, email-triggering endpoint). OPTIONAL in the type so local/test runs
    * boot without it (the plugin is simply not wired); always provisioned in prod (gen-wrangler-prod.mjs).
@@ -79,6 +88,113 @@ const REQUIRED_SECRETS = [
   "RESEND_API_KEY",
 ] as const;
 
+// --- Hermetic local-dev modes -------------------------------------------------------------------------
+// A contributor with no Google/GitHub OAuth app and no Resend account must still be able to boot this
+// Worker and sign in. Two flags relax the contract above — and both are EXPLICIT on purpose.
+//
+// The tempting alternative, "a missing OAuth secret just means that provider is off", was rejected: it
+// makes a production secret-rotation typo silently disable Google sign-in instead of failing loudly on the
+// first request. The whole value of this file is that a misconfig is obvious. So the relaxation has to be
+// something you deliberately turn on, never something you fall into.
+//
+// Each flag is fenced against the PRODUCTION SECRET SHAPE: a Secrets Store binding (an object with
+// `.get()`) is what gen-wrangler-prod.mjs emits and what only a deployed Worker has; dev and test pass
+// plain strings. Asking for a hermetic mode on a Worker holding real store-backed secrets is a
+// misconfiguration serious enough to refuse outright rather than interpret.
+//
+// That runtime fence covers the deployed shape. Keeping these keys out of committed config, the deploy
+// overlay and the workflows is the SECOND fence — scripts/dev-mode-guard.mjs. Neither is total alone.
+
+const OAUTH_SECRETS = [
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "GITHUB_CLIENT_ID",
+  "GITHUB_CLIENT_SECRET",
+] as const;
+
+/** Whether the social-login secrets are mandatory. `required` is production; `optional` is local dev. */
+export type OAuthMode = "required" | "optional";
+
+/**
+ * Resolve OAUTH_MODE, failing closed: an unknown value throws rather than picking a behaviour, and
+ * `optional` is refused outright when any OAuth secret arrives as a Secrets Store binding.
+ */
+export function resolveOAuthMode(env: Record<string, unknown>): OAuthMode {
+  const mode = env.OAUTH_MODE;
+  if (mode === undefined || mode === "required") return "required";
+  if (mode !== "optional") {
+    throw new Error(`OAUTH_MODE must be "required" or "optional" (got ${JSON.stringify(mode)})`);
+  }
+  const fromStore = OAUTH_SECRETS.filter(
+    (name) => typeof (env[name] as { get?: unknown } | null)?.get === "function",
+  );
+  if (fromStore.length > 0) {
+    throw new Error(
+      `refusing OAUTH_MODE=optional: ${fromStore.join(", ")} ${
+        fromStore.length === 1 ? "is a" : "are"
+      } Secrets Store binding${fromStore.length === 1 ? "" : "s"}, which only a deployed Worker has. ` +
+        "Optional mode drops social login when it is unconfigured — it is a local-dev substitute and must " +
+        "never run in production, where a missing OAuth secret has to fail loudly.",
+    );
+  }
+  return "optional";
+}
+
+/**
+ * Which social providers are configured, for the LOGIN PAGE to decide which buttons to render.
+ *
+ * Without this the page renders "Continue with Google" unconditionally, and under OAUTH_MODE=optional that
+ * button posts to a provider Better Auth was never given — producing exactly the broken button that
+ * buildAuthConfig's `socialProviders` goes out of its way to avoid. The server decides; the form is told.
+ *
+ * This tests PRESENCE (`secretPresent`), whereas buildAuthConfig tests the RESOLVED value being non-empty.
+ * The two disagree for exactly one input: a Secrets Store binding that resolves to an empty string. That
+ * is REACHABLE, not merely unlikely — the login page's `isSignedIn()` short-circuits on a missing session
+ * cookie (resolve-signed-in.ts) and so never resolves a secret, which is precisely the signed-out visitor
+ * who sees this page. In that state the button renders and then 500s on click.
+ *
+ * That is accepted rather than fixed here: resolving all four OAuth secrets on every render of a public,
+ * signed-out page would add Secrets Store reads to the hottest unauthenticated path in the product, to
+ * detect a mis-provisioning that the same request already surfaces loudly the moment anyone clicks. An
+ * empty store secret is a deploy fault, and it is not this function's job to paper over one.
+ */
+export function configuredSocialProviders(env: Record<string, unknown>): {
+  google: boolean;
+  github: boolean;
+} {
+  return {
+    google: secretPresent(env.GOOGLE_CLIENT_ID) && secretPresent(env.GOOGLE_CLIENT_SECRET),
+    github: secretPresent(env.GITHUB_CLIENT_ID) && secretPresent(env.GITHUB_CLIENT_SECRET),
+  };
+}
+
+/** The secrets the hermetic flags have made optional for this env (empty in production). */
+function relaxedSecrets(env: Record<string, unknown>): ReadonlySet<string> {
+  const relaxed = new Set<string>();
+  if (resolveOAuthMode(env) === "optional") for (const name of OAUTH_SECRETS) relaxed.add(name);
+  if (resolveEmailMode(env as { EMAIL_MODE?: string }) === "log") relaxed.add("RESEND_API_KEY");
+  return relaxed;
+}
+
+/**
+ * The resolved-secret field each relaxable env key lands in, so the empty-value check below can tell
+ * "hermetically absent" from "mis-provisioned in production". Written out rather than derived from the
+ * name: a mechanical SNAKE→camel transform would silently stop matching the day a field is renamed, and
+ * this mapping decides whether an empty secret fails closed.
+ */
+const RELAXABLE_FIELD: Readonly<Record<string, keyof ResolvedAuthSecrets>> = {
+  GOOGLE_CLIENT_ID: "googleClientId",
+  GOOGLE_CLIENT_SECRET: "googleClientSecret",
+  GITHUB_CLIENT_ID: "githubClientId",
+  GITHUB_CLIENT_SECRET: "githubClientSecret",
+  RESEND_API_KEY: "resendApiKey",
+};
+
+/** Read a secret that may legitimately be absent under a hermetic flag; absent resolves to "". */
+async function readOptionalSecret(secret: Secret | undefined): Promise<string> {
+  return secret === undefined || secret === null ? "" : readSecretBinding(secret);
+}
+
 const REQUIRED_BINDINGS = ["HYPERDRIVE_AUTH", "HYPERDRIVE_TENANT"] as const;
 
 /** A secret is present if it's a non-empty string or a Secrets Store binding (an object with `.get()`). */
@@ -94,7 +210,9 @@ function secretPresent(value: unknown): boolean {
  * empty-secret session signer or an `undefined.connectionString`/`undefined.get()` crash downstream.
  */
 export function readAuthEnv(env: Record<string, unknown>): AuthEnv {
+  const relaxed = relaxedSecrets(env);
   for (const key of REQUIRED_SECRETS) {
+    if (relaxed.has(key)) continue;
     if (!secretPresent(env[key])) {
       throw new Error(`auth env: missing or empty required secret ${key}`);
     }
@@ -353,8 +471,10 @@ export function readSweepEnv(env: Record<string, unknown>): SweepEnv {
 export interface NotifyEnv {
   /** webhook_notifier role — the cross-org client the drain reads intents + marks-sent with. */
   HYPERDRIVE_NOTIFIER: HyperdriveBinding;
-  /** Resend API key (Secrets Store in prod / string in dev) for the notification send. */
-  RESEND_API_KEY: Secret;
+  /** Resend API key (Secrets Store in prod / string in dev). Absent only under EMAIL_MODE=log. */
+  RESEND_API_KEY?: Secret;
+  /** Local-dev only — see the hermetic-modes block above. */
+  EMAIL_MODE?: string;
 }
 
 /** Validate + narrow the env for the notification drain, fail-closed (naming the missing key, never its value). */
@@ -367,7 +487,13 @@ export function readNotifyEnv(env: Record<string, unknown>): NotifyEnv {
   ) {
     throw new Error("notify env: missing or malformed Hyperdrive binding HYPERDRIVE_NOTIFIER");
   }
-  if (env.RESEND_API_KEY === undefined || env.RESEND_API_KEY === null) {
+  // Under EMAIL_MODE=log the drain prints notifications instead of sending them, so no Resend key is
+  // needed. resolveEmailMode refuses log mode against a production secret shape, so this cannot relax the
+  // requirement on a deployed Worker.
+  if (
+    resolveEmailMode(env as { EMAIL_MODE?: string }) === "send" &&
+    (env.RESEND_API_KEY === undefined || env.RESEND_API_KEY === null)
+  ) {
     throw new Error("notify env: missing RESEND_API_KEY");
   }
   return env as unknown as NotifyEnv;
@@ -386,11 +512,11 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
   ] = await Promise.all([
     readSecretBinding(env.BETTER_AUTH_SECRET),
     readSecretBinding(env.CREDENTIAL_PEPPER),
-    readSecretBinding(env.GOOGLE_CLIENT_ID),
-    readSecretBinding(env.GOOGLE_CLIENT_SECRET),
-    readSecretBinding(env.GITHUB_CLIENT_ID),
-    readSecretBinding(env.GITHUB_CLIENT_SECRET),
-    readSecretBinding(env.RESEND_API_KEY),
+    readOptionalSecret(env.GOOGLE_CLIENT_ID),
+    readOptionalSecret(env.GOOGLE_CLIENT_SECRET),
+    readOptionalSecret(env.GITHUB_CLIENT_ID),
+    readOptionalSecret(env.GITHUB_CLIENT_SECRET),
+    readOptionalSecret(env.RESEND_API_KEY),
   ]);
   const resolved = {
     betterAuthSecret,
@@ -403,7 +529,17 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
   };
   // Fail closed on an EMPTY resolved value — readAuthEnv can't see inside a Secrets Store binding, so a
   // mis-provisioned (empty) store secret only surfaces here. Never sign sessions / mint with an empty key.
+  //
+  // The hermetic flags carve out EXACTLY the fields they relaxed: under OAUTH_MODE=optional an absent
+  // Google secret resolves to "" and that is the intended state, but BETTER_AUTH_SECRET going empty is
+  // still a hard failure. The carve-out is per-field, never blanket.
+  const relaxedFields = new Set(
+    [...relaxedSecrets(env as unknown as Record<string, unknown>)].map(
+      (key) => RELAXABLE_FIELD[key],
+    ),
+  );
   for (const [name, value] of Object.entries(resolved)) {
+    if (relaxedFields.has(name as keyof ResolvedAuthSecrets)) continue;
     if (value.length === 0) throw new Error(`auth env: resolved secret ${name} is empty`);
   }
   // Turnstile is OPTIONAL: resolve it only when bound (prod). Present-but-empty is still a misconfig — fail

@@ -39,6 +39,8 @@ import {
   type DestinationDisabledContext,
 } from "./destination-disabled-email";
 import { readNotifyEnv, type NotifyEnv } from "./env";
+import { deliverEmail, resolveEmailMode, type EmailMode } from "@webhook-co/shared/email-transport";
+
 import { safeErrorMessage } from "./redact";
 import {
   renderFreeOrgCapSuspendedEmail,
@@ -48,8 +50,6 @@ import {
 } from "./free-org-cap-email";
 import { NOTIFICATIONS_FROM } from "./urls";
 import { renderUsageThresholdEmail, type UsageThresholdContext } from "./usage-threshold-email";
-
-const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
 /** The common shape every notification renderer produces (subject + HTML + text). Every family
  *  (destination_disabled, usage_threshold, api_key_revoked) emits this, so the sender is kind-agnostic. */
@@ -198,19 +198,13 @@ async function sendViaResend(
   to: string,
   email: RenderedEmail,
   fetchImpl: typeof fetch = fetch,
+  mode: EmailMode = "send",
 ): Promise<void> {
-  const res = await fetchImpl(RESEND_ENDPOINT, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: NOTIFICATIONS_FROM,
-      to: [to],
-      subject: email.subject,
-      html: email.html,
-      text: email.text,
-    }),
-  });
-  if (!res.ok) throw new Error(`notification email send failed with status ${res.status}`);
+  await deliverEmail(
+    { mode, apiKey, from: NOTIFICATIONS_FROM, fetchImpl },
+    // `to` stays a one-element array: this is what the drain has always put on the wire.
+    { to: [to], subject: email.subject, html: email.html, text: email.text, kind: "notification" },
+  );
 }
 
 /**
@@ -224,10 +218,13 @@ export async function runNotificationDrain(
 ): Promise<NotificationDrainResult | null> {
   let validated: NotifyEnv;
   let apiKey: string;
+  let mode: EmailMode;
   try {
     validated = readNotifyEnv(env);
-    apiKey = await readSecretBinding(validated.RESEND_API_KEY);
-    if (!apiKey) throw new Error("notify env: RESEND_API_KEY resolved empty");
+    mode = resolveEmailMode(env as { EMAIL_MODE?: string });
+    // In log mode there is no key to resolve — the drain prints each notification instead of sending it.
+    apiKey = mode === "log" ? "" : await readSecretBinding(validated.RESEND_API_KEY!);
+    if (mode === "send" && !apiKey) throw new Error("notify env: RESEND_API_KEY resolved empty");
   } catch (error) {
     console.log(
       JSON.stringify({
@@ -243,7 +240,7 @@ export async function runNotificationDrain(
     const result = await drainNotifications({
       listPending: () => listPendingNotifications(sql),
       claim: (intentId) => markNotificationSent(sql, intentId),
-      send: (to, email) => sendViaResend(apiKey, to, email),
+      send: (to, email) => sendViaResend(apiKey, to, email, undefined, mode),
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
     console.log(JSON.stringify({ message: "auth.notify.cron", ...result }));

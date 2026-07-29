@@ -14,12 +14,19 @@
 // the only way to reach the one thing this email exists to deliver.
 
 import { renderBrandedEmail } from "@webhook-co/shared/email-shell";
+import { deliverEmail, type EmailMode } from "@webhook-co/shared/email-transport";
 
 export interface MagicLinkSenderDeps {
-  /** Resend API key (a Secrets-Store secret at runtime). */
+  /** Resend API key (a Secrets-Store secret at runtime). Unused when `mode` is "log". */
   apiKey: string;
   /** Verified sender, e.g. "login@mail.webhook.co". */
   from: string;
+  /**
+   * Where the mail goes: "send" (Resend, the default and the only production value) or "log" (printed to
+   * the console for local dev). Resolved from EMAIL_MODE by the caller — see @webhook-co/shared/email-transport,
+   * which is also where the fence keeping log mode out of production lives.
+   */
+  mode?: EmailMode;
   /** Injected for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -29,7 +36,6 @@ export interface MagicLinkMessage {
   url: string;
 }
 
-const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const SUBJECT = "Your webhook.co sign-in link";
 
 function render(url: string) {
@@ -59,26 +65,24 @@ export async function sendMagicLinkEmail(
   deps: MagicLinkSenderDeps,
   message: MagicLinkMessage,
 ): Promise<void> {
-  const doFetch = deps.fetchImpl ?? fetch;
   const email = render(message.url);
-  const res = await doFetch(RESEND_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${deps.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  await deliverEmail(
+    {
+      mode: deps.mode ?? "send",
+      apiKey: deps.apiKey,
       from: deps.from,
+      fetchImpl: deps.fetchImpl,
+    },
+    {
       to: message.to,
       subject: email.subject,
       html: email.html,
       text: email.text,
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`magic-link email send failed with status ${res.status}`);
-  }
+      kind: "magic-link",
+      // The whole point of the mail. In log mode this is what the developer clicks.
+      link: message.url,
+    },
+  );
 }
 
 // --- Durable send rate-limit (ADR-0027 must-before-live) ----------------------------------------------

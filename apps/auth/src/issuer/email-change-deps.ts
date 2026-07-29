@@ -26,6 +26,7 @@ import {
   upsertPendingEmailChange,
 } from "@webhook-co/db";
 import { readSecretBinding } from "@webhook-co/shared";
+import { resolveEmailMode, type EmailMode } from "@webhook-co/shared/email-transport";
 
 import { sendEmailChangedNotice, sendEmailChangeOtp } from "../runtime/email-change-email";
 import {
@@ -43,7 +44,10 @@ type Secret = Parameters<typeof readSecretBinding>[0];
 export interface EmailChangeEnv {
   readonly HYPERDRIVE_AUTH: { readonly connectionString: string };
   readonly RATELIMIT_KV: RateLimitKv;
-  readonly RESEND_API_KEY: Secret;
+  /** Absent only under EMAIL_MODE=log (local dev), where the OTP mail is printed instead of sent. */
+  readonly RESEND_API_KEY?: Secret;
+  /** Local-dev only — see @webhook-co/shared/email-transport. */
+  readonly EMAIL_MODE?: string;
   readonly CREDENTIAL_PEPPER: Secret;
 }
 
@@ -84,9 +88,10 @@ function makeOps(
   kv: RateLimitKv,
   pepper: string,
   apiKey: string,
+  mode: EmailMode,
 ): EmailChangeOps {
   const nowSeconds = () => Math.floor(Date.now() / 1000);
-  const senderDeps = { apiKey };
+  const senderDeps = { apiKey, mode };
   return {
     now: () => Date.now(),
     maxAttempts: MAX_ATTEMPTS,
@@ -120,17 +125,29 @@ function makeOps(
   };
 }
 
+/** Resolve the Resend key for send mode, failing with a NAMED error when it is not bound. */
+function readRequiredResendKey(secret: Secret | undefined): Promise<string> {
+  if (secret === undefined || secret === null) {
+    throw new Error("email-change env: missing RESEND_API_KEY (required unless EMAIL_MODE=log)");
+  }
+  return readSecretBinding(secret);
+}
+
 async function withOps<T>(
   env: EmailChangeEnv,
   fn: (ops: EmailChangeOps) => Promise<T>,
 ): Promise<T> {
   const authClient = createClient(env.HYPERDRIVE_AUTH.connectionString, { max: 1 });
   try {
+    // Under EMAIL_MODE=log there is no Resend key to resolve — the OTP is printed to the console instead.
+    const mode = resolveEmailMode(env);
     const [pepper, apiKey] = await Promise.all([
       readSecretBinding(env.CREDENTIAL_PEPPER),
-      readSecretBinding(env.RESEND_API_KEY),
+      // Not a `!`: in send mode an absent key is a real misconfiguration, and it should say so by name
+      // rather than die on `undefined.get()` several frames later.
+      mode === "log" ? Promise.resolve("") : readRequiredResendKey(env.RESEND_API_KEY),
     ]);
-    return await fn(makeOps(authClient, env.RATELIMIT_KV, pepper, apiKey));
+    return await fn(makeOps(authClient, env.RATELIMIT_KV, pepper, apiKey, mode));
   } finally {
     await authClient.end();
   }

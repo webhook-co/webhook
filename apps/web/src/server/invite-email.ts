@@ -15,10 +15,13 @@
 // data, so the shell HTML-ESCAPES it. The API key is never interpolated into an error message.
 
 import { renderBrandedEmail } from "@webhook-co/shared/email-shell";
+import { deliverEmail, type EmailMode } from "@webhook-co/shared/email-transport";
 
 export interface InviteEmailDeps {
-  /** Resend API key (a Secrets Store binding at runtime). */
+  /** Resend API key (a Secrets Store binding at runtime). Unused when `mode` is "log". */
   readonly apiKey: string;
+  /** "send" (Resend, the production default) or "log" (console, local dev). See email-transport. */
+  readonly mode?: EmailMode;
   /** Verified sender, e.g. "invites@mail.webhook.co". */
   readonly from: string;
   /** Injected for tests; defaults to the global fetch. */
@@ -33,7 +36,6 @@ export interface InviteEmailMessage {
   readonly invitedBy: string;
 }
 
-const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const SUBJECT = "You've been invited to a team on webhook.co";
 
 function render(msg: InviteEmailMessage) {
@@ -65,24 +67,21 @@ export async function sendInviteEmail(
   deps: InviteEmailDeps,
   message: InviteEmailMessage,
 ): Promise<void> {
-  const doFetch = deps.fetchImpl ?? fetch;
   const email = render(message);
-  const res = await doFetch(RESEND_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${deps.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
+  await deliverEmail(
+    {
+      mode: deps.mode ?? "send",
+      apiKey: deps.apiKey,
       from: deps.from,
+      fetchImpl: deps.fetchImpl,
+    },
+    {
       to: message.to,
       subject: email.subject,
       html: email.html,
       text: email.text,
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`invite email send failed with status ${res.status}`);
-  }
+      kind: "invite",
+      link: message.url,
+    },
+  );
 }

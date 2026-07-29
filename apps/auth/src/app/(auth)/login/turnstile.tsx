@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { TURNSTILE_ACTION, TURNSTILE_SITEKEY } from "@/runtime/urls";
+import { TURNSTILE_ACTION, resolveTurnstileSitekey } from "@/runtime/urls";
 
 import type { CaptchaWidgetProps } from "./login-form";
 
@@ -98,7 +98,9 @@ export function Turnstile({ onToken }: CaptchaWidgetProps) {
       if (cancelled || !containerRef.current || !window.turnstile) return;
       renderedTheme = resolveTheme();
       widgetId = window.turnstile.render(containerRef.current, {
-        sitekey: TURNSTILE_SITEKEY,
+        // Localhost renders Cloudflare's always-pass test key so local sign-in does not depend on the
+        // production widget's remote domain list. Not a security boundary — see turnstile-sitekey.ts.
+        sitekey: resolveTurnstileSitekey(window.location.hostname),
         action: TURNSTILE_ACTION,
         // Flexible → fills the container width (down to Turnstile's 300px floor), matching the field.
         size: "flexible",
