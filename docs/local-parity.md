@@ -118,9 +118,11 @@ is the thing worth testing anyway.
 bindings** — 18 of them (web 10, api 4, mcp 4). Locally, none of them exist.
 
 Not "exist but can't be answered" — **absent**. The committed wrangler configs carry no `services` block at
-all, and that is deliberate rather than an oversight: Cloudflare late-binds a referenced service, so a
-committed `services` entry naming a Worker that is not yet live makes the referencing Worker fail to
-*start*. The bindings are injected only by the deploy overlay (`scripts/gen-wrangler-prod.mjs`).
+all, and that is deliberate rather than an oversight: Cloudflare rejects an *upload* whose service binding
+names a Worker that does not exist yet, so committing these would **block a cold deploy** — a fresh
+environment brings the Workers up one at a time, and `webhook-web` would be unable to deploy before
+`webhook-auth` existed. The bindings are injected only by the deploy overlay
+(`scripts/gen-wrangler-prod.mjs`), which runs after the targets are live.
 
 The code is written for that. `env.AUTH_ISSUER` and friends are simply `undefined` locally, each reader
 checks structurally before use, and the affected feature degrades rather than the Worker crashing — for
@@ -132,9 +134,37 @@ account deletion, connected apps, onboarding, email change, login methods, provi
 delivery dispatch, ingest-URL reveal, cache eviction, payload reads — is not exercisable locally.
 
 **Why a multi-worker `wrangler dev` session is not on its own the fix:** running several Workers in one
-session lets a declared binding resolve, but there is nothing declared to resolve. Closing this needs the
-`services` blocks to exist locally WITHOUT being committed — the committed-config constraint above is a
+session lets a *declared* binding resolve, but there is nothing declared to resolve. Closing this needs the
+`services` blocks to exist locally WITHOUT being committed — the cold-deploy constraint above is a
 deploy-safety property and must not be traded away for local convenience.
+
+The shape that satisfies both is the one the deploy already uses: a **generated, gitignored config**.
+`wrangler.prod.jsonc` is exactly that (see `.gitignore`), so a `wrangler.dev.jsonc` carrying the same
+`services` blocks is symmetric with an existing, proven pattern rather than a new deviation.
+
+### Two measured properties of wrangler's dev registry
+
+Both established by experiment against wrangler 4.115.0 (a throwaway caller/callee pair with a named
+`WorkerEntrypoint`), not inferred from documentation:
+
+1. **A binding resolves across SEPARATE `wrangler dev` sessions.** Two independently launched sessions find
+   each other through the dev registry and RPC works. So this does *not* require one multi-config session —
+   which matters, because `apps/web` and `apps/auth` run under the OpenNext preview rather than bare
+   `wrangler dev`.
+2. **With the target absent, the caller still boots and the binding is still PRESENT.** The call then throws
+   `Error: Network connection lost.` at invocation time.
+
+⚠️ **Property 2 is a trap, and it is the reason declaring these locally is not a free win.** Every reader
+today checks *structurally* — `if (!env.AUTH_ISSUER) → degrade` — and that check is what makes a
+single-app dev session behave sanely. Declare the binding and `env.AUTH_ISSUER` becomes **truthy whether or
+not auth is running**, so the guard starts passing and the feature throws instead of degrading. Anyone
+running a subset of the apps would be worse off than today.
+
+So the bindings must not be declared until the dev orchestrator starts the whole set together — the
+orchestrator is a **prerequisite**, not a parallel nicety.
+
+⚠️ Do not trust wrangler's startup banner as a readiness signal: it prints `Worker … local [connected]` for
+the binding even when the target Worker is not running at all.
 
 ## `apps/auth` costs you a build step
 
