@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
     "./orgs": "./src/orgs.ts",
+    "./seed": "./src/seed.ts",
     "./invites": "./src/invites.ts",
     "./members": "./src/members.ts",
     "./api-keys": "./src/api-keys.ts",

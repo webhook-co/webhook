@@ -22,6 +22,25 @@ async function sessionFrom(res: Response) {
   return verifySessionToken(value, TEST_SECRET);
 }
 
+// The default principal is a CONTRACT with the local-dev seeder: `pnpm seed` creates exactly this user in
+// exactly this org. If either side changes alone, the seeded database stops matching the session this route
+// mints, and the symptom is an unexplained bounce back to sign-in with no error anywhere.
+//
+// This DECODES the minted session and compares it to the seeder's own exports. Asserting that the seed
+// exports equal literals copied into this file would pin nothing: the route could change freely and the
+// test would still pass, which is the exact drift it claims to catch.
+describe("the default principal matches what `pnpm seed` creates", () => {
+  it("mints the seeder's user id and org id", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const { DEV_PRINCIPAL, DEV_PRIMARY_ORG_ID } = await import("@webhook-co/db/seed");
+
+    const session = await sessionFrom(await GET(new Request("http://localhost:3000/dev-session")));
+
+    expect(session?.userId).toBe(DEV_PRINCIPAL.userId);
+    expect(session?.orgId).toBe(DEV_PRIMARY_ORG_ID);
+  });
+});
+
 describe("GET /dev-session", () => {
   it("returns 404 in production — never a real auth path", async () => {
     vi.stubEnv("NODE_ENV", "production");
