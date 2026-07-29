@@ -112,17 +112,29 @@ is the thing worth testing anyway.
 
 ---
 
-## Cross-worker service bindings
+## Cross-worker service bindings are ABSENT locally
 
-The engine, api and auth Workers call each other over Cloudflare **service bindings** (18 of them). A single
-`wrangler dev` session serves one Worker, so a call across a binding has nothing to answer it.
+`apps/web`, `apps/api` and `apps/mcp` reach `apps/auth` and `apps/engine` over Cloudflare **service
+bindings** — 18 of them (web 10, api 4, mcp 4). Locally, none of them exist.
 
-**Status:** a multi-worker dev session is the next piece of orchestration work.
+Not "exist but can't be answered" — **absent**. The committed wrangler configs carry no `services` block at
+all, and that is deliberate rather than an oversight: Cloudflare late-binds a referenced service, so a
+committed `services` entry naming a Worker that is not yet live makes the referencing Worker fail to
+*start*. The bindings are injected only by the deploy overlay (`scripts/gen-wrangler-prod.mjs`).
 
-**Today:** each app runs on its own pinned port (see `scripts/dev-ports.mjs`), so anything that talks over
-plain HTTP works. Anything that goes over a service binding does not.
+The code is written for that. `env.AUTH_ISSUER` and friends are simply `undefined` locally, each reader
+checks structurally before use, and the affected feature degrades rather than the Worker crashing — for
+example the MCP server 500s on an opaque (non-`whk_`) token because it cannot reach auth's introspection
+entrypoint, while everything else keeps working.
 
----
+**What this costs you:** anything behind one of those 18 bindings — the auth→app session handoff RPC,
+account deletion, connected apps, onboarding, email change, login methods, provider-secret sealing,
+delivery dispatch, ingest-URL reveal, cache eviction, payload reads — is not exercisable locally.
+
+**Why a multi-worker `wrangler dev` session is not on its own the fix:** running several Workers in one
+session lets a declared binding resolve, but there is nothing declared to resolve. Closing this needs the
+`services` blocks to exist locally WITHOUT being committed — the committed-config constraint above is a
+deploy-safety property and must not be traded away for local convenience.
 
 ## `apps/auth` costs you a build step
 
