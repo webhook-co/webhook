@@ -1,4 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
+
+import { THIRD_PARTY_STATUS_BADGE } from "./axe-scope";
 import { expect, test, type Page } from "@playwright/test";
 
 import { BILLABLE_UNIT, BILLING_TERMS } from "../src/components/marketing/faq";
@@ -22,7 +24,10 @@ async function expectClean(page: Page) {
   // every page render in the DARK default and this "light" contrast pass would go green while auditing
   // the wrong palette (mirrors the data-theme="dark" assert in a11y-dark.spec.ts).
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  const { violations } = await new AxeBuilder({ page }).withTags(WCAG).analyze();
+  const { violations } = await new AxeBuilder({ page })
+    .exclude(THIRD_PARTY_STATUS_BADGE)
+    .withTags(WCAG)
+    .analyze();
   // Map to a readable shape so a failure prints the rule + offending selector + contrast detail.
   expect(
     violations.map((v) => ({

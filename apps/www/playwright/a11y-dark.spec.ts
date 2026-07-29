@@ -1,4 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
+
+import { THIRD_PARTY_STATUS_BADGE } from "./axe-scope";
 import { expect, test, type Page } from "@playwright/test";
 
 import { a11yRoutes } from "../src/lib/routes";
@@ -18,7 +20,10 @@ import { a11yRoutes } from "../src/lib/routes";
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 
 async function expectClean(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).withTags(WCAG).analyze();
+  const { violations } = await new AxeBuilder({ page })
+    .exclude(THIRD_PARTY_STATUS_BADGE)
+    .withTags(WCAG)
+    .analyze();
   expect(
     violations.map((v) => ({
       id: v.id,
