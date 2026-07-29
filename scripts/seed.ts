@@ -15,11 +15,8 @@ import { createCredentialHasherFromBase64 } from "@webhook-co/db/credential";
 import { seedDevWorld, DEV_PRINCIPAL } from "@webhook-co/db/seed";
 import { importAuditKey } from "@webhook-co/shared";
 
-/**
- * The local superuser URL `pnpm dev:db` prints. Everything here runs against ONE local database; the
- * per-role split below is about which grants each statement needs, not about which server it talks to.
- */
-const DEFAULT_URL = "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev?sslmode=disable";
+// @ts-expect-error - a plain .mjs sibling; it has no type declarations and needs none.
+import { assertLocalTarget, resolveSeedUrl } from "./seed-target.mjs";
 
 /** Dev-only key material. Worthless anywhere real — these seed rows are not secrets. */
 const DEV_PEPPER = Buffer.from("dev-only-credential-pepper-32by!").toString("base64");
@@ -35,7 +32,10 @@ function asRole(url: string, role: string): string {
 }
 
 async function main(): Promise<void> {
-  const base = process.env.DATABASE_URL ?? process.env.DEV_DB ?? DEFAULT_URL;
+  // Fail closed on anything that is not this machine BEFORE opening a connection. The seeder signs audit
+  // rows with a published dev key, so a mis-pointed target is a data-integrity incident — see seed-target.
+  const base = resolveSeedUrl(process.env);
+  assertLocalTarget(base);
 
   // Two roles, deliberately, because that is the split production lives with: the identity `"user"` table
   // belongs to webhook_auth and is ungranted to webhook_app. Seeding as a superuser instead would work and
@@ -52,7 +52,8 @@ async function main(): Promise<void> {
     });
 
     console.log("✅ seeded your local database\n");
-    console.log(`   user     ${world.users.dev.id}  <${world.users.dev.email}>`);
+    // Ids only — an email is personal data, and this output lands in terminals, scrollback and CI logs.
+    console.log(`   user     ${world.users.dev.id}`);
     console.log(`   org      ${world.orgs.primary.name}  (owner)   ${world.orgs.primary.id}`);
     console.log(`   org      ${world.orgs.second.name}  (member)  ${world.orgs.second.id}`);
     for (const endpoint of world.endpoints) {
@@ -70,10 +71,14 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`❌ seed failed: ${message}`);
-  console.error(
-    `\n   Is the local database up and migrated?\n` +
-      `     pnpm dev:db      # starts it and runs the migrations\n` +
-      `   Override the connection with DATABASE_URL if yours is elsewhere.`,
-  );
+  // A refusal already explains itself, and the "point it elsewhere" hint below would directly contradict
+  // it — telling someone to set the very variable we just refused is how a safety check gets worked around.
+  if (!message.startsWith("refusing to seed")) {
+    console.error(
+      `\n   Is the local database up and migrated?\n` +
+        `     pnpm dev:db      # starts it and runs the migrations\n` +
+        `   Set DEV_DB if your local database is somewhere other than the default.`,
+    );
+  }
   process.exit(1);
 });
