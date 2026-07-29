@@ -28,6 +28,8 @@ const RAW = {
   GITHUB_CLIENT_ID: "hid",
   GITHUB_CLIENT_SECRET: "hsec",
   RESEND_API_KEY: "re_key",
+  // Prod provisions this unconditionally (gen-wrangler-prod.mjs), so the fixture mirrors that shape.
+  TURNSTILE_SECRET_KEY: "0x-turnstile-secret",
 };
 
 // --- Local-dev hermetic modes ------------------------------------------------------------------------
@@ -78,6 +80,11 @@ describe("resolveOAuthMode", () => {
     expect(resolveOAuthMode({})).toBe("required");
   });
 
+  // `.dev.vars` writes an unset key as `OAUTH_MODE=` — an empty string. See the email-transport note.
+  it("treats an empty value as unset — a blank .dev.vars line must not throw", () => {
+    expect(resolveOAuthMode({ OAUTH_MODE: "" })).toBe("required");
+  });
+
   it("accepts an explicit required", () => {
     expect(resolveOAuthMode({ OAUTH_MODE: "required" })).toBe("required");
   });
@@ -113,9 +120,74 @@ describe("resolveOAuthMode", () => {
     expect(err).toContain("GITHUB_CLIENT_ID");
   });
 
+  // "" is UNSET (covered above), not an unknown value. A real typo still fails closed.
   it("throws on an unknown value rather than guessing", () => {
-    expect(() => resolveOAuthMode({ OAUTH_MODE: "" })).toThrow(/OAUTH_MODE/);
     expect(() => resolveOAuthMode({ OAUTH_MODE: "OPTIONAL" })).toThrow(/OAUTH_MODE/);
+    expect(() => resolveOAuthMode({ OAUTH_MODE: "opitonal" })).toThrow(/OAUTH_MODE/);
+  });
+});
+
+// `pnpm dev:secrets` writes an unconfigured optional secret as `TURNSTILE_SECRET_KEY=` — an empty STRING.
+// Treating that as "present but broken" made EVERY /api/auth/* request 500 on a generated .dev.vars.
+// A Secrets Store binding that resolves empty is still a genuine prod misconfig and must still throw.
+// The captcha gate exists to protect the PUBLIC, email-triggering magic-link endpoint. So "mail really
+// sends" and "the gate is configured" must not be allowed to diverge: a local setup that sends real email
+// with no captcha is the abuse surface prod is careful never to have. Prod always provisions Turnstile
+// (gen-wrangler-prod lists it unconditionally for auth), so requiring it whenever email sends costs prod
+// nothing and closes the local hole.
+describe("readAuthEnv — Turnstile is required when email really sends", () => {
+  it("REFUSES to boot when mail sends and Turnstile is not configured", () => {
+    const { TURNSTILE_SECRET_KEY: _omit, ...noTurnstile } = RAW;
+    expect(() => readAuthEnv(noTurnstile)).toThrow(/TURNSTILE_SECRET_KEY/);
+  });
+
+  it("refuses a blank Turnstile secret just the same when mail sends", () => {
+    expect(() => readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "" })).toThrow(/TURNSTILE_SECRET_KEY/);
+  });
+
+  // The escape hatch is coherent: with no real mail leaving the machine there is no abuse surface to guard.
+  it("allows an unconfigured Turnstile when EMAIL_MODE=log", () => {
+    const { TURNSTILE_SECRET_KEY: _omit, ...noTurnstile } = RAW;
+    expect(() => readAuthEnv({ ...noTurnstile, EMAIL_MODE: "log" })).not.toThrow();
+  });
+
+  it("names the reason, so the fix is obvious rather than a guess", () => {
+    const { TURNSTILE_SECRET_KEY: _omit, ...noTurnstile } = RAW;
+    expect(() => readAuthEnv(noTurnstile)).toThrow(/EMAIL_MODE=log/);
+  });
+});
+
+describe("resolveAuthSecrets — optional Turnstile", () => {
+  // EMAIL_MODE=log because readAuthEnv now refuses a blank Turnstile when mail really sends — this test is
+  // about the blank-STRING vs empty-BINDING distinction, not about the coupling.
+  it("treats an empty STRING as not configured (the .dev.vars shape)", async () => {
+    const secrets = await resolveAuthSecrets(
+      readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "", EMAIL_MODE: "log" }) as AuthEnv,
+    );
+    expect(secrets.turnstileSecretKey).toBeUndefined();
+  });
+
+  it("treats whitespace as not configured too", async () => {
+    const secrets = await resolveAuthSecrets(
+      readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "   ", EMAIL_MODE: "log" }) as AuthEnv,
+    );
+    expect(secrets.turnstileSecretKey).toBeUndefined();
+  });
+
+  it("still resolves a real value", async () => {
+    const secrets = await resolveAuthSecrets(
+      readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "0x-real" }) as AuthEnv,
+    );
+    expect(secrets.turnstileSecretKey).toBe("0x-real");
+  });
+
+  // The prod invariant this check exists for, preserved: a BINDING that resolves empty is a misconfig.
+  it("STILL throws when a Secrets Store binding resolves empty", async () => {
+    await expect(
+      resolveAuthSecrets(
+        readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: { get: async () => "" } }) as AuthEnv,
+      ),
+    ).rejects.toThrow(/turnstileSecretKey/);
   });
 });
 
@@ -308,6 +380,8 @@ describe("resolveAuthSecrets", () => {
       githubClientId: "hid",
       githubClientSecret: "hsec",
       resendApiKey: "re_key",
+      // RAW mirrors the prod shape, which always provisions Turnstile.
+      turnstileSecretKey: "0x-turnstile-secret",
     });
   });
 
@@ -327,7 +401,8 @@ describe("resolveAuthSecrets", () => {
   // TURNSTILE_SECRET_KEY is OPTIONAL (the captcha is defense-in-depth; absent → the plugin is simply not
   // wired, so local/test boot without it). When present it must resolve to a non-empty string.
   it("leaves turnstileSecretKey undefined when the secret is not configured", async () => {
-    const resolved = await resolveAuthSecrets(readAuthEnv({ ...RAW }));
+    const { TURNSTILE_SECRET_KEY: _omit, ...noTurnstile } = RAW;
+    const resolved = await resolveAuthSecrets(readAuthEnv({ ...noTurnstile, EMAIL_MODE: "log" }));
     expect(resolved.turnstileSecretKey).toBeUndefined();
   });
 

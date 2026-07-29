@@ -96,8 +96,11 @@ export function resolveEmailMode(env: {
   EMAIL_MODE?: string;
   RESEND_API_KEY?: MaybeSecret;
 }): EmailMode {
-  const mode = env.EMAIL_MODE;
-  if (mode === undefined || mode === "send") return "send";
+  // A blank value is UNSET, not a typo. `pnpm dev:secrets` writes an unconfigured key as `EMAIL_MODE=`,
+  // which arrives here as "" — treating that as an unknown mode made every app reading a generated
+  // .dev.vars throw at the request boundary, on a file our own generator produced.
+  const mode = env.EMAIL_MODE?.trim();
+  if (mode === undefined || mode === "" || mode === "send") return "send";
   if (mode !== "log") {
     throw new Error(`EMAIL_MODE must be "send" or "log" (got ${JSON.stringify(mode)})`);
   }

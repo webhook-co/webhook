@@ -22,10 +22,13 @@ pnpm dev             # start all 11 runnable apps on their pinned ports
 Then open **http://localhost:3000/dev-session** — it mints a session for the seeded user and drops you on
 the dashboard.
 
-No third-party account is needed for any of this. Magic-link emails print to your console, social login is
-skipped unless you configure it, and endpoint secrets are sealed with a local key. What that costs in
-fidelity is written down in **[docs/local-parity.md](docs/local-parity.md)** — read it before concluding
-that something is broken.
+**Local is meant to match production** — same code paths, same providers, same class of credential. With the
+team's credentials in `.dev.vars` you get real Google and GitHub OAuth, real Resend delivery, and the real
+Turnstile widget. That is a hard rule, not a nicety: see the guardrails in [`AGENTS.md`](AGENTS.md).
+
+The short list of places local still differs is **[docs/local-parity.md](docs/local-parity.md)** — read it
+before concluding something is broken. If you have no third-party credentials (an external contributor), that
+page also lists the explicit opt-outs that let you run without them.
 
 `pnpm seed` is safe to re-run, and refuses to touch any database that is not on your machine.
 

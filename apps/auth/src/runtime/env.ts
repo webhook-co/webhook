@@ -120,8 +120,10 @@ export type OAuthMode = "required" | "optional";
  * `optional` is refused outright when any OAuth secret arrives as a Secrets Store binding.
  */
 export function resolveOAuthMode(env: Record<string, unknown>): OAuthMode {
-  const mode = env.OAUTH_MODE;
-  if (mode === undefined || mode === "required") return "required";
+  // Blank is UNSET, not a typo — `.dev.vars` writes an unconfigured key as `OAUTH_MODE=`. See the same
+  // note in @webhook-co/shared/email-transport.
+  const mode = typeof env.OAUTH_MODE === "string" ? env.OAUTH_MODE.trim() : env.OAUTH_MODE;
+  if (mode === undefined || mode === "" || mode === "required") return "required";
   if (mode !== "optional") {
     throw new Error(`OAUTH_MODE must be "required" or "optional" (got ${JSON.stringify(mode)})`);
   }
@@ -216,6 +218,24 @@ export function readAuthEnv(env: Record<string, unknown>): AuthEnv {
     if (!secretPresent(env[key])) {
       throw new Error(`auth env: missing or empty required secret ${key}`);
     }
+  }
+  // The captcha gate protects the PUBLIC, email-triggering magic-link endpoint, so "mail really sends" and
+  // "the gate is configured" must not diverge. A setup that sends real transactional email with no captcha
+  // is precisely the abuse surface production is careful never to have — and it was reachable locally the
+  // moment real Resend delivery became the default.
+  //
+  // Costs production nothing: gen-wrangler-prod.mjs lists TURNSTILE_SECRET_KEY in auth's UNCONDITIONAL
+  // secrets, so a deployed Worker always has it. The escape hatch is coherent rather than a loophole —
+  // under EMAIL_MODE=log no mail leaves the machine, so there is no abuse surface to guard.
+  if (
+    resolveEmailMode(env as { EMAIL_MODE?: string }) === "send" &&
+    !secretPresent(env.TURNSTILE_SECRET_KEY)
+  ) {
+    throw new Error(
+      "auth env: TURNSTILE_SECRET_KEY is required when mail really sends — the captcha gate is what " +
+        "protects the public magic-link endpoint from being used to send mail. Configure it (the prod " +
+        "widget's domain list already includes localhost), or set EMAIL_MODE=log so no mail is sent.",
+    );
   }
   for (const key of REQUIRED_BINDINGS) {
     const binding = env[key] as HyperdriveBinding | undefined;
@@ -542,8 +562,18 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
     if (relaxedFields.has(name as keyof ResolvedAuthSecrets)) continue;
     if (value.length === 0) throw new Error(`auth env: resolved secret ${name} is empty`);
   }
-  // Turnstile is OPTIONAL: resolve it only when bound (prod). Present-but-empty is still a misconfig — fail
-  // closed rather than wire a keyless gate that would reject every magic-link send (or, worse, pass none).
+  // Turnstile is OPTIONAL: resolve it only when actually configured.
+  //
+  // A BLANK STRING means "not configured". `pnpm dev:secrets` writes every unconfigured optional secret as
+  // `TURNSTILE_SECRET_KEY=`, and treating that as present-but-broken made EVERY /api/auth/* request 500 on a
+  // .dev.vars our own generator produced — a silent, bodyless 500 with sign-in completely dead locally.
+  //
+  // A BINDING that resolves empty is a different thing entirely and still fails closed: that is a real
+  // production misconfiguration, and wiring a keyless gate would either reject every magic-link send or,
+  // worse, pass every one. The distinction is the SHAPE of the input, not the emptiness of the value.
+  if (typeof env.TURNSTILE_SECRET_KEY === "string" && env.TURNSTILE_SECRET_KEY.trim() === "") {
+    return resolved;
+  }
   if (env.TURNSTILE_SECRET_KEY !== undefined) {
     const turnstileSecretKey = await readSecretBinding(env.TURNSTILE_SECRET_KEY);
     if (turnstileSecretKey.length === 0) {

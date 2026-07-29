@@ -44,7 +44,7 @@ These are durable and rarely change. They are not bolt-ons — design for them f
 
 ## Engineering guardrails (non-negotiable, for humans and agents)
 
-These two directives are absolute. They are not style preferences — violating them is never an
+These three directives are absolute. They are not style preferences — violating them is never an
 acceptable way to "make it pass." They bind every contributor and every coding agent equally.
 
 1. **Human-UI-testing hard stop.** When a change requires human UI/visual verification that you
@@ -53,7 +53,18 @@ acceptable way to "make it pass." They bind every contributor and every coding a
    testing.** Do **not** mark the task complete, do **not** approve, and do **not** merge until a
    human has verified it. Say plainly that human verification is required and what to check.
 
-2. **Never bypass tests or weaken the gate.** Never use `git commit --no-verify` or
+2. **Local dev must not deviate from production.** If a capability is shipped in prod, it must be
+   exercisable locally with the *same* code path and the *same* class of credential. Local-only
+   substitutes (a fake transport, a stubbed provider, a mode flag that skips a step) are **not** the
+   default and are never introduced silently: they exist only where a real dependency is genuinely
+   unavailable, and each one is recorded in [`docs/local-parity.md`](docs/local-parity.md) with the
+   reason. The team's credentials for every third-party dependency already exist — **look for them before
+   inventing a substitute.** Building something new locally that prod does not have yet is fine; that is
+   the one exception, and it resolves the moment the feature ships. Silently shipping a local experience
+   that is *less* than prod is not a shortcut, it is a defect: it makes "works on my machine" unfalsifiable
+   and hides whole features from everyone who develops here.
+
+3. **Never bypass tests or weaken the gate.** Never use `git commit --no-verify` or
    `git push --no-verify`. Never add `.only`/`fdescribe`/`it.only`/`describe.only`, never skip or
    disable tests, and never lower a coverage threshold to get a green build. If tests fail, **fix
    the root cause.** The local hooks are a convenience and are bypassable; **CI required checks are
