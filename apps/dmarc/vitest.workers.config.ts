@@ -21,7 +21,15 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
-      miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
+      miniflare: {
+        bindings: {
+          TEST_MIGRATIONS: migrations,
+          // Stand-ins for the two production secrets. Obvious fakes on purpose: the alert suite stubs
+          // fetch, so a real key would be both useless and a liability in a public repo.
+          RESEND_API_KEY: "re_test_not_a_real_key",
+          ALERT_TO: "alerts@example.test",
+        },
+      },
     }),
   ],
   test: {
