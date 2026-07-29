@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "wrangler dev --port 8789 --ip 127.0.0.1",
+    "dev": "wrangler dev --port 8789 --ip 127.0.0.1 --inspector-port 9789",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

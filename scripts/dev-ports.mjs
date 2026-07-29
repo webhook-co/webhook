@@ -74,8 +74,71 @@ export const NO_LOCAL_SERVER = Object.freeze(["docs"]);
 /** The ingest apex a local endpoint's URL must point at, derived from the registry rather than restated. */
 export const LOCAL_INGEST_BASE_URL = `http://localhost:${DEV_APPS.engine.port}`;
 
+// ── The SECOND port every Worker binds ──────────────────────────────────────────────────────────────────
+//
+// `wrangler dev` also opens a DevTools inspector, and its default is 127.0.0.1:9229 — the same default for
+// every Worker. Pinning only the HTTP port therefore fixed nothing for the ninth-of-a-second race that
+// matters: all nine wrangler-backed apps tried to bind 9229, the first won, and the rest died with
+//
+//   *** Fatal uncaught kj::Exception: ... ::bind(...): Address already in use; toString() = 127.0.0.1:9229
+//
+// so `pnpm dev` could never run more than ONE Worker. The HTTP-port registry read as complete while the
+// command it existed to support was broken.
+//
+// DERIVED (+1000) rather than hand-assigned, so a new app cannot get a port here without getting an
+// inspector port too — the way the whole class of bug got in. 8787→9787 … 8794→9794, auth 3001→4001.
+
+/** The offset from an app's HTTP port to its inspector port. */
+const INSPECTOR_OFFSET = 1000;
+
 /**
- * The dev command for one app — the single place the port reaches a command line.
+ * The DevTools inspector port for an app, or null when it does not open one.
+ *
+ * `next dev` has no inspector, so `next`-kind apps get null — an inspector flag would just be a lie in the
+ * command line. Everything else is wrangler-backed (`opennext` runs wrangler under the OpenNext preview).
+ *
+ * @param {string} app
+ * @returns {number | null}
+ */
+export function inspectorPortFor(app) {
+  const spec = DEV_APPS[app];
+  if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
+  return spec.kind === "next" ? null : spec.port + INSPECTOR_OFFSET;
+}
+
+/**
+ * Every port this registry hands out, tagged with the role it serves.
+ *
+ * Both roles in one list because the invariant spans them: an inspector port that lands on some other app's
+ * HTTP port fails exactly as badly as two HTTP ports colliding, and a check over HTTP ports alone cannot
+ * see it.
+ *
+ * @param {Record<string, DevApp>} [apps]
+ * @returns {{app: string, role: "http" | "inspector", port: number}[]}
+ */
+export function portAssignments(apps = DEV_APPS) {
+  return Object.entries(apps).flatMap(([app, spec]) => [
+    { app, role: /** @type {const} */ ("http"), port: spec.port },
+    ...(spec.kind === "next"
+      ? []
+      : [{ app, role: /** @type {const} */ ("inspector"), port: spec.port + INSPECTOR_OFFSET }]),
+  ]);
+}
+
+/** Any port handed out twice, across HTTP and inspector roles both. Empty is the only acceptable answer. */
+export function duplicateAssignments(apps = DEV_APPS) {
+  /** @type {Map<number, string[]>} */
+  const seen = new Map();
+  for (const { app, role, port } of portAssignments(apps)) {
+    seen.set(port, [...(seen.get(port) ?? []), `${app}:${role}`]);
+  }
+  return [...seen.entries()]
+    .filter(([, holders]) => holders.length > 1)
+    .map(([port, holders]) => ({ port, holders }));
+}
+
+/**
+ * The dev command for one app — the single place the ports reach a command line.
  * @param {string} app
  * @returns {string}
  */
@@ -83,10 +146,11 @@ export function devCommand(app) {
   const spec = DEV_APPS[app];
   if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
   if (spec.kind === "next") return `next dev -p ${spec.port}`;
+  const inspector = `--inspector-port ${inspectorPortFor(app)}`;
   if (spec.kind === "opennext") {
-    return `opennextjs-cloudflare build && opennextjs-cloudflare preview -- --port ${spec.port} --ip 127.0.0.1`;
+    return `opennextjs-cloudflare build && opennextjs-cloudflare preview -- --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
   }
-  return `wrangler dev --port ${spec.port} --ip 127.0.0.1`;
+  return `wrangler dev --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
 }
 
 /** Ports assigned more than once. Empty is the only acceptable answer. */
