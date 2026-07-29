@@ -10,6 +10,17 @@
   // send as wbhk.my, which would force `v=spf1 include:_spf.mx.cloudflare.net ~all` onto the zone and
   // undo the Phase 3 anti-spoof posture. A Worker never sends, so wbhk.my keeps `v=spf1 -all`.
   "observability": { "enabled": true },
+  // The daily health check (src/alert.ts). Reads what ingestion wrote and alerts on three independent
+  // conditions: DMARC failures, a stale feed, and reports parsed but never stored.
+  //
+  // 09:00 UTC leaves the whole prior UTC day for reporters to deliver — Google batches per UTC day and
+  // ships the next morning, so an earlier run would routinely evaluate a window still in flight.
+  //
+  // ⚠️ Needs two SECRETS that are deliberately absent from this file (public repo):
+  //     wrangler secret put RESEND_API_KEY --name webhook-dmarc
+  //     wrangler secret put ALERT_TO       --name webhook-dmarc
+  // Without them the cron throws on send; it never fails silently.
+  "triggers": { "crons": ["0 9 * * *"] },
   "d1_databases": [
     {
       "binding": "DMARC_DB",

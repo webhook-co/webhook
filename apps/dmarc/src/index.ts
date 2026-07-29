@@ -16,11 +16,22 @@
 
 import PostalMime from "postal-mime";
 
+import {
+  DEFAULT_ALERT_CONFIG,
+  evaluateHealth,
+  formatAlert,
+  type EvaluatedRecord,
+} from "./alert.js";
 import { selectReportAttachment, type CandidateAttachment } from "./ingest.js";
+import { sendAlert } from "./notify.js";
 import { decompressReport, parseAggregateReport, ReportError } from "./report.js";
 
 export interface Env {
   DMARC_DB: D1Database;
+  /** Resend API key. A SECRET — set with `wrangler secret put`, never in wrangler.jsonc. */
+  RESEND_API_KEY: string;
+  /** Where alerts go. A SECRET too: it is a personal address and this repo is public. */
+  ALERT_TO: string;
 }
 
 /** Hard ceiling on the raw message we will buffer. Real aggregates are single-digit KB; the mailbox is
@@ -86,7 +97,127 @@ async function recordMessage(
   return res.id;
 }
 
+/** The address alerts are sent FROM. Any local part works on an already-verified Resend domain, so this
+ *  needs no capability change on `mail.webhook.co` — see the 2026-07-14 incident in the build plan. */
+const ALERT_FROM = "dmarc-alerts@mail.webhook.co";
+
+async function readState(env: Env, key: string): Promise<number | null> {
+  const row = await env.DMARC_DB.prepare(`SELECT value FROM alert_state WHERE key = ?`)
+    .bind(key)
+    .first<{ value: string }>();
+  if (!row) return null;
+  const n = Number(row.value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function writeState(env: Env, key: string, value: number): Promise<void> {
+  await env.DMARC_DB.prepare(
+    `INSERT INTO alert_state (key, value) VALUES (?, ?)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+  )
+    .bind(key, String(value))
+    .run();
+}
+
+interface HealthSnapshot {
+  records: EvaluatedRecord[];
+  latestWindowEnd: number | null;
+  brokenIngestions: number;
+  maxReportPk: number;
+  cursor: number;
+  lastStaleAlertAt: number | null;
+}
+
+/** Read everything the evaluation needs in one place, so `scheduled` stays about orchestration. */
+async function readSnapshot(env: Env): Promise<HealthSnapshot> {
+  const cursor = (await readState(env, "last_alerted_report_pk")) ?? 0;
+  const lastStaleAlertAt = await readState(env, "last_stale_alert_at");
+
+  const records = await env.DMARC_DB.prepare(
+    `SELECT r.id AS reportPk, r.org_name AS orgName, r.domain AS domain,
+            r.date_begin AS windowBegin, a.source_ip AS sourceIp, a.msg_count AS msgCount,
+            a.disposition AS disposition, a.dkim_evaluated AS dkimEvaluated,
+            a.spf_evaluated AS spfEvaluated, a.header_from AS headerFrom
+       FROM aggregate_record a
+       JOIN aggregate_report r ON r.id = a.report_pk
+      WHERE r.id > ?
+      ORDER BY r.id`,
+  )
+    .bind(cursor)
+    .all<EvaluatedRecord>();
+
+  const bounds = await env.DMARC_DB.prepare(
+    `SELECT MAX(date_end) AS latestWindowEnd, COALESCE(MAX(id), 0) AS maxReportPk
+       FROM aggregate_report`,
+  ).first<{ latestWindowEnd: number | null; maxReportPk: number }>();
+
+  // Per migration 0002 this shape means exactly one thing: parsed, then lost.
+  //
+  // status='rejected' is DELIBERATELY NOT counted. reports@wbhk.my is a public mailbox, so rejects
+  // include ordinary unsolicited mail; alerting on them would make the channel noisy for a condition
+  // that is usually not ours. Real ingestion breakage shows up in the query below regardless.
+  const broken = await env.DMARC_DB.prepare(
+    `SELECT COUNT(*) AS n FROM inbound_message
+      WHERE status = 'parsed' AND is_duplicate = 0
+        AND id NOT IN (SELECT message_id FROM aggregate_report)`,
+  ).first<{ n: number }>();
+
+  return {
+    records: records.results ?? [],
+    latestWindowEnd: bounds?.latestWindowEnd ?? null,
+    brokenIngestions: broken?.n ?? 0,
+    maxReportPk: bounds?.maxReportPk ?? 0,
+    cursor,
+    lastStaleAlertAt,
+  };
+}
+
 export default {
+  /**
+   * The daily health check (see alert.ts for WHY it watches three things and not just failures).
+   *
+   * ORDERING IS LOAD-BEARING: state advances only AFTER a successful send. If Resend is down, the cursor
+   * stays put and the next run re-evaluates the same records rather than skipping them silently.
+   */
+  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    const snapshot = await readSnapshot(env);
+    const now = Math.floor(Date.now() / 1000);
+
+    const findings = evaluateHealth(
+      {
+        now,
+        records: snapshot.records,
+        latestWindowEnd: snapshot.latestWindowEnd,
+        brokenIngestions: snapshot.brokenIngestions,
+        lastStaleAlertAt: snapshot.lastStaleAlertAt,
+      },
+      DEFAULT_ALERT_CONFIG,
+    );
+
+    if (findings.length === 0) {
+      // Still advance past the records we just cleared, so a healthy report is never re-examined.
+      if (snapshot.maxReportPk > snapshot.cursor) {
+        await writeState(env, "last_alerted_report_pk", snapshot.maxReportPk);
+      }
+      return;
+    }
+
+    const { subject, text } = formatAlert(findings, now);
+    await sendAlert(
+      { apiKey: env.RESEND_API_KEY, from: ALERT_FROM, to: env.ALERT_TO },
+      subject,
+      text,
+      (url, init) => fetch(url, init),
+    );
+
+    if (snapshot.maxReportPk > snapshot.cursor) {
+      await writeState(env, "last_alerted_report_pk", snapshot.maxReportPk);
+    }
+    if (findings.some((f) => f.kind === "stale")) {
+      await writeState(env, "last_stale_alert_at", now);
+    }
+  },
+
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
     // The forwarded copy's Authentication-Results IS the section 3 evidence: it records whether the
     // iCloud -> Cloudflare hop kept SPF or DKIM alive. Capture it whatever else happens.
