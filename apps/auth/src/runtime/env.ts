@@ -219,6 +219,24 @@ export function readAuthEnv(env: Record<string, unknown>): AuthEnv {
       throw new Error(`auth env: missing or empty required secret ${key}`);
     }
   }
+  // The captcha gate protects the PUBLIC, email-triggering magic-link endpoint, so "mail really sends" and
+  // "the gate is configured" must not diverge. A setup that sends real transactional email with no captcha
+  // is precisely the abuse surface production is careful never to have — and it was reachable locally the
+  // moment real Resend delivery became the default.
+  //
+  // Costs production nothing: gen-wrangler-prod.mjs lists TURNSTILE_SECRET_KEY in auth's UNCONDITIONAL
+  // secrets, so a deployed Worker always has it. The escape hatch is coherent rather than a loophole —
+  // under EMAIL_MODE=log no mail leaves the machine, so there is no abuse surface to guard.
+  if (
+    resolveEmailMode(env as { EMAIL_MODE?: string }) === "send" &&
+    !secretPresent(env.TURNSTILE_SECRET_KEY)
+  ) {
+    throw new Error(
+      "auth env: TURNSTILE_SECRET_KEY is required when mail really sends — the captcha gate is what " +
+        "protects the public magic-link endpoint from being used to send mail. Configure it (the prod " +
+        "widget's domain list already includes localhost), or set EMAIL_MODE=log so no mail is sent.",
+    );
+  }
   for (const key of REQUIRED_BINDINGS) {
     const binding = env[key] as HyperdriveBinding | undefined;
     if (

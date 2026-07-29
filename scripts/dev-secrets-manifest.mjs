@@ -273,7 +273,7 @@ export const APPS = {
       {
         name: "TURNSTILE_SECRET_KEY",
         scope: "external",
-        note: "Leave it UNSET locally. Unset means the captcha plugin is not wired, and the login widget renders Cloudflare's always-pass test sitekey on localhost. Wiring the test SECRET would break local login: siteverify returns hostname example.com, which the plugin's allowedHostnames pin rejects.",
+        note: "REQUIRED for prod parity, and REQUIRED whenever mail really sends (readAuthEnv refuses to boot otherwise) — the captcha gate is what protects the public magic-link endpoint from being used to send mail. Use the SAME widget prod uses: its Cloudflare domain list already includes localhost and 127.0.0.1, so the real sitekey solves locally and the real secret verifies it. The team value is in the shared credential store. Only if you cannot have it, set EMAIL_MODE=log — then no mail is sent and the gate is not needed.",
       },
     ],
   },
