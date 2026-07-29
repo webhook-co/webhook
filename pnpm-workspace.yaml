@@ -24,8 +24,16 @@ onlyBuiltDependencies:
 # pnpm 10 reads `overrides` from here (same as the settings above), not package.json.
 #   esbuild 0.28.1 -> fixes GHSA-gv7w-rqvm-qjhr (#8, high) + GHSA-g7r4-m6w7-qqqr (#7, low);
 #     within vite 8's supported "^0.27.0 || ^0.28.0", no build-API breaking changes for our targets.
-#   postcss 8.5.15 -> fixes CVE-2026-41305 / GHSA-qx2v-qp2m-jg93 (#1, medium); >= 8.5.10,
-#     dedupes with vite's existing 8.5.15 and satisfies @tailwindcss/postcss's ^8.5.10.
+#   postcss 8.5.18 -> fixes GHSA-r28c-9q8g-f849 (#32, high; `map: { prev: ... }` auto-loading follows
+#     a `sourceMappingURL` out of the source's directory, so compiling attacker-authored CSS discloses
+#     an arbitrary `.map` file) and, still, CVE-2026-41305 / GHSA-qx2v-qp2m-jg93 (#1, medium).
+#     BUMPED from 8.5.15, which this bare key was actively HOLDING at a vulnerable version — a bare pin
+#     rewrites every copy, so the stale value is a floor AND a ceiling. It had also drifted BELOW two
+#     consumers' declared ranges (@tailwindcss/postcss 4.3.3 wants ^8.5.16, vite 8.1.5 wants ^8.5.17);
+#     8.5.18 satisfies both, so this bump restores range compliance rather than straining it.
+#     NB `next` declares an EXACT `postcss: 8.4.31`, which this bare key has crossed since #1; the
+#     advisory's precondition is "processing untrusted CSS" and every stylesheet compiled here is
+#     first-party, so the residual risk is build-time only.
 # The range-scoped pins below were stranded in package.json's "pnpm.overrides" (pnpm 10 stopped
 # reading that field, silently making them inert). Moved here so they apply again. Range-scoped
 # (`name@<fixed`) so only the vulnerable versions are bumped:
@@ -50,6 +58,24 @@ onlyBuiltDependencies:
 #     expansion of consecutive `{}` groups). Only the 1.x band is vulnerable here — the tree's 2.1.2 and
 #     5.0.7 are already at/above their own fix floors, and the `<1.1.16` key deliberately leaves them
 #     alone (a wider key would drag minimatch@3 across a major). 1.1.16 satisfies its parent's ^1.1.7.
+#     DELIBERATELY NOT RETARGETED for GHSA-mh99-v99m-4gvg / CVE-2026-14257 (#33, high; unbounded
+#     expansion LENGTH — `'{a,b}'.repeat(1500)` stays under the 100k count cap while making each result
+#     ~1500 chars, exhausting memory). That advisory has ONE band, `<=5.0.7`, so it covers all three
+#     copies in this tree, but the fix must NOT be expressed as a wider key here. Upstream fixed it per
+#     major line, and the majors are NOT API-compatible: 1.x/2.x are `module.exports = expandTop` (a
+#     callable default), while 5.x is `exports.expand` (a named export, tshy dual-build). minimatch@3
+#     does `var expand = require('brace-expansion'); expand(pattern)`, so a `brace-expansion@<5.0.8` key
+#     — the only shape scripts/overrides-guard.mjs can parse — would match 1.1.16 and 2.1.3 too and
+#     break them with "expand is not a function" at lint time. Nothing to add:
+#       5.x (>=5.0.8) — the ONLY prod-reachable copy (apps/mcp -> agents -> just-bash -> minimatch@10);
+#         already at 5.0.8 in the lockfile via #808/#809/#810, and minimatch@10 calls the named export.
+#       2.x (>=2.1.3) — backported 2026-07-28 (upstream `v2` branch, "fix: backport GHSA-mh99-v99m-4gvg");
+#         already at 2.1.3. Dev-only (@redocly/openapi-core -> minimatch@5, glob@9 -> minimatch@8).
+#       1.x — NO FIX PUBLISHED. Upstream's `v1` branch still ends at 1.1.16 (2026-07-08) and 1.1.16 still
+#         defaults `max` to Infinity. Dev-only and unremovable: eslint-plugin-jsx-a11y@6.10.2 is the
+#         LATEST release and still declares minimatch ^3.1.2, and glob@7.2.3 arrives via rimraf@3.
+#         The expanded patterns are our own committed lint/glob globs, never untrusted input.
+#         Add a `brace-expansion@<1.1.17` key the moment upstream ships a v1 backport.
 #   body-parser >=1.20.6 -> fixes GHSA-v422-hmwv-36x6 / CVE-2026-12590 (#25, low; an invalid `limit`
 #     silently disables size enforcement). Only the 1.x band: express@5's body-parser@2.3.0 is already
 #     patched and the key does not match it. 1.20.6 satisfies express@4's declared ~1.20.5.
@@ -102,7 +128,7 @@ onlyBuiltDependencies:
 #   binary from every install. Drop this key once next and miniflare both ship a >=0.35 default.
 overrides:
   esbuild: 0.28.1
-  postcss: 8.5.15
+  postcss: 8.5.18
   "tmp@<0.2.6": "^0.2.6"
   "uuid@<11.1.1": "^11.1.1"
   "js-yaml@<4.3.0": "^4.3.0"
