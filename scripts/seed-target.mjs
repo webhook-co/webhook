@@ -22,6 +22,24 @@
 
 import { LOCAL_HOSTS } from "./dev-db-config.mjs";
 
+/**
+ * Refusal to seed a database that is not on this machine. Carries the offending HOST as a field.
+ *
+ * The field is not decoration: a caller (or a test) that wants to know which host was refused should read
+ * it, rather than pattern-matching the message. Substring-matching a hostname is both brittle and the exact
+ * shape CodeQL flags as incomplete URL sanitization (js/regex/missing-regexp-anchor) — a rule that is right
+ * in general even where, as here, the string being matched is an error message rather than a URL.
+ */
+export class NonLocalSeedTargetError extends Error {
+  /** @param {string} host @param {string} message */
+  constructor(host, message) {
+    super(message);
+    this.name = "NonLocalSeedTargetError";
+    /** The hostname that was refused. */
+    this.host = host;
+  }
+}
+
 /** The superuser URL `pnpm dev:db` prints. */
 export const DEFAULT_URL =
   "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev?sslmode=disable";
@@ -54,7 +72,8 @@ export function assertLocalTarget(url) {
   try {
     host = new URL(url).hostname;
   } catch {
-    throw new Error(
+    throw new NonLocalSeedTargetError(
+      "",
       "refusing to seed: the target is not a parseable connection URL. Expected something like " +
         "postgres://postgres@127.0.0.1:5432/webhook_dev",
     );
@@ -62,7 +81,8 @@ export function assertLocalTarget(url) {
   // WHATWG keeps the brackets on an IPv6 hostname; LOCAL_HOSTS holds the bare form.
   const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   if (!LOCAL_HOSTS.has(bare)) {
-    throw new Error(
+    throw new NonLocalSeedTargetError(
+      bare,
       `refusing to seed: "${host}" is not this machine.\n\n` +
         `   The seeder writes fixed-UUID orgs and endpoints, signs their audit rows with a dev key that is\n` +
         `   PUBLISHED IN THIS REPO, and hashes their ingest tokens with a published dev pepper. Against a\n` +

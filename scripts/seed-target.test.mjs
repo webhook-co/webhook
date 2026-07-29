@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { DEFAULT_URL, assertLocalTarget, resolveSeedUrl } from "./seed-target.mjs";
+import {
+  DEFAULT_URL,
+  NonLocalSeedTargetError,
+  assertLocalTarget,
+  resolveSeedUrl,
+} from "./seed-target.mjs";
 
 // `pnpm seed` writes fixed-UUID orgs, users, memberships and endpoints, signs their audit rows with a
 // PUBLISHED dev key, and hashes their ingest tokens with a PUBLISHED dev pepper. Pointed at a real database
@@ -32,14 +37,16 @@ test("REFUSES a Neon host", () => {
 });
 
 test("the refusal names the host it refused, so the mistake is obvious", () => {
-  // A predicate, not a regex. An unanchored host-shaped pattern is what CodeQL's
-  // js/regex/missing-regexp-anchor flags (HIGH), and rightly in general — it just happens to be an
-  // assertion on an error message here rather than a check on a URL. `includes` says what is meant
-  // exactly, so the rule has nothing to warn about and the assertion is more precise.
-  assert.throws(
-    () => assertLocalTarget("postgres://owner:pw@db.example.com/webhook"),
-    (err) => err.message.includes("db.example.com"),
-  );
+  // Assert on the STRUCTURED field, with exact equality. Substring-matching a hostname out of a message is
+  // brittle, and it is the shape CodeQL flags as incomplete URL sanitization — correctly in general, even
+  // though what is being matched here is an error message rather than a URL.
+  try {
+    assertLocalTarget("postgres://owner:pw@db.example.com/webhook");
+    assert.fail("expected a refusal");
+  } catch (err) {
+    assert.ok(err instanceof NonLocalSeedTargetError);
+    assert.equal(err.host, "db.example.com");
+  }
 });
 
 test("the refusal NEVER echoes the connection string — it carries a password", () => {
