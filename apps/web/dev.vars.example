@@ -12,6 +12,21 @@ AUDIT_CHAIN_HMAC_KEY=
 # GENERATED: web MINTS the dashboard live-events ticket, engine VERIFIES it. A mismatch is a dead WebSocket with no config error — the exact bug this manifest exists to prevent.
 LISTEN_TICKET_KEY=
 
+# LOCAL: See api. The dashboard's create/rotate actions build the one-time ingest URL from this.
+INGEST_BASE_URL=http://localhost:8787
+
+# LOCAL: See api.
+FREE_EVENT_CAP=5000
+
+# LOCAL: Routes org deletion through the async reaper, which is what production does (#665). The committed var is the placeholder <ASYNC_ORG_DELETION>, and the check is === "true", so locally you exercise the SYNC path — a different code path from the one that runs in prod.
+ASYNC_ORG_DELETION=true
+
+# EXTERNAL: Stripe price ids per plan. Needs a Stripe sandbox; leave blank and the plan picker does not render. Account identifiers, so never committed.
+STRIPE_PLANS=
+
+# EXTERNAL: Billing Portal configuration id from your Stripe sandbox. Leave blank unless you are exercising the portal.
+STRIPE_PORTAL_CONFIGURATION_ID=
+
 # LOCAL: Where web sends you to sign in. apps/web/src/server/env.ts:35 already assumes :3001 — but nothing binds auth to that port, so it worked only by accident of start order.
 AUTH_BASE_URL=http://localhost:3001
 
