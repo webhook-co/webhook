@@ -70,46 +70,6 @@ acceptable way to "make it pass." They bind every contributor and every coding a
    the root cause.** The local hooks are a convenience and are bypassable; **CI required checks are
    the real gate and are mandatory for everyone, including admins** — status checks have no bypass.
 
-## Tech stack
-
-| Layer | Pick |
-| --- | --- |
-| Core engine | TypeScript on Cloudflare Workers |
-| Ordering / isolation | Durable Objects, one per endpoint (FIFO + isolation) |
-| Retry scheduling | Durable Object Alarms |
-| Metadata / dedup | Neon Postgres via Hyperdrive (not D1) |
-| Payload storage | Cloudflare R2 (batched payloads) |
-| Heavy outbound delivery | Container compute behind an abstraction seam |
-| Web / dashboard | TypeScript |
-| MCP server | TypeScript on Workers |
-| CLI / tunnel client | TypeScript (Bun `--compile` binary + npm) |
-| SDKs | Generated via Speakeasy / Stainless |
-| Observability | OpenTelemetry |
-
-The core hosting/runtime is **Cloudflare-forward + TypeScript** (settled 2026-06-10). Keep the
-**container-delivery seam** intact so the heavy-outbound compute lane can change without rippling
-through the engine.
-
-## Monorepo layout
-
-Managed with **Turborepo**.
-
-```
-apps/
-  api/      # REST API
-  engine/   # core webhook engine (ingest / verify / deliver) — Workers + DO
-  web/      # dashboard
-  mcp/      # MCP server
-packages/
-  cli/           # TypeScript/Bun CLI + listen/replay-to-localhost
-  sdks/          # generated client SDKs
-  portal-sdk/    # embeddable portal SDK
-  webhooks-spec/ # Standard Webhooks signing/verification helpers
-  shared/        # shared utilities and types
-ee/         # proprietary, license-fenced code (excluded from self-host builds)
-infra/      # infrastructure and deployment configuration
-```
-
 ## Brand voice (for any user-facing copy: docs, UI, CLI output, error messages)
 
 Precise and quietly opinionated; casual-professional, writing developer-to-developer (contractions
