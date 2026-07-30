@@ -179,6 +179,16 @@ A slower server that is correct beats a fast one that silently omits half the su
 **For pure page work:** `pnpm --filter @webhook-co/auth dev:fast` runs `next dev`. It has no issuer routes,
 which is fine as long as you chose it knowingly.
 
+**Reach a `next dev` app at the host it was started on.** `127.0.0.1:<port>` and `localhost:<port>` are the
+same server but different *origins* to Next, which refuses dev-asset requests from an origin it was not
+started on. Nothing errors: the HTML, the headers and the status code are all correct, and `curl` sees a
+clean `200` — but the client bundle is refused, so React never hydrates. On `/login` that presents as a
+captcha stuck on "Verifying you're human…", which reads as a broken widget rather than a host mismatch.
+Every Next app now declares `allowedDevOrigins: ["127.0.0.1"]` so both spellings work, and
+`scripts/dev-origins-guard.mjs` (wired into `lint`) keeps it that way. Worth knowing anyway, because it is
+the sharpest example of why **`HTTP 200` is not a health check** — it cannot tell a live page from a dead
+one.
+
 ---
 
 ## Keeping this page honest
