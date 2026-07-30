@@ -313,3 +313,79 @@ test("engine and auth know where to report, and it is not a secret", () => {
     assert.equal(readProd(app).vars.HEALTH_HEARTBEAT_URL, "https://health.wbhk.my");
   }
 });
+
+// ---------------------------------------------------------------------------
+// Service bindings: the overlay INJECTS a `services` block, and two committed
+// configs (web, mcp) already carry one of their own. That produced a config with
+// the key TWICE, and which block wins is then a property of whoever parses it:
+// wrangler took the FIRST (all 10 on web), `JSON.parse` takes the LAST (1 on web).
+//
+// Nothing was broken in production — verified with `wrangler types`, which
+// resolved all ten. But the correctness of a deploy rested on undefined-by-spec
+// duplicate-key handling in a third-party parser. If wrangler ever switched to
+// last-wins, `apps/web` would silently deploy with ONE service binding instead of
+// ten, and every feature behind the other nine would fail at call time with a
+// green deploy. So the generator now emits exactly one merged block.
+
+/** Raw text of a generated config — structural facts JSON.parse would hide. */
+function readProdRaw(app) {
+  return readFileSync(join(REPO, "apps", app, "wrangler.prod.jsonc"), "utf8");
+}
+
+/** The `binding` names inside the FIRST services array of some JSONC text. */
+function serviceBindings(raw) {
+  const at = raw.search(/"services"\s*:\s*\[/);
+  if (at < 0) return [];
+  const open = raw.indexOf("[", at);
+  let depth = 0;
+  let end = open;
+  for (let i = open; i < raw.length; i++) {
+    if (raw[i] === "[") depth++;
+    else if (raw[i] === "]" && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  return [...raw.slice(open, end + 1).matchAll(/"binding"\s*:\s*"([^"]+)"/g)].map((m) => m[1]);
+}
+
+function committedBindings(app) {
+  return serviceBindings(readFileSync(join(REPO, "apps", app, "wrangler.jsonc"), "utf8"));
+}
+
+test("no generated config declares `services` more than once", () => {
+  gen();
+  for (const app of APPS) {
+    const count = (readProdRaw(app).match(/"services"\s*:/g) ?? []).length;
+    assert.ok(count <= 1, `${app}: ${count} services keys — which one wins is parser-dependent`);
+  }
+});
+
+// Anti-vacuity for the merge test below: if NO config committed a services block,
+// "the merge preserves committed bindings" would hold by having nothing to preserve.
+test("at least one committed config carries a services block (else the merge test is vacuous)", () => {
+  const withServices = APPS.filter((a) => committedBindings(a).length > 0);
+  assert.ok(withServices.length > 0, "no committed services block found anywhere");
+});
+
+test("the merge drops nothing that was committed", () => {
+  gen();
+  for (const app of APPS) {
+    const merged = serviceBindings(readProdRaw(app));
+    for (const b of committedBindings(app)) {
+      assert.ok(merged.includes(b), `${app}: committed binding ${b} vanished from the prod config`);
+    }
+  }
+});
+
+test("web, api and mcp each keep their full injected binding set", () => {
+  gen();
+  assert.equal(serviceBindings(readProdRaw("web")).length, 10);
+  assert.equal(serviceBindings(readProdRaw("api")).length, 4);
+  assert.equal(serviceBindings(readProdRaw("mcp")).length, 4);
+  // and no binding is listed twice after merging
+  for (const app of ["web", "api", "mcp"]) {
+    const b = serviceBindings(readProdRaw(app));
+    assert.equal(new Set(b).size, b.length, `${app}: duplicate binding names after merge`);
+  }
+});

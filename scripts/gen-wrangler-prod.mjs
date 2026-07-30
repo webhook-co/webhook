@@ -467,6 +467,60 @@ const APPS = {
   },
 };
 
+/**
+ * Find the committed `services` array in a JSONC config.
+ *
+ * Returns its parsed entries plus the text with that block removed, so the generator can emit exactly ONE
+ * `services` key. Brace-counted rather than regex-matched: the array contains nested objects, and a lazy
+ * regex would stop at the first `]` inside one.
+ *
+ * @returns {{entries: {binding: string, service: string, entrypoint?: string}[], without: string}}
+ */
+function extractServices(txt) {
+  const at = txt.search(/"services"\s*:\s*\[/);
+  if (at < 0) return { entries: [], without: txt };
+  const open = txt.indexOf("[", at);
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < txt.length; i++) {
+    if (txt[i] === "[") depth++;
+    else if (txt[i] === "]" && --depth === 0) {
+      close = i;
+      break;
+    }
+  }
+  if (close < 0) throw new Error("unterminated services array in committed wrangler.jsonc");
+  const body = txt
+    .slice(open, close + 1)
+    .replace(/\/\/.*$/gm, "")
+    .replace(/,\s*([}\]])/g, "$1");
+  let entries;
+  try {
+    entries = JSON.parse(body);
+  } catch (err) {
+    throw new Error(`could not parse the committed services block: ${err.message}`, { cause: err });
+  }
+  let end = close + 1;
+  while (end < txt.length && /[\s,]/.test(txt[end])) {
+    const wasComma = txt[end] === ",";
+    end++;
+    if (wasComma) break;
+  }
+  return { entries, without: txt.slice(0, at) + txt.slice(end) };
+}
+
+/**
+ * Union two service-binding lists by `binding` name. The injected entry wins a conflict — it is the deploy's
+ * own view of the target Worker — but a committed binding the injected table does not mention is KEPT, so
+ * merging can never silently drop one.
+ */
+function mergeServices(injected, committed) {
+  const byBinding = new Map();
+  for (const e of committed) byBinding.set(e.binding, e);
+  for (const e of injected) byBinding.set(e.binding, e);
+  return [...byBinding.values()];
+}
+
 // An OPTIONAL binding block in a committed wrangler.jsonc, wrapped in `// @gen-optional <ID>` … `// @gen-end
 // <ID>` sentinels (each committed array element already carries its own trailing comma, so the block is
 // self-contained). When the id env var is PROVISIONED → drop the two sentinel lines + substitute the id, so
@@ -518,15 +572,32 @@ for (const [app, cfg] of Object.entries(APPS)) {
   if (survived.length)
     throw new Error(`${app}: tokens leaked unreplaced into prod config: ${survived.join(", ")}`);
 
+  // 1c) MERGE the committed `services` block into the injected one, and delete the committed copy.
+  //
+  // Most bindings are deploy-injected so the target Worker can be brought live first (Cloudflare rejects
+  // an upload naming a Worker that does not exist yet, so committing them all would block a cold deploy).
+  // But `apps/web` and `apps/mcp` each already commit ONE binding, and injecting on top of that produced a
+  // config carrying `"services"` TWICE. Which block then wins is a property of whoever parses it: wrangler
+  // takes the FIRST (all ten on web), `JSON.parse` takes the LAST (one on web).
+  //
+  // Production was never broken by this — `wrangler types` against the generated config resolves all ten.
+  // The problem is that the deploy's correctness rested on undefined-by-spec duplicate-key handling in a
+  // third-party parser. Had wrangler switched to last-wins, web would have deployed with a single service
+  // binding and every feature behind the other nine would have failed at call time, with a green deploy.
+  //
+  // So: one key, union by binding name, and the injected entry wins a conflict (it is the deploy's own
+  // view of the target). A committed binding absent from the injected table is KEPT, not dropped.
+  const committed = extractServices(txt);
+  if (committed.entries.length > 0) txt = committed.without;
+  const services = mergeServices(cfg.services ?? [], committed.entries);
+
   // 2) inject the per-environment top-level keys right after the opening brace (JSONC tolerates it).
   const inject = {
     account_id: ACCOUNT_ID,
     workers_dev: false,
     routes: [{ pattern: cfg.domain, custom_domain: true }],
     secrets_store_secrets: secretsBlock(cfg.secrets),
-    // Service bindings (only mcp's AUTH_ISSUER today) — deploy-injected so the binding target Worker can be
-    // brought live first (CF late-binds a referenced service; committing it would block a cold deploy).
-    ...(cfg.services ? { services: cfg.services } : {}),
+    ...(services.length > 0 ? { services } : {}),
   };
   const block = Object.entries(inject)
     .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`)
