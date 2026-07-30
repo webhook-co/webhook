@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { CALLING_APPS, devConfigFor } from "./gen-wrangler-dev.mjs";
+import { readFileSync } from "node:fs";
+
 import { extractServices, SERVICE_BINDINGS } from "./wrangler-services.mjs";
 
 // The dev overlay exists because the service bindings are deliberately NOT committed: Cloudflare rejects
@@ -59,4 +61,58 @@ test("the output is marked generated, so nobody edits it by hand", () => {
 // still pass on a committed config that happened to carry the bindings already.
 test("an app that calls nobody produces no config at all", () => {
   assert.equal(devConfigFor("engine", MINIMAL), null);
+});
+
+// --- Real committed configs, not fixtures -------------------------------------------------
+// The fixtures above are minimal by design, and that hid a real defect: two committed configs carry a
+// DOCUMENTATION comment showing the overlay's own `"services": [...]` line, and the extractor matched it
+// and parsed a COMMENT as configuration. It then stripped the array out of that comment, leaving
+// `//   // Tests don't exercise…` in the generated file. Fixtures could never have caught it.
+
+test("every real committed config roundtrips to the right bindings", () => {
+  for (const app of CALLING_APPS) {
+    const committed = readFileSync(
+      new URL(`../apps/${app}/wrangler.jsonc`, import.meta.url),
+      "utf8",
+    );
+    const out = devConfigFor(app, committed);
+    const { entries } = extractServices(out);
+    assert.deepEqual(
+      entries,
+      SERVICE_BINDINGS[app],
+      `${app}: the generated dev config does not carry exactly the declared bindings`,
+    );
+  }
+});
+
+test("a `services` line inside a COMMENT is not a committed block", () => {
+  const commented =
+    '{\n  "name": "webhook-api",\n' +
+    "  // the deploy overlay adds:\n" +
+    '  //   "services": [{ "binding": "DOC_ONLY", "service": "webhook-engine", "entrypoint": "Doc" }]\n' +
+    '  "main": "src/index.ts"\n}\n';
+  const out = devConfigFor("api", commented);
+  const { entries } = extractServices(out);
+  assert.ok(
+    !entries.some((e) => e.binding === "DOC_ONLY"),
+    "a binding named only in a comment was injected as real configuration",
+  );
+  assert.equal(entries.length, SERVICE_BINDINGS.api.length);
+  // …and the comment itself must survive intact.
+  assert.ok(
+    out.includes('//   "services": [{ "binding": "DOC_ONLY"'),
+    "the documentation comment was mangled",
+  );
+});
+
+test("no committed config declares a REAL services block today", () => {
+  // If one ever does, the merge path starts mattering — and this test says so rather than letting it
+  // pass silently. (Both current matches are documentation comments; see above.)
+  for (const app of CALLING_APPS) {
+    const committed = readFileSync(
+      new URL(`../apps/${app}/wrangler.jsonc`, import.meta.url),
+      "utf8",
+    );
+    assert.deepEqual(extractServices(committed).entries, [], `${app} now commits a services block`);
+  }
 });

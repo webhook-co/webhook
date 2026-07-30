@@ -153,24 +153,83 @@ export function serviceBindingsFor(app) {
  *
  * @returns {{entries: {binding: string, service: string, entrypoint?: string}[], without: string}}
  */
+/**
+ * Blank out JSONC comments, preserving length so indices into the result also index the original.
+ *
+ * Load-bearing: two committed configs carry a DOCUMENTATION comment that shows the overlay's own
+ * `"services": [...]` line. Searching the raw text finds that comment and parses it as configuration —
+ * which is how the generator came to strip an array out of a comment and leave `//   // Tests don't…`
+ * in the generated file. A comment must never be read as config.
+ */
+function blankComments(txt) {
+  let out = "";
+  let i = 0;
+  let inString = false;
+  while (i < txt.length) {
+    const c = txt[i];
+    if (inString) {
+      if (c === "\\") {
+        out += txt.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
+      if (c === '"') inString = false;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === "/" && txt[i + 1] === "/") {
+      while (i < txt.length && txt[i] !== "\n") {
+        out += " ";
+        i++;
+      }
+      continue;
+    }
+    if (c === "/" && txt[i + 1] === "*") {
+      const end = txt.indexOf("*/", i + 2);
+      const stop = end < 0 ? txt.length : end + 2;
+      for (let j = i; j < stop; j++) out += txt[j] === "\n" ? "\n" : " ";
+      i = stop;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Find the committed `services` array in a JSONC config.
+ *
+ * Returns its parsed entries plus the text with that block removed, so a generator can emit exactly ONE
+ * `services` key. Comments are blanked before searching — a documentation comment showing a `"services"`
+ * line is not a committed block. Brace-counted rather than regex-matched: the array contains nested
+ * objects, and a lazy regex would stop at the first `]` inside one.
+ *
+ * @returns {{entries: {binding: string, service: string, entrypoint?: string}[], without: string}}
+ */
 export function extractServices(txt) {
-  const at = txt.search(/"services"\s*:\s*\[/);
+  const masked = blankComments(txt);
+  const at = masked.search(/"services"\s*:\s*\[/);
   if (at < 0) return { entries: [], without: txt };
-  const open = txt.indexOf("[", at);
+  const open = masked.indexOf("[", at);
   let depth = 0;
   let close = -1;
-  for (let i = open; i < txt.length; i++) {
-    if (txt[i] === "[") depth++;
-    else if (txt[i] === "]" && --depth === 0) {
+  for (let i = open; i < masked.length; i++) {
+    if (masked[i] === "[") depth++;
+    else if (masked[i] === "]" && --depth === 0) {
       close = i;
       break;
     }
   }
   if (close < 0) throw new Error("unterminated services array in committed wrangler.jsonc");
-  const body = txt
-    .slice(open, close + 1)
-    .replace(/\/\/.*$/gm, "")
-    .replace(/,\s*([}\]])/g, "$1");
+  const body = masked.slice(open, close + 1).replace(/,\s*([}\]])/g, "$1");
   let entries;
   try {
     entries = JSON.parse(body);
