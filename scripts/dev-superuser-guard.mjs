@@ -16,7 +16,7 @@
 //
 // Run: node scripts/dev-superuser-guard.mjs
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -59,12 +59,16 @@ function discover() {
   const found = [];
   for (const app of readdirSync(APPS_DIR).sort()) {
     const path = join(APPS_DIR, app, "wrangler.jsonc");
+    // Read directly rather than stat-then-read: a `statSync` guard is a check-then-use window (the file
+    // can change between the two calls) and buys nothing here — a missing file and a directory both throw
+    // on read, which is the same "not a Worker app" answer the stat was being asked for.
+    let text;
     try {
-      if (!statSync(path).isFile()) continue;
+      text = readFileSync(path, "utf8");
     } catch {
       continue;
     }
-    found.push(...bindingsIn(app, readFileSync(path, "utf8")));
+    found.push(...bindingsIn(app, text));
   }
   return found;
 }
