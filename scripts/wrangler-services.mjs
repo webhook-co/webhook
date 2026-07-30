@@ -161,7 +161,7 @@ export function serviceBindingsFor(app) {
  * which is how the generator came to strip an array out of a comment and leave `//   // Tests don't…`
  * in the generated file. A comment must never be read as config.
  */
-function blankComments(txt) {
+export function blankComments(txt) {
   let out = "";
   let i = 0;
   let inString = false;
