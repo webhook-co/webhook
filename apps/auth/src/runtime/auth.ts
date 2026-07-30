@@ -30,6 +30,7 @@ import { resolveEmailMode } from "@webhook-co/shared/email-transport";
 
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
+import { withNameBackfill } from "./name-backfill-hooks";
 import {
   APP_BASE_URL,
   MAGIC_LINK_FROM,
@@ -214,7 +215,13 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
     // Compose the account OAuth-token stripping (data minimization — see account-token-hooks.ts) into the
     // signup→bootstrap hooks here, so EVERY auth instance persists no provider tokens regardless of caller.
-    databaseHooks: withAccountTokenStripping(deps.databaseHooks),
+    //
+    // The name back-fill composes INSIDE the token stripping, so stripping stays the outermost and last
+    // word on the account model (it is authoritative and non-negotiable), while the back-fill owns
+    // `user.create.before`. Both spread shallowly, so the bootstrap's `user.create.after` — the personal-org
+    // provisioning — survives by reference through both wrappers. See name-backfill-hooks.ts for why the
+    // back-fill is needed at all: the one-tap plugin bypasses `mapProfileToUser` entirely.
+    databaseHooks: withAccountTokenStripping(withNameBackfill(deps.databaseHooks)),
     advanced: {
       // On Workers the TCP peer is Cloudflare's edge, not the client, so Better Auth's rate limiter must
       // read the trusted client-IP header or it falls back to ONE shared per-path bucket (every caller

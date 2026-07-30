@@ -280,6 +280,45 @@ describe("buildAuthConfig", () => {
     expect(stripped).toEqual({ data: { accessToken: null, refreshToken: null, idToken: null } });
   });
 
+  it("composes the name back-fill into EVERY auth instance, without displacing the bootstrap hook", async () => {
+    // The one-tap plugin never calls mapProfileToUser, so without this hook One Tap signups land with
+    // firstName/lastName NULL — worse data than the Google button. Wiring it in buildAuthConfig (rather
+    // than in makeBootstrapHooks) is what makes that true for every caller, so this asserts the wiring
+    // rather than the hook's own behaviour, which name-backfill-hooks.test.ts covers.
+    const userAfter = vi.fn();
+    const databaseHooks = { user: { create: { after: userAfter } } } as never;
+    const hooks = buildAuthConfig(input(), cfgDeps({ databaseHooks })).databaseHooks;
+
+    expect(typeof hooks?.user?.create?.before).toBe("function");
+    // Composition must not cost the bootstrap hook — a lost create.after means signups get no org at all.
+    expect(hooks?.user?.create?.after).toBe(userAfter);
+
+    const filled = await hooks?.user?.create?.before?.(
+      { email: "ada@example.dev", name: "Ada Lovelace" } as never,
+      null as never,
+    );
+    expect(filled).toEqual({ data: { firstName: "Ada", lastName: "Lovelace" } });
+  });
+
+  it("writes the SAME columns for a One Tap signup as mapProfileToUser writes for the button", async () => {
+    // The cross-path invariant, asserted through the real config object: the same human must not get
+    // different columns depending on which Google affordance they used.
+    const config = buildAuthConfig(input(), cfgDeps());
+    const google = config.socialProviders?.google as {
+      mapProfileToUser: (p: { given_name?: string; family_name?: string }) => unknown;
+    };
+    const profile = { given_name: "Ada", family_name: "Lovelace" };
+
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const token = `${b64({ alg: "RS256" })}.${b64({ email: "ada@example.dev", ...profile })}.sig`;
+    const viaOneTap = await config.databaseHooks?.user?.create?.before?.(
+      { email: "ada@example.dev", name: "Ada Lovelace" } as never,
+      { path: "/one-tap/callback", body: { idToken: token } } as never,
+    );
+
+    expect(viaOneTap).toEqual({ data: google.mapProfileToUser(profile) });
+  });
+
   it("does NOT enable storeAccountCookie (it would seed a cookie from in-memory tokens, bypassing the DB strip)", () => {
     // The stripping hook nulls tokens on DB write; storeAccountCookie would put the fresh in-memory provider
     // tokens into a cookie on re-auth — an exposure the DB strip can't reach. Keep it off.
