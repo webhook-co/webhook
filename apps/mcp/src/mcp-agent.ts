@@ -111,6 +111,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     "Create a webhook endpoint and return its ingest URL. The URL contains a secret token, so treat it as a credential — but it is NOT one-time: it can be re-read any time with endpoints.revealIngestUrl (or in the dashboard), so never tell the user this is their only chance to save it.",
   "endpoints.delete":
     "DESTRUCTIVE: permanently soft-delete a webhook endpoint by id. Its ingest URL stops accepting new events and it is removed from listings; captured events are retained but the endpoint can no longer receive new ones. Confirm with the user before calling.",
+  "endpoints.update":
+    "Change a webhook endpoint's DEDUPLICATION config by id. That is the only thing it changes — it does not rename an endpoint, and it never touches the ingest URL. `dedupConfig` is required and REPLACES the current config wholesale: there is no merge and no history, so send the complete config you want and read the current one with endpoints.get first if you are only changing part of it. Modes: `identifier` (the id ladder — webhook-id header, then the provider's event id, then a content hash), `content` (hash the body), `fields` (hash only the field paths you name, max 16), or `off`. Passing null is the same as `off`: every request is logged. Over-collapsing silently DROPS distinct events, so widen a window or narrow a field set deliberately, not by guessing.",
   "endpoints.rotate":
     "DESTRUCTIVE: rotate a webhook endpoint's ingest URL by id — mints a NEW URL and revokes the old one. Use it for a LEAKED URL: a merely forgotten one can be re-read with endpoints.revealIngestUrl instead, with no rotation and no downtime. The endpoint id, name, and captured events are kept, but the old URL stops accepting events immediately, so any sender still posting to it breaks until repointed. The new URL is a credential but is NOT one-time — it stays re-readable. Confirm with the user before calling.",
   "endpoints.revealIngestUrl":
@@ -174,12 +176,32 @@ function inputSchema(cap: AnyCapability): z.ZodTypeAny {
  * nothing. Throwing at registration turns "someone added a capability and forgot the copy" into a
  * failing boot in CI instead of a silently degraded listing.
  */
-function toolTitle(cap: AnyCapability): string {
+export function toolTitle(cap: AnyCapability): string {
   const title = TOOL_TITLES[cap.name];
   if (title === undefined || title.trim() === "") {
     throw new Error(`mcp: no TOOL_TITLES entry for "${cap.name}" — add one before binding it`);
   }
   return title;
+}
+
+/**
+ * The tool description, with the SAME contract as the title: a missing entry throws rather than falling
+ * back to something that merely exists.
+ *
+ * It used to be `TOOL_DESCRIPTIONS[cap.name] ?? cap.name`, and `endpoints.update` therefore shipped with
+ * its description set to the literal string "endpoints.update". That is worse than the title case it was
+ * modelled against, because the description is the field a MODEL reads when deciding whether to call the
+ * tool — a name-shaped description tells it nothing while passing every presence check.
+ */
+export function toolDescription(cap: AnyCapability): string {
+  const description = TOOL_DESCRIPTIONS[cap.name];
+  if (description === undefined || description.trim() === "") {
+    throw new Error(
+      `mcp: no TOOL_DESCRIPTIONS entry for "${cap.name}" — add one before binding it. The description ` +
+        `is what the model reads to decide whether to call this tool; there is no useful fallback.`,
+    );
+  }
+  return description;
 }
 
 /**
@@ -264,7 +286,7 @@ export class WebhookMcp extends McpAgent<McpEnv> {
         cap.name,
         {
           title: toolTitle(cap),
-          description: TOOL_DESCRIPTIONS[cap.name] ?? cap.name,
+          description: toolDescription(cap),
           inputSchema: inputSchema(cap),
           annotations: toolAnnotations(cap),
         },

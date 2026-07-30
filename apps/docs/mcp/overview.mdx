@@ -19,7 +19,7 @@ At the server it's bearer auth only — a `whk_` API key or an OAuth access toke
 
 Every session id is HMAC-bound to the principal that initialized it. Replaying a captured session id under a different principal is rejected before any tool runs — a stolen session is not a usable session.
 
-## The 21 tools
+## The 22 tools
 
 The catalog is _derived_ from the same capability contract the API, CLI, and dashboard bind — surfaces can't drift, because there's one definition per capability and one shared handler. Each tool is scope-gated by that handler (an MCP bearer has no edge to lean on, so the handler's scope check is the sole gate). A fault becomes a clean, closed-taxonomy error result, and internals go to logs — never to the caller.
 
@@ -30,8 +30,8 @@ One case is answered before the handler runs, and so sits outside that taxonomy:
     `endpoints.list` · `endpoints.get` · `endpoints.create` · `endpoints.update` · `endpoints.delete` · `endpoints.rotate` · `endpoints.revealIngestUrl` · `endpoints.addProviderSecret` · `endpoints.listProviderSecrets` · `endpoints.revokeProviderSecret`
   </Card>
 
-<Card title="Events (3)" icon="inbox">
-  `events.list` · `events.get` · `events.tail`
+<Card title="Events (4)" icon="inbox">
+  `events.list` · `events.get` · `events.tail` · `events.delete`
 </Card>
 
 <Card title="Triggers (4)" icon="bell">
@@ -51,9 +51,9 @@ One case is answered before the handler runs, and so sits outside that taxonomy:
   </Card>
 </CardGroup>
 
-The write tools (`endpoints.create/update/delete/rotate`, the reveal and provider-secret tools, `triggers.create/revoke`) require a write scope; the rest need only the matching read scope. A read-only key can browse and wait, but can't mutate anything.
+The write tools (`endpoints.create/update/delete/rotate`, the reveal and provider-secret tools, `triggers.create/revoke`) require a write scope; the rest need only the matching read scope. `events.delete` is separate again: it takes `events:delete`, redacts and purges a single event, and does **not** reduce metered usage — deleting an event you were billed for does not un-bill it. A read-only key can browse and wait, but can't mutate anything.
 
-There's also an identity tool, `whoami`, that returns your organization, user, and granted scopes — plus your name and email when the OAuth `profile` scope was granted (see [how authorization works](/mcp/authorization)). It's identity, not a scope-gated capability, so it isn't counted among the 21.
+There's also an identity tool, `whoami`, that returns your organization, user, and granted scopes — plus your name and email when the OAuth `profile` scope was granted (see [how authorization works](/mcp/authorization)). It's identity, not a scope-gated capability, so it isn't counted among the 22.
 
 ## What's deliberately _not_ here
 
