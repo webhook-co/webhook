@@ -13,7 +13,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev:db": "scripts/dev-db.sh",
-    "dev": "turbo run dev --filter='./apps/*' --concurrency=12",
+    "dev": "node scripts/dev-preflight.mjs && turbo run dev --filter='./apps/*' --concurrency=12",
     "dev:secrets": "node scripts/dev-secrets.mjs",
     "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run no-early-db-close && pnpm run cap-cron-sync-guard && pnpm run cron-dispatch-guard && pnpm run subrequest-budget-guard && pnpm run deploy-token-pr-guard && pnpm run hyperdrive-binding-guard && pnpm run tracing-safety-guard && pnpm run remote-db-test-guard && pnpm run workflow-timeout-guard && pnpm run overrides-guard && pnpm run adr-no-dup && pnpm run docs-nav-guard && pnpm run docs-structured-data-guard && pnpm run content-dup-guard && pnpm run readyz-coverage-guard && pnpm run deploy-env-parity-guard && pnpm run mcp-registry-guard && pnpm run trigger-copy-guard && pnpm run plugin-manifest-guard && pnpm run plugin-test-cases-guard && pnpm run dev-mode-guard && pnpm run dev-secrets-guard && pnpm run dev-flag-parity-guard && pnpm run dev-ports-guard && pnpm run dev-origins-guard && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
@@ -60,7 +60,8 @@
     "dev-mode-guard": "node scripts/dev-mode-guard.mjs",
     "seed": "tsx scripts/seed.ts",
     "dev-ports-guard": "node scripts/dev-ports-guard.mjs",
-    "dev-origins-guard": "node scripts/dev-origins-guard.mjs"
+    "dev-origins-guard": "node scripts/dev-origins-guard.mjs",
+    "dev-preflight": "node scripts/dev-preflight.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.19.0",
