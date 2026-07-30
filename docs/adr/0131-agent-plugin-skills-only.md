@@ -1,6 +1,15 @@
 # ADR 0131 — the agent plugin ships skills only, and does not reference the MCP server
 
-- status: accepted
+> **Superseded by [ADR-0132](0132-agent-plugin-ships-mcp.md) (2026-07-29).** Two corrections, kept here
+> rather than edited away. First, the mutual-exclusivity premise below is **factually wrong**: 8 of the
+> 180 curated plugins ship skills and `mcpServers` together, the spec's own sample manifest carries
+> both, and `mcp_configuration_excluded` appears nowhere in the shipped tooling. Second, the
+> data-handling argument was a judgement the founder has since ruled the other way — the ingest URL and
+> raw captured headers/bodies are not personal data or auth secrets in the sense that requirement means.
+> The reasoning below is preserved because a guard was built to enforce the wrong invariant, and a wrong
+> invariant with a passing test is indistinguishable from a right one.
+
+- status: superseded by [ADR-0132](0132-agent-plugin-ships-mcp.md)
 - date: 2026-07-28
 - scope: `plugin/webhook-co`, `.agents/plugins/marketplace.json`, `scripts/plugin-manifest-guard.mjs`
 

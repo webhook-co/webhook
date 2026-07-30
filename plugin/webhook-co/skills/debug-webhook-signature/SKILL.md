@@ -130,8 +130,10 @@ use seconds. Treating milliseconds as seconds puts every timestamp ~50,000 years
 Be straight with the user about the boundary:
 
 - It verifies bytes they already have. It cannot receive traffic, and it has no URL.
-- It cannot show past deliveries, replay an event, or forward anything to localhost — those need a
-  service, and webhook.co is one, but that is a separate step and not what this skill does.
+- It cannot show past deliveries, replay an event, or forward anything to localhost. Those need a
+  service holding the traffic. This plugin also ships webhook.co's MCP tools, which do exactly that —
+  but they need an account and will ask to sign in, so offer them as a next step rather than a
+  substitute. Everything above works with neither.
 - 6 providers need a key fetched from the provider at verification time and cannot be checked fully
   offline.
 - 14 providers compare a static shared token or Basic credential rather than a signature. Verifying one proves the

@@ -20,6 +20,11 @@
     // `<FREE_EVENT_CAP>` placeholder is DEPLOY-INJECTED by the overlay (optional FREE_EVENT_CAP GH var);
     // unset → "" → uncapped (fail-safe). Must equal the engine's FREE_EVENT_CAP. `wrangler dev` → uncapped.
     "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
+    // OPENAI_APPS_CHALLENGE_TOKEN (ADR-0132): the domain-verification token served verbatim at
+    // /.well-known/openai-apps-challenge. DEPLOY-INJECTED by the overlay (optional GH var); unset → "" →
+    // the route 404s, the right posture when no submission is in flight. Not a secret — the endpoint
+    // publishes it to anyone who asks; it proves host control and grants nothing.
+    "OPENAI_APPS_CHALLENGE_TOKEN": "<OPENAI_APPS_CHALLENGE_TOKEN>",
   },
   // The McpAgent runs as a Durable Object (SQLite-backed). `WebhookMcp.serve("/mcp")` resolves the
   // namespace by the default binding name MCP_OBJECT; the class is exported from src/index.ts.

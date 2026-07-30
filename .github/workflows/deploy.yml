@@ -70,6 +70,10 @@ jobs:
       FREE_EVENT_CAP: ${{ vars.FREE_EVENT_CAP }}
       # ORPHAN_SWEEP_DELETE (S6c-iii) — "true" enables the orphan-sweep delete; unset/anything else = count-only.
       ORPHAN_SWEEP_DELETE: ${{ vars.ORPHAN_SWEEP_DELETE }}
+      # OPENAI_APPS_CHALLENGE_TOKEN (ADR-0132) — the plugin-directory domain-verification token mcp serves at
+      # /.well-known/openai-apps-challenge. OPTIONAL; unset → "" → the route 404s (correct with no submission
+      # in flight). Not a secret: the endpoint publishes it unauthenticated, and it proves host control only.
+      OPENAI_APPS_CHALLENGE_TOKEN: ${{ vars.OPENAI_APPS_CHALLENGE_TOKEN }}
       # Billing (S4.4/S4.5) — all OPTIONAL; unset → dark (the generator strips the Hyperdrive/secret bindings
       # and empties the vars). BILLING_MODE gates the api inbound webhook + the engine meter-reporter + the
       # engine's STRIPE_SECRET_KEY / api's STRIPE_WEBHOOK_SIGNING_SECRET secret-store bindings.

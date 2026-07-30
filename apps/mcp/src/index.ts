@@ -151,6 +151,9 @@ async function buildResourceDeps(
     },
     resourceMetadata: RESOURCE_METADATA,
     prmPath: PRM_PATH,
+    // The plugin-directory domain-verification token (ADR-0132). Passed straight through: the router treats
+    // unset/blank as unconfigured and 404s, so a dark deploy needs no special-casing here.
+    appsChallengeToken: env.OPENAI_APPS_CHALLENGE_TOKEN,
     serveMcp: (request, serveEnv, ctx) =>
       serveMcpAgent.fetch(request, serveEnv as McpEnv, ctx as ExecutionContext),
     // The McpAgent reads the principal off the execution context at session init (the same contract the

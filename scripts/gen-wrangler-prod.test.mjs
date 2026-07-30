@@ -216,6 +216,12 @@ test("every billing env var the generator reads is forwarded by its deploy workf
   );
 });
 
+// The BILLING-scoped forwarding test above cannot fail for a var outside that set — the "a gate whose
+// input is scoped cannot fail" shape. The DISCOVERING version of that check (every optional
+// `process.env` var the generator reads is forwarded by some workflow) lives in
+// scripts/deploy-env-parity-guard.mjs, which already discovers the workflows that run the generator
+// instead of hardcoding three filenames the way a copy here would.
+
 test("STRIPE_METER_ID + the transport Hyperdrive: bound when provisioned, stripped when dark", () => {
   // Provisioned: the meter id lands as an engine var and the transport Hyperdrive binding is present.
   gen({

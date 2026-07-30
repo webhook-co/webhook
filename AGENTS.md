@@ -84,10 +84,13 @@ This repo ships a "company-as-agents" governance layer. Cursor reads `.cursor/`;
 `.claude/` (mirrored skills and agents) plus this file via `CLAUDE.md`.
 
 Separately, `plugin/webhook-co/` is an artifact we **publish outward** rather than guidance we consume:
-a skills-only agent plugin for OpenAI's directory (shared by ChatGPT and Codex), surfaced locally
-through `.agents/plugins/marketplace.json`. It is deliberately skills-only and carries no MCP server,
-no apps and no hooks — see [ADR-0131](docs/adr/0131-agent-plugin-skills-only.md) for why, and
-`scripts/plugin-manifest-guard.mjs` (wired into `lint`) for the invariants that keep it that way.
+an agent plugin for OpenAI's directory (shared by ChatGPT and Codex), surfaced locally through
+`.agents/plugins/marketplace.json`. It ships **one skill plus the remote MCP server** (`.mcp.json` →
+`https://mcp.webhook.co/mcp`) and carries no apps and no hooks — see
+[ADR-0132](docs/adr/0132-agent-plugin-ships-mcp.md) for why (it supersedes ADR-0131, which had it
+skills-only on a premise that turned out to be false), and `scripts/plugin-manifest-guard.mjs` (wired
+into `lint`) for the invariants that keep it that way. The skill is load-bearing, not decoration: it is
+the only part that works with no account and no OAuth.
 
 **Rules** — `.cursor/rules/*.mdc` (auto-attached by scope):
 

@@ -64,6 +64,16 @@ export interface McpEnv {
    * MUST match the engine + api FREE_EVENT_CAP (same GH var into every worker).
    */
   FREE_EVENT_CAP?: string;
+  /**
+   * The OpenAI plugin-directory domain-verification token, served verbatim at
+   * `/.well-known/openai-apps-challenge` (ADR-0132). Optional deploy-injected var; unset/blank → the route
+   * 404s, which is the correct posture before a submission is in flight.
+   *
+   * A `var`, NOT a Secrets Store binding, and deliberately so: the endpoint's whole job is to serve this
+   * value publicly to an unauthenticated fetcher, so it is public by construction and confidentiality would
+   * be a fiction. It grants nothing — it only proves that whoever set it controls this host.
+   */
+  OPENAI_APPS_CHALLENGE_TOKEN?: string;
   // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
   // below is ONE account secret each, shared byte-identically with engine + api. Never DB columns.
   /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
