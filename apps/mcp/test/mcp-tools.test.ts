@@ -201,6 +201,7 @@ describe("mcp tool surface — authenticated end-to-end", () => {
           readOnlyHint?: boolean;
           destructiveHint?: boolean;
           idempotentHint?: boolean;
+          openWorldHint?: boolean;
         };
       }[];
     };
@@ -251,19 +252,36 @@ describe("mcp tool surface — authenticated end-to-end", () => {
       readOnlyHint: false,
       destructiveHint: false,
     });
-    // A read tool must carry NEITHER hint — the spec defines both only when `readOnlyHint` is false.
+    // A read tool must now carry `destructiveHint: false` EXPLICITLY. This inverts what this sweep
+    // used to assert, and the reversal is deliberate: the spec defines the hint only when
+    // `readOnlyHint` is false, but the OpenAI directory scanner rejects the omission outright
+    // ("did not include an annotation for destructiveHint") and refuses the submission. Since the MCP
+    // default is `true`, staying silent was also publishing the ALARMING reading of every read tool.
     // Swept over every read tool rather than spot-checked: `byName.get(x)?.annotations?.hint` is
     // `undefined` when the tool is simply absent, so a single spot-check passes having verified
     // nothing the day that tool is renamed.
     const readTools = tools.filter((t) => t.annotations?.readOnlyHint === true);
     expect(readTools.length).toBeGreaterThan(5);
     expect(
-      readTools.filter((t) => t.annotations?.destructiveHint !== undefined).map((t) => t.name),
-      "read tools carrying a destructiveHint — it has nowhere to land",
+      readTools.filter((t) => t.annotations?.destructiveHint !== false).map((t) => t.name),
+      "read tools not explicitly marked non-destructive — the directory rejects the omission",
     ).toEqual([]);
+    // idempotentHint is NOT directory-required, so it stays write-only per the spec.
     expect(
       readTools.filter((t) => t.annotations?.idempotentHint !== undefined).map((t) => t.name),
-      "read tools carrying an idempotentHint — same spec rule as destructiveHint",
+      "read tools carrying an idempotentHint — spec defines it only when readOnlyHint is false",
+    ).toEqual([]);
+
+    // Every tool must declare `openWorldHint`, and every one of ours is closed-world: its domain of
+    // interaction is the webhook.co API and nothing else. The MCP default is `true` ("may interact
+    // with an open world of external entities"), so silence overstated what these tools reach.
+    expect(
+      tools.filter((t) => typeof t.annotations?.openWorldHint !== "boolean").map((t) => t.name),
+      "tools with no openWorldHint — the directory refuses the submission on this",
+    ).toEqual([]);
+    expect(
+      tools.filter((t) => t.annotations?.openWorldHint !== false).map((t) => t.name),
+      "tools claiming open-world reach — none of ours leaves the webhook.co API",
     ).toEqual([]);
   });
 

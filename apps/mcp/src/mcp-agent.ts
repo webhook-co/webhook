@@ -225,28 +225,55 @@ export function toolDescription(cap: AnyCapability): string {
  * pure selects under `withTenant` — `triggers.wait` included, whose ack is a caller-held cursor, not a
  * server-side write. Re-check when adding a capability; the guard cannot see this for you.
  *
- * `openWorldHint` is left at its MCP default (`true`) — deliberately undecided, not decided closed.
- * The directory does not require it, and a per-tool judgement on whether third-party payloads make
- * `events.*` "open world" is a separate call from this change.
+ * `openWorldHint` is `false` on every tool, and `destructiveHint` is now emitted for READS too.
+ *
+ * Both were previously omitted on spec-purist grounds — openWorldHint "deliberately undecided", and
+ * destructiveHint suppressed for reads because the spec defines it only when `readOnlyHint` is false.
+ * The OpenAI plugin directory rejects that: its scanner reports "did not include an annotation for
+ * openWorldHint" and refuses the submission until all three are explicit on every tool.
+ *
+ * Omission was also the worse answer once actually decided, because BOTH defaults are the alarming
+ * one. `openWorldHint` defaults to `true` — "may interact with an open world of external entities" —
+ * and `destructiveHint` defaults to `true`. So staying silent published the most dangerous reading of
+ * every tool we have. Stating the truth is both more accurate and safer:
+ *   • closed-world, because every tool's domain of interaction is the webhook.co API and nothing
+ *     else. None fetches an arbitrary URL, searches, or reaches an entity the caller did not name.
+ *     Third-party payload BYTES flowing through `events.*` is a different question — the tool still
+ *     talks only to our API — which is the judgement the old comment deferred.
+ *   • non-destructive for reads, because a read cannot destroy anything.
+ *
+ * `idempotentHint` stays write-only: the directory does not require it and the spec defines it only
+ * when `readOnlyHint` is false, so widening it here would buy nothing.
  */
-function toolAnnotations(cap: AnyCapability): {
+export function toolAnnotations(cap: AnyCapability): {
   readOnlyHint: boolean;
-  destructiveHint?: boolean;
+  destructiveHint: boolean;
+  openWorldHint: boolean;
   idempotentHint?: boolean;
 } {
   const readOnly = cap.auth.scope.endsWith(":read");
   return {
     readOnlyHint: readOnly,
-    ...(readOnly
+    // A read cannot be destructive; a write's answer comes from the CONTRACT, never a second list here.
+    destructiveHint: readOnly ? false : cap.semantics.destructive === true,
+    openWorldHint: false,
+    ...(readOnly || cap.semantics.idempotent === undefined
       ? {}
-      : {
-          destructiveHint: cap.semantics.destructive === true,
-          ...(cap.semantics.idempotent === undefined
-            ? {}
-            : { idempotentHint: cap.semantics.idempotent }),
-        }),
+      : { idempotentHint: cap.semantics.idempotent }),
   };
 }
+
+/**
+ * whoami's annotations, exported so a test can see them.
+ *
+ * It is registered by hand rather than from a capability, so it is precisely the tool a sweep over
+ * `MCP_BOUND_CAPABILITIES` cannot cover — and the directory scanner flagged it alongside the rest.
+ */
+export const WHOAMI_ANNOTATIONS = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  openWorldHint: false,
+} as const;
 
 export class WebhookMcp extends McpAgent<McpEnv> {
   server = new McpServer({
@@ -311,14 +338,14 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     // thing a new user runs, to buy nothing but symmetry.
     // Annotated by hand because it is not a capability: it reads the authenticated principal and
     // nothing else. No `idempotentHint` — the spec defines it only when `readOnlyHint` is false, the
-    // same rule this file enforces for `destructiveHint`.
+    // same rule this file enforces above.
     this.server.registerTool(
       "whoami",
       {
         title: WHOAMI_TITLE,
         description: WHOAMI_DESCRIPTION,
         inputSchema: {},
-        annotations: { readOnlyHint: true },
+        annotations: { ...WHOAMI_ANNOTATIONS },
       },
       async () => {
         let ctx: AuthContext;
