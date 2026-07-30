@@ -17,6 +17,9 @@ const nextConfig: NextConfig = {
   // Linting is owned by the repo-wide ESLint gate (`pnpm lint`); Next 16 no longer
   // runs lint at build time, so there is exactly one lint authority.
   reactStrictMode: true,
+  // Same server, different ORIGIN as far as Next is concerned — without this it refuses the dev-asset
+  // requests and React never hydrates, while curl still sees a clean 200. See apps/auth/next.config.ts.
+  allowedDevOrigins: ["127.0.0.1"],
 };
 
 export default nextConfig;
