@@ -62,12 +62,12 @@
     {
       "binding": "HYPERDRIVE_AUTHN",
       "id": "<HYPERDRIVE_AUTHN_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_authn:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       "binding": "HYPERDRIVE_TENANT",
       "id": "<HYPERDRIVE_TENANT_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_app:postgres@127.0.0.1:5432/webhook_dev",
     },
     // @gen-optional HYPERDRIVE_BILLING_ID
     // HYPERDRIVE_BILLING (S4.5) — the webhook_billing verified-Stripe-only writer for the inbound

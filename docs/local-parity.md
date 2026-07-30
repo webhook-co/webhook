@@ -36,20 +36,29 @@ Kept here rather than deleted, as a worked example of the failure mode this page
 recorded on good evidence, which was really a substitute nobody had checked was necessary. **Verify that the
 real dependency is genuinely unavailable before writing an entry here.**
 
-## RLS is only partly enforced
+## ~~RLS is only partly enforced~~ — CLOSED
 
-**14 of the 25** local Hyperdrive bindings connect as the `postgres` **superuser**, and a superuser bypasses
-row-level security unconditionally. The other 11 already use their real least-privilege roles
-(`webhook_ingest`, `webhook_meter`, `webhook_purge`, and so on).
+**All 24 local Hyperdrive bindings now connect as their real least-privilege role.** None is a superuser,
+and `scripts/dev-superuser-guard.mjs` (wired into `lint`) keeps it that way — it discovers the bindings from
+the wrangler configs rather than a hand-kept list, so a binding added later is covered automatically.
 
-So a query that would be refused in production by RLS may succeed locally, on those 14 bindings. Tenant
-isolation bugs can hide there.
+This used to be 13 bindings connecting as `postgres`, and a superuser bypasses row-level security
+unconditionally. Measured on the local database, same query, same data:
 
-**Status:** repointing the remaining 14 is planned, and it is expected to surface real defects that
-superuser access has been masking. That is the point of doing it.
+```
+as postgres     (the old binding) → 3 endpoints across 3 orgs   ← every tenant
+as webhook_app  (the new binding) → 1 endpoint  per org context ← correctly isolated
+                without any tenant context → 0 rows
+```
 
-**If you need certainty now:** the `packages/db` integration suite (`packages/db/test/`) runs against a real
-Postgres with the real roles, and the nightly RLS job exercises the policies directly.
+So local dev really was reading across every tenant, and a query production would refuse succeeded here —
+and in CI. That is the failure this page exists to record: not a missing feature, but a **silent** one.
+A missing service binding fails loudly at call time; a superuser binding fails by *permitting* something,
+so nothing ever draws attention to it.
+
+The roles were already there — migration 0002 creates `webhook_app`, `webhook_authn` and the rest as
+`login nosuperuser nobypassrls` — and `scripts/dev-db.sh` verifies whatever role the bindings ask for, so
+repointing them needed no new provisioning.
 
 ---
 

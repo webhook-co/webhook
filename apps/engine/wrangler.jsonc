@@ -68,12 +68,12 @@
     {
       "binding": "HYPERDRIVE_TENANT",
       "id": "<HYPERDRIVE_TENANT_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_app:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       "binding": "HYPERDRIVE_ANCHOR",
       "id": "<HYPERDRIVE_ANCHOR_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_anchor:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       // HYPERDRIVE_RECONCILER — query caching DISABLED. The delivery reconciler cron's cross-org read of
@@ -81,7 +81,7 @@
       // posture as HYPERDRIVE_ANCHOR: no cache so a paused/rotated endpoint is reflected on the next pass.
       "binding": "HYPERDRIVE_RECONCILER",
       "id": "<HYPERDRIVE_RECONCILER_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_reconciler:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       // HYPERDRIVE_METER — query caching DISABLED. The metering-rollup cron's cross-org enumeration of orgs
