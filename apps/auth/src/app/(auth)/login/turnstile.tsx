@@ -98,8 +98,9 @@ export function Turnstile({ onToken }: CaptchaWidgetProps) {
       if (cancelled || !containerRef.current || !window.turnstile) return;
       renderedTheme = resolveTheme();
       widgetId = window.turnstile.render(containerRef.current, {
-        // Localhost renders Cloudflare's always-pass test key so local sign-in does not depend on the
-        // production widget's remote domain list. Not a security boundary — see turnstile-sitekey.ts.
+        // The SAME sitekey on every host, localhost included — the real widget's domain list covers
+        // 127.0.0.1 and localhost, so the local captcha exercises the production credential rather than
+        // an always-pass test key. See turnstile-sitekey.ts for why that substitution was removed.
         sitekey: resolveTurnstileSitekey(window.location.hostname),
         action: TURNSTILE_ACTION,
         // Flexible → fills the container width (down to Turnstile's 300px floor), matching the field.
