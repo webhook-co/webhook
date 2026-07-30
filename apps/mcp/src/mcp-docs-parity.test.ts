@@ -19,6 +19,8 @@ import overview from "../../docs/mcp/overview.mdx?raw";
 import connectDocs from "../../docs/mcp/connect-the-docs-mcp.mdx?raw";
 import usingFromAClient from "../../docs/mcp/using-from-a-client.mdx?raw";
 
+import { CAPABILITIES } from "@webhook-co/contract";
+
 import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
 
 /**
@@ -27,6 +29,44 @@ import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
  * choice, so this pins the number they actually mean rather than the raw tool count a client would show.
  */
 const BOUND = MCP_BOUND_CAPABILITIES.map((c) => c.name).sort();
+
+/** Every capability the MCP surface does NOT bind — the set the "held back on purpose" section describes. */
+const BOUND_NAMES = new Set(MCP_BOUND_CAPABILITIES.map((c) => c.name));
+const WITHHELD = CAPABILITIES.filter((c) => !BOUND_NAMES.has(c.name));
+
+/** Prose spells small numbers ("Twelve capabilities…"), so accept a word or a numeral. */
+const NUMBER_WORDS: Record<string, number> = {
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+};
+
+function statedWithheldCount(source: string): number {
+  const m = /(\w+) capabilities that exist on other surfaces are held back/.exec(source);
+  if (m === null) {
+    throw new Error(
+      "could not find the withheld-count sentence in overview.mdx — parsing is broken",
+    );
+  }
+  const raw = m[1].toLowerCase();
+  const n = /^\d+$/.test(raw) ? Number(raw) : NUMBER_WORDS[raw];
+  if (n === undefined) {
+    throw new Error(`withheld count "${m[1]}" is neither a numeral nor a word this test knows`);
+  }
+  return n;
+}
+
+/** The withheld section: from its heading to the end of the page's bullet list. */
+function withheldSection(source: string): string {
+  const start = source.search(/^## What's deliberately/m);
+  if (start === -1) {
+    throw new Error("could not locate the withheld section in overview.mdx — parsing is broken");
+  }
+  return source.slice(start);
+}
 
 /**
  * The catalog CARD LIST — the `<CardGroup>` block only, not the whole section.
@@ -79,15 +119,28 @@ describe("the MCP docs describe the tools that are actually bound", () => {
     }
   });
 
-  it("the withheld list accounts for every capability that is NOT bound", () => {
-    // The other half of the same claim: the page says N capabilities are "held back on purpose". If a
-    // capability stops being withheld and becomes bound, that sentence goes stale in the safe-sounding
-    // direction — it would still read as though the agent surface were narrower than it is.
-    const withheldClaim =
-      /Twelve|(\d+) capabilities that exist on other surfaces are held back/.exec(overview);
-    expect(
-      withheldClaim,
-      "overview.mdx should state how many capabilities are withheld",
-    ).not.toBeNull();
+  it("states a withheld count equal to the capabilities that are NOT bound", () => {
+    // This assertion previously only checked that the sentence EXISTED — it matched a regex and asserted
+    // the match was non-null, so a wrong number could never fail it. The comment claimed it caught drift;
+    // it did not. Deriving the number is the whole point, so derive it.
+    //
+    // The direction that matters: if a capability moves withheld -> bound and this sentence is left alone,
+    // the page keeps describing the agent surface as narrower than it is. That is the same
+    // under-disclosure as the missing `events.delete`, one paragraph further down.
+    expect(WITHHELD.length).toBeGreaterThan(0);
+    expect(statedWithheldCount(overview), "overview.mdx withheld count").toBe(WITHHELD.length);
+  });
+
+  it("accounts for every withheld capability by name or by an explicit wildcard", () => {
+    // A count alone would pass if one capability were swapped for another. The page names some outright
+    // (`events.getPayload`) and covers families with a wildcard (`replayDestinations.*`), so accept
+    // either — but every unbound capability must be covered by one of them.
+    const section = withheldSection(overview);
+    const unaccounted = WITHHELD.map((c) => c.name).filter((name) => {
+      if (section.includes(`\`${name}\``)) return false;
+      const family = name.slice(0, name.indexOf("."));
+      return !section.includes(`\`${family}.*\``);
+    });
+    expect(unaccounted).toEqual([]);
   });
 });
