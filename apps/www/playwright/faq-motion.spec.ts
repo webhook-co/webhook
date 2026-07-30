@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 /**
  * The FAQ accordion's motion — checked in a real browser, because none of what matters here is
@@ -16,6 +16,43 @@ import { expect, test } from "@playwright/test";
  * when we mean to test the open one.
  */
 
+/**
+ * Record the panel's height on EVERY animation frame while `act` drives the transition.
+ *
+ * These tests used to take a single sample at a fixed wall-clock offset (60ms into a 280ms open,
+ * 110ms into a 220ms close). That is a race, and it failed a component that had animated perfectly:
+ * the easing is fast-out, so the open assertion's margin is gone by ~120ms, and any CI hiccup longer
+ * than the offset lands the sample past the window. The close sample was worse — land it after 220ms
+ * and the height is 0, failing `toBeGreaterThan(0)`.
+ *
+ * Sampling every frame tests the property the test actually means: that the height passes THROUGH
+ * intermediate values. A snap cannot do that — it goes straight from one extreme to the other with no
+ * frame in between — so this is strictly stronger than the timed sample it replaces, and it cannot
+ * flake on scheduling.
+ */
+async function heightsDuring(
+  panel: Locator,
+  windowMs: number,
+  act: () => Promise<void>,
+): Promise<number[]> {
+  const recording = panel.evaluate(
+    (el, ms) =>
+      new Promise<number[]>((resolve) => {
+        const samples: number[] = [];
+        const started = performance.now();
+        const tick = () => {
+          samples.push(el.getBoundingClientRect().height);
+          if (performance.now() - started < ms) requestAnimationFrame(tick);
+          else resolve(samples);
+        };
+        requestAnimationFrame(tick);
+      }),
+    windowMs,
+  );
+  await act();
+  return recording;
+}
+
 test.describe("FAQ accordion motion", () => {
   test("opens smoothly: mid-flight the panel is PARTLY open, not already full height", async ({
     page,
@@ -25,23 +62,19 @@ test.describe("FAQ accordion motion", () => {
     const panel = first.locator("> div");
     await expect(first).not.toHaveAttribute("open", /.*/);
 
-    await first.locator("summary").click();
+    const heights = await heightsDuring(panel, 900, async () => {
+      await first.locator("summary").click();
+    });
 
-    // Sample EARLY inside the 280ms open — not on the same tick as the click (that would measure the
-    // layout before React's effect had even run, and would pass whether or not anything animated), and
-    // not late either: the easing is fast-out, so by 120ms the panel is already ~93% open and the
-    // assertion has no margin left. 60ms is comfortably mid-reveal.
-    await page.waitForTimeout(60);
-    const mid = await panel.evaluate((el) => el.getBoundingClientRect().height);
-
-    await page.waitForTimeout(500);
-    const settled = await panel.evaluate((el) => el.getBoundingClientRect().height);
-
+    const settled = heights[heights.length - 1];
     expect(settled, "the panel never opened").toBeGreaterThan(20);
-    expect(mid, "the panel snapped straight to full height — it is not animating").toBeLessThan(
-      settled * 0.9,
-    );
-    expect(mid, "the panel had not started opening at all").toBeGreaterThan(0);
+
+    // The frames caught mid-reveal. A snap to full height produces none of these.
+    const partway = heights.filter((h) => h > 0 && h < settled * 0.9);
+    expect(
+      partway.length,
+      "the panel snapped straight to full height — no frame caught it partly open, so it is not animating",
+    ).toBeGreaterThan(0);
   });
 
   test("closes smoothly: mid-close the panel is SHRINKING, not already gone", async ({ page }) => {
@@ -54,15 +87,17 @@ test.describe("FAQ accordion motion", () => {
     const open = await panel.evaluate((el) => el.getBoundingClientRect().height);
     expect(open).toBeGreaterThan(20);
 
-    await first.locator("summary").click();
-    // Sample INSIDE the 220ms close. This is the whole reason the component owns `open`: a native
-    // <details> hides its children the instant `open` goes false, so if the close were left to the
-    // browser this height would already be 0. It must be strictly between 0 and the open height.
-    await page.waitForTimeout(110);
-    const mid = await panel.evaluate((el) => el.getBoundingClientRect().height);
+    // The whole reason the component owns `open`: a native <details> hides its children the instant
+    // `open` goes false, so if the close were left to the browser every frame here would already be 0.
+    const heights = await heightsDuring(panel, 900, async () => {
+      await first.locator("summary").click();
+    });
 
-    expect(mid, "the panel snapped shut — the close is not animated").toBeGreaterThan(0);
-    expect(mid, "the panel had not started closing at all").toBeLessThan(open * 0.95);
+    const shrinking = heights.filter((h) => h > 0 && h < open * 0.95);
+    expect(
+      shrinking.length,
+      "the panel snapped shut — no frame caught it partly closed, so the close is not animated",
+    ).toBeGreaterThan(0);
 
     await expect(first).not.toHaveAttribute("open", /.*/, { timeout: 2000 });
   });
