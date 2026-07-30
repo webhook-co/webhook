@@ -12,6 +12,7 @@ import {
   duplicatePorts,
   inspectorPortFor,
   portAssignments,
+  CRON_APPS,
 } from "./dev-ports.mjs";
 import {
   appsMissingDevScript,
@@ -226,11 +227,30 @@ test("an app that calls nobody gets no -c", () => {
 test("the committed package.json dev scripts MATCH devCommand", () => {
   // devCommand is the single source of truth; a package.json that drifted from it would run something
   // nobody derived. Checked for every worker-kind app, not just the two that gained a flag.
+  // EVERY app whose dev command is derived, not just the bare-wrangler ones. `auth` is `opennext` and
+  // was skipped by an earlier version of this loop — so dropping --test-scheduled from its package.json
+  // would have left CI green with auth's cron unreachable locally. Only `next` apps are exempt: they run
+  // `next dev`, which is not wrangler and takes none of these flags.
   for (const [app, spec] of Object.entries(DEV_APPS)) {
-    if (spec.kind !== "worker") continue;
+    if (spec.kind === "next") continue;
     const pkg = JSON.parse(
       readFileSync(new URL(`../apps/${app}/package.json`, import.meta.url), "utf8"),
     );
     assert.equal(pkg.scripts.dev, devCommand(app), `${app}/package.json dev script drifted`);
+  }
+});
+
+test("every cron app's COMMITTED script carries --test-scheduled", () => {
+  // devCommand() being right is not enough — turbo runs what package.json says.
+  for (const app of Object.keys(DEV_APPS)) {
+    if (!CRON_APPS.has(app) || DEV_APPS[app].kind === "next") continue;
+    const pkg = JSON.parse(
+      readFileSync(new URL(`../apps/${app}/package.json`, import.meta.url), "utf8"),
+    );
+    assert.match(
+      pkg.scripts.dev,
+      /--test-scheduled/,
+      `${app} declares a cron but its committed dev script cannot fire it`,
+    );
   }
 });
