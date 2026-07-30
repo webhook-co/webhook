@@ -66,10 +66,18 @@ test("auth runs the custom worker, NOT next dev — next dev omits the issuer ro
 });
 
 test("a worker app gets wrangler dev on its pinned port", () => {
+  // engine declares crons, so it also carries --test-scheduled (see scripts/dev-cron.mjs). Pinned as a
+  // whole string on purpose: this is the one test that would notice a flag silently disappearing.
   assert.equal(
     devCommand("engine"),
-    "wrangler dev --port 8787 --ip 127.0.0.1 --inspector-port 9787",
+    "wrangler dev --test-scheduled --port 8787 --ip 127.0.0.1 --inspector-port 9787",
   );
+});
+
+test("a worker app with no crons and no service bindings gets the bare command", () => {
+  // `get` calls no Worker and schedules nothing — the baseline that proves the flags above are added,
+  // not just always present.
+  assert.equal(devCommand("get"), "wrangler dev --port 8791 --ip 127.0.0.1 --inspector-port 9791");
 });
 
 test("a plain next app gets next dev on its pinned port", () => {

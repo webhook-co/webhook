@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { readFileSync } from "node:fs";
+
+import { readWranglerCrons } from "./cron-dispatch-guard.mjs";
 import { CRON_APPS, DEV_APPS, devCommand } from "./dev-ports.mjs";
 import { JOBS, jobRegistry, scheduledUrl } from "./dev-cron.mjs";
 
@@ -72,5 +75,45 @@ test("job names come from the dispatch guard's beats, so they cannot drift", () 
   // first, rather than silently leaving `pnpm cron` pointing at a name nothing dispatches.
   for (const beat of ["anchor", "meter-rollup", "cap-producer"]) {
     assert.ok(JOBS.has(beat), `${beat} is no longer a known job`);
+  }
+});
+
+// --- The registry's cron strings must match the COMMITTED triggers -------------------------------
+// CADENCE_EXPR and SINGLE_HANDLER restate cron expressions that already live in the wrangler configs.
+// A restatement can drift, and this one drifts DANGEROUSLY: if `cap` stopped being the 5-minute
+// expression, `pnpm cron cap-producer` would fire the HOURLY tick — 14 jobs, with metering and cap side
+// effects — while still reporting `alsoRuns: []`, i.e. claiming an isolation it no longer had.
+
+test("every job's expression is one its app actually schedules", () => {
+  for (const [name, job] of JOBS) {
+    const text = readFileSync(
+      new URL(`../apps/${job.app}/wrangler.jsonc`, import.meta.url),
+      "utf8",
+    );
+    const crons = readWranglerCrons(text);
+    assert.ok(crons, `${job.app} has no readable cron triggers`);
+    assert.ok(
+      crons.includes(job.expr),
+      `${name}: "${job.expr}" is not among ${job.app}'s committed crons (${crons.join(", ")})`,
+    );
+  }
+});
+
+test("the cap tick is genuinely a different expression from the hourly one", () => {
+  const cap = JOBS.get("cap-producer").expr;
+  const hourly = JOBS.get("anchor").expr;
+  assert.notEqual(
+    cap,
+    hourly,
+    "cap and hourly collapsed onto one expression — isolation is now a lie",
+  );
+  assert.match(cap, /^\*\/\d+ /, "the cap tick should be a minute-interval expression");
+});
+
+test("every app that declares a cron has at least one job", () => {
+  // Otherwise a scheduled Worker is reachable by `--test-scheduled` but has no name to fire it with.
+  for (const app of CRON_APPS) {
+    const jobs = [...JOBS.values()].filter((j) => j.app === app);
+    assert.ok(jobs.length > 0, `${app} declares a cron but no job targets it`);
   }
 });
