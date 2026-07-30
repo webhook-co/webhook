@@ -143,3 +143,57 @@ export const SERVICE_BINDINGS = Object.freeze({
 export function serviceBindingsFor(app) {
   return SERVICE_BINDINGS[app] ?? [];
 }
+
+/**
+ * Find the committed `services` array in a JSONC config.
+ *
+ * Returns its parsed entries plus the text with that block removed, so the generator can emit exactly ONE
+ * `services` key. Brace-counted rather than regex-matched: the array contains nested objects, and a lazy
+ * regex would stop at the first `]` inside one.
+ *
+ * @returns {{entries: {binding: string, service: string, entrypoint?: string}[], without: string}}
+ */
+export function extractServices(txt) {
+  const at = txt.search(/"services"\s*:\s*\[/);
+  if (at < 0) return { entries: [], without: txt };
+  const open = txt.indexOf("[", at);
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < txt.length; i++) {
+    if (txt[i] === "[") depth++;
+    else if (txt[i] === "]" && --depth === 0) {
+      close = i;
+      break;
+    }
+  }
+  if (close < 0) throw new Error("unterminated services array in committed wrangler.jsonc");
+  const body = txt
+    .slice(open, close + 1)
+    .replace(/\/\/.*$/gm, "")
+    .replace(/,\s*([}\]])/g, "$1");
+  let entries;
+  try {
+    entries = JSON.parse(body);
+  } catch (err) {
+    throw new Error(`could not parse the committed services block: ${err.message}`, { cause: err });
+  }
+  let end = close + 1;
+  while (end < txt.length && /[\s,]/.test(txt[end])) {
+    const wasComma = txt[end] === ",";
+    end++;
+    if (wasComma) break;
+  }
+  return { entries, without: txt.slice(0, at) + txt.slice(end) };
+}
+
+/**
+ * Union two service-binding lists by `binding` name. The injected entry wins a conflict — it is the deploy's
+ * own view of the target Worker — but a committed binding the injected table does not mention is KEPT, so
+ * merging can never silently drop one.
+ */
+export function mergeServices(injected, committed) {
+  const byBinding = new Map();
+  for (const e of committed) byBinding.set(e.binding, e);
+  for (const e of injected) byBinding.set(e.binding, e);
+  return [...byBinding.values()];
+}
