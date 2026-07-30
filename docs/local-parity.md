@@ -134,82 +134,39 @@ is the thing worth testing anyway.
 
 ---
 
-## Cross-worker service bindings are ABSENT locally
+## Cross-worker service bindings — api and mcp done, web still absent
 
 `apps/web`, `apps/api` and `apps/mcp` reach `apps/auth` and `apps/engine` over Cloudflare **service
-bindings** — 18 of them (web 10, api 4, mcp 4). Locally, none of them exist.
+bindings** — 18 of them (web 10, api 4, mcp 4).
 
-Not "exist but can't be answered" — **absent**. The committed wrangler configs carry no `services` block at
-all, and that is deliberate rather than an oversight: Cloudflare rejects an *upload* whose service binding
-names a Worker that does not exist yet, so committing these would **block a cold deploy** — a fresh
-environment brings the Workers up one at a time, and `webhook-web` would be unable to deploy before
-`webhook-auth` existed. The bindings are injected only by the deploy overlay
-(`scripts/gen-wrangler-prod.mjs`), which runs after the targets are live.
+**api and mcp now have theirs locally (8 of the 18).** `scripts/gen-wrangler-dev.mjs` writes a gitignored
+`apps/<app>/wrangler.dev.jsonc` — the committed config plus the bindings — and each app's `dev` script
+passes it with `-c`. `pnpm dev` regenerates it before starting anything.
 
-The code is written for that. `env.AUTH_ISSUER` and friends are simply `undefined` locally, each reader
-checks structurally before use, and the affected feature degrades rather than the Worker crashing — for
-example the MCP server 500s on an opaque (non-`whk_`) token because it cannot reach auth's introspection
-entrypoint, while everything else keeps working.
+They are not simply committed because Cloudflare rejects an *upload* whose service binding names a Worker
+that does not exist yet: committing all 18 would **block a cold deploy**, since a fresh environment brings
+the Workers up one at a time and `webhook-web` could not deploy before `webhook-auth` existed. A generated,
+gitignored overlay keeps that deploy-safety property and still gives local dev the bindings — the same
+shape the deploy itself uses for `wrangler.prod.jsonc`.
 
-**What this costs you:** anything behind one of those 18 bindings — the auth→app session handoff RPC,
-account deletion, connected apps, onboarding, email change, login methods, provider-secret sealing,
-delivery dispatch, ingest-URL reveal, cache eviction, payload reads — is not exercisable locally.
+`wrangler dev` resolves a binding across **separate** dev sessions through its dev registry, keyed on the
+target's config `name`. That is why `pnpm dev` starting every app matters.
 
-**Why a multi-worker `wrangler dev` session is not on its own the fix:** running several Workers in one
-session lets a *declared* binding resolve, but there is nothing declared to resolve. Closing this needs the
-`services` blocks to exist locally WITHOUT being committed — the cold-deploy constraint above is a
-deploy-safety property and must not be traded away for local convenience.
+**`apps/web`'s 10 are still absent, and cannot be fixed the same way.** web runs under `next dev`, which is
+not wrangler and takes no `-c`. Giving web its bindings means running it under the OpenNext preview instead
+— the same trade `apps/auth` already makes: a slower loop that is actually correct. That is a deliberate
+follow-up, not an oversight.
 
-The shape that satisfies both is the one the deploy already uses: a **generated, gitignored config**.
-`wrangler.prod.jsonc` is exactly that (see `.gitignore`), so a `wrangler.dev.jsonc` carrying the same
-`services` blocks is symmetric with an existing, proven pattern rather than a new deviation.
+**What is verified, and what is not.** `wrangler types -c wrangler.dev.jsonc` resolves all four bindings for
+each of api and mcp, and starting the engine flips them from `[not connected]` to `[connected]`. An
+end-to-end RPC call through a binding has **not** been exercised yet — it needs an authenticated route and
+seeded data. Treat the bindings as declared and linked, not as proven answerable.
 
-### Two measured properties of wrangler's dev registry
-
-Both established by experiment against wrangler 4.115.0 (a throwaway caller/callee pair with a named
-`WorkerEntrypoint`), not inferred from documentation:
-
-1. **A binding resolves across SEPARATE `wrangler dev` sessions.** Two independently launched sessions find
-   each other through the dev registry and RPC works. So this does *not* require one multi-config session —
-   which matters, because `apps/web` and `apps/auth` run under the OpenNext preview rather than bare
-   `wrangler dev`.
-2. **With the target absent, the caller still boots and the binding is still PRESENT.** The call then throws
-   `Error: Network connection lost.` at invocation time.
-
-⚠️ **Property 2 is a trap, and it is the reason declaring these locally is not a free win.** Every reader
-today checks *structurally* — `if (!env.AUTH_ISSUER) → degrade` — and that check is what makes a
-single-app dev session behave sanely. Declare the binding and `env.AUTH_ISSUER` becomes **truthy whether or
-not auth is running**, so the guard starts passing and the feature throws instead of degrading. Anyone
-running a subset of the apps would be worse off than today.
-
-So the bindings must not be declared until the dev orchestrator starts the whole set together — the
-orchestrator is a **prerequisite**, not a parallel nicety.
-
-⚠️ Do not trust wrangler's startup banner as a readiness signal: it prints `Worker … local [connected]` for
-the binding even when the target Worker is not running at all.
-
-## `apps/auth` costs you a build step
-
-auth's dev command is the OpenNext preview rather than `next dev`, and that is deliberate. Its wrangler
-`main` is a custom worker wrapping the OpenNext handler with the OAuth provider; `next dev` does not run it,
-so under `next dev` the **entire issuer surface** — `/session/handoff`, `/session/exchange`, `/token`,
-`/authorize` — does not exist and the auth→app handoff cannot complete. It presents as a redirect loop back
-to `/login`, which is indistinguishable from a dozen other causes.
-
-A slower server that is correct beats a fast one that silently omits half the surface.
-
-**For pure page work:** `pnpm --filter @webhook-co/auth dev:fast` runs `next dev`. It has no issuer routes,
-which is fine as long as you chose it knowingly.
-
-**Reach a `next dev` app at the host it was started on.** `127.0.0.1:<port>` and `localhost:<port>` are the
-same server but different *origins* to Next, which refuses dev-asset requests from an origin it was not
-started on. Nothing errors: the HTML, the headers and the status code are all correct, and `curl` sees a
-clean `200` — but the client bundle is refused, so React never hydrates. On `/login` that presents as a
-captcha stuck on "Verifying you're human…", which reads as a broken widget rather than a host mismatch.
-Every Next app now declares `allowedDevOrigins: ["127.0.0.1"]` so both spellings work, and
-`scripts/dev-origins-guard.mjs` (wired into `lint`) keeps it that way. Worth knowing anyway, because it is
-the sharpest example of why **`HTTP 200` is not a health check** — it cannot tell a live page from a dead
-one.
+⚠️ Two traps worth knowing. A declared binding whose target is **not running** still lets the caller BOOT:
+the binding is present and the call throws `Network connection lost` only when made, so a reader that checks
+structurally (`if (!env.AUTH_ISSUER) degrade`) starts passing that check and then throws. And wrangler
+prints the binding table **once at startup** — `[connected]` there is a point-in-time render, not a live
+readiness signal.
 
 ---
 

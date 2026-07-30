@@ -21,6 +21,8 @@
 // slower one that doesn't. `pnpm --filter auth dev:fast` is the opt-in fast path for pure page work; it
 // runs `next dev` and therefore has NO issuer routes, which is fine as long as you chose it knowingly.
 
+import { SERVICE_BINDINGS } from "./wrangler-services.mjs";
+
 /**
  * @typedef {object} DevApp
  * @property {number} port          The pinned local port.
@@ -150,7 +152,12 @@ export function devCommand(app) {
   if (spec.kind === "opennext") {
     return `opennextjs-cloudflare build && opennextjs-cloudflare preview -- --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
   }
-  return `wrangler dev --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
+  // Apps that CALL another Worker run against the generated dev overlay, which carries the service
+  // bindings the committed config deliberately omits (a committed binding to a not-yet-live Worker would
+  // block a cold deploy — see scripts/gen-wrangler-dev.mjs). `wrangler dev` resolves them across separate
+  // dev sessions via its dev registry, which is why `pnpm dev` starts every app.
+  const config = SERVICE_BINDINGS[app] ? " -c wrangler.dev.jsonc" : "";
+  return `wrangler dev${config} --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
 }
 
 /** Ports assigned more than once. Empty is the only acceptable answer. */

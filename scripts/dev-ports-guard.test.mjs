@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+
+import { SERVICE_BINDINGS } from "./wrangler-services.mjs";
 
 import {
   DEV_APPS,
@@ -192,4 +195,34 @@ test("duplicatePorts actually detects a collision", () => {
   const dupes = [...seen.entries()].filter(([, apps]) => apps.length > 1);
   assert.equal(dupes.length, 1);
   assert.deepEqual(dupes[0][1], ["a", "b"]);
+});
+
+// The `-c wrangler.dev.jsonc` flag is the whole mechanism by which api and mcp get their cross-Worker
+// service bindings locally. Drop it from devCommand or from either package.json and CI stays green while
+// local dev silently returns to "bindings absent" — the exact silent regression this lane keeps finding.
+test("apps that call another Worker run against the generated dev overlay", () => {
+  for (const app of Object.keys(SERVICE_BINDINGS)) {
+    if (DEV_APPS[app]?.kind !== "worker") continue; // web is `next dev` — it cannot take -c
+    assert.match(
+      devCommand(app),
+      /-c wrangler\.dev\.jsonc/,
+      `${app} calls another Worker but does not load the dev overlay`,
+    );
+  }
+});
+
+test("an app that calls nobody gets no -c", () => {
+  assert.ok(!devCommand("engine").includes("-c "), "engine should use its committed config");
+});
+
+test("the committed package.json dev scripts MATCH devCommand", () => {
+  // devCommand is the single source of truth; a package.json that drifted from it would run something
+  // nobody derived. Checked for every worker-kind app, not just the two that gained a flag.
+  for (const [app, spec] of Object.entries(DEV_APPS)) {
+    if (spec.kind !== "worker") continue;
+    const pkg = JSON.parse(
+      readFileSync(new URL(`../apps/${app}/package.json`, import.meta.url), "utf8"),
+    );
+    assert.equal(pkg.scripts.dev, devCommand(app), `${app}/package.json dev script drifted`);
+  }
 });
