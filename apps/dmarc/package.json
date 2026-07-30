@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 8793 --ip 127.0.0.1 --inspector-port 9793",
+    "dev": "wrangler dev --test-scheduled --port 8793 --ip 127.0.0.1 --inspector-port 9793",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run && vitest run --config vitest.workers.config.ts"

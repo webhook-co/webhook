@@ -21,6 +21,10 @@
 // slower one that doesn't. `pnpm --filter auth dev:fast` is the opt-in fast path for pure page work; it
 // runs `next dev` and therefore has NO issuer routes, which is fine as long as you chose it knowingly.
 
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { SERVICE_BINDINGS } from "./wrangler-services.mjs";
 
 /**
@@ -144,20 +148,48 @@ export function duplicateAssignments(apps = DEV_APPS) {
  * @param {string} app
  * @returns {string}
  */
+
+/**
+ * Apps whose committed wrangler config declares a cron trigger — DISCOVERED, so a newly scheduled Worker
+ * gets its local trigger automatically rather than being silently unreachable.
+ */
+const APPS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "apps");
+
+export const CRON_APPS = new Set(
+  readdirSync(APPS_DIR)
+    .sort()
+    .filter((app) => {
+      let text;
+      try {
+        text = readFileSync(join(APPS_DIR, app, "wrangler.jsonc"), "utf8");
+      } catch {
+        return false;
+      }
+      return /"crons"\s*:\s*\[\s*"/.test(text);
+    }),
+);
+
 export function devCommand(app) {
   const spec = DEV_APPS[app];
   if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
   if (spec.kind === "next") return `next dev -p ${spec.port}`;
   const inspector = `--inspector-port ${inspectorPortFor(app)}`;
   if (spec.kind === "opennext") {
-    return `opennextjs-cloudflare build && opennextjs-cloudflare preview -- --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
+    // Flags after `--` are forwarded to the wrangler dev the preview runs, so a scheduled OpenNext
+    // Worker (auth) gets its local cron trigger the same way a bare wrangler one does.
+    const previewScheduled = CRON_APPS.has(app) ? " --test-scheduled" : "";
+    return `opennextjs-cloudflare build && opennextjs-cloudflare preview --${previewScheduled} --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
   }
   // Apps that CALL another Worker run against the generated dev overlay, which carries the service
   // bindings the committed config deliberately omits (a committed binding to a not-yet-live Worker would
   // block a cold deploy — see scripts/gen-wrangler-dev.mjs). `wrangler dev` resolves them across separate
   // dev sessions via its dev registry, which is why `pnpm dev` starts every app.
   const config = SERVICE_BINDINGS[app] ? " -c wrangler.dev.jsonc" : "";
-  return `wrangler dev${config} --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
+  // `--test-scheduled` exposes /__scheduled?cron=<expr>, which invokes the Worker's REAL scheduled()
+  // handler. Without it a cron has no local trigger at all — you could only read the code or wait an
+  // hour. Only for Workers that actually declare a cron; see scripts/dev-cron.mjs (`pnpm cron`).
+  const scheduled = CRON_APPS.has(app) ? " --test-scheduled" : "";
+  return `wrangler dev${config}${scheduled} --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
 }
 
 /** Ports assigned more than once. Empty is the only acceptable answer. */

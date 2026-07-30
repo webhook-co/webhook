@@ -121,6 +121,30 @@ noticing you have one.
 
 ---
 
+## Firing a cron locally
+
+`pnpm cron <job>` invokes a scheduled Worker's **real** `scheduled()` handler — `pnpm cron --list` shows
+all 20 jobs. Cron work previously had no local trigger at all: you could read the handler, or wait an hour.
+
+It works through `wrangler dev --test-scheduled`, which exposes `/__scheduled?cron=<expr>`. That is the same
+entry point Cloudflare calls, reached over HTTP — no fake transport and no mode flag, which is what makes it
+parity rather than a substitute. Every app declaring a cron now runs with that flag, discovered from the
+committed triggers so a newly scheduled Worker cannot be silently unreachable.
+
+**A cron EXPRESSION is what Cloudflare schedules, not a job.** `apps/engine` fans 14 jobs out of its hourly
+tick, so firing any one of them fires all 14. The command resolves a job to its tick, fires it, and prints
+what else that tick runs rather than implying an isolation that does not exist:
+
+```
+⏰ anchor — firing engine's "0 * * * *" tick
+   that tick ALSO runs: activation-rollup, delivery-stats-rollup, event-payload-purge, …
+```
+
+Only `cap-producer` is genuinely alone, on the 5-minute tick. Job names are the `beat` identifiers
+`scripts/cron-dispatch-guard.mjs` already pins, so they cannot drift into a second vocabulary.
+
+---
+
 ## No seeded events
 
 `pnpm seed` creates users, orgs and endpoints — but **no events**, deliberately.
