@@ -14,7 +14,7 @@
 //
 // Run: node scripts/dev-origins-guard.mjs
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -34,11 +34,16 @@ function discoverNextConfigs() {
   const found = [];
   for (const app of readdirSync(APPS_DIR).sort()) {
     const path = join(APPS_DIR, app, "next.config.ts");
+    // Read directly rather than stat-then-read. A `statSync` guard here is a check-then-use window — the
+    // file can change between the stat and the later read — and it buys nothing: a missing file and a
+    // directory both throw on read, which is the same "not a Next app" answer the stat was asked for.
+    let source;
     try {
-      if (statSync(path).isFile()) found.push({ app, path });
+      source = readFileSync(path, "utf8");
     } catch {
-      // not a Next app — no next.config.ts
+      continue;
     }
+    found.push({ app, path, source });
   }
   return found;
 }
@@ -57,7 +62,7 @@ function stripComments(source) {
  * config that lacks the allowance. A guard whose negative case is never exercised can pass by construction.
  */
 export function appsMissingDevOrigin(entries) {
-  const list = entries ?? NEXT_CONFIGS.map((c) => ({ ...c, source: readConfigSource(c.path) }));
+  const list = entries ?? NEXT_CONFIGS;
   const missing = [];
   for (const { app, path, source } of list) {
     const code = stripComments(source);

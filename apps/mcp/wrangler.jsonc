@@ -75,12 +75,12 @@
     {
       "binding": "HYPERDRIVE_AUTHN",
       "id": "<HYPERDRIVE_AUTHN_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_authn:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       "binding": "HYPERDRIVE_TENANT",
       "id": "<HYPERDRIVE_TENANT_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_app:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],
   // The MCP resource server runs on mcp.webhook.co (bearer-token, cookieless, API-class). The route

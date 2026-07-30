@@ -81,29 +81,29 @@
     {
       "binding": "HYPERDRIVE_TENANT",
       "id": "<HYPERDRIVE_TENANT_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_app:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       "binding": "HYPERDRIVE_AUTH",
       "id": "<HYPERDRIVE_AUTH_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_auth:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       "binding": "HYPERDRIVE_AUTHN",
       "id": "<HYPERDRIVE_AUTHN_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_authn:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       "binding": "HYPERDRIVE_SWEEPER",
       "id": "<HYPERDRIVE_SWEEPER_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_sweeper:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       // HYPERDRIVE_NOTIFIER (webhook_notifier — the S3 notification-drain cron: read pending intents + owner
       // email cross-org, flip pending→sent). caching irrelevant (an UPDATE is never cached).
       "binding": "HYPERDRIVE_NOTIFIER",
       "id": "<HYPERDRIVE_NOTIFIER_ID>",
-      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://webhook_notifier:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],
   // The Secrets-Store secrets (BETTER_AUTH_SECRET, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY,
