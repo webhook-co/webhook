@@ -26,13 +26,34 @@
 export const GENERATED_BYTES = 32;
 
 /**
+ * @typedef {object} RelaxingFlag
+ * @property {string} name   the hermetic mode flag that makes this secret optional
+ * @property {string} value  the value that flag must hold
+ */
+
+/**
  * @typedef {object} SecretSpec
  * @property {string} name
  * @property {"generated"|"local"|"external"} scope
  * @property {boolean} [shared]   value must match across apps
  * @property {string} [value]     for scope "local": the literal to write
+ * @property {boolean} [parityRequired]  absent ⇒ local silently does LESS than prod (see below)
+ * @property {RelaxingFlag} [relaxedBy]  the explicit opt-out that makes `parityRequired` acceptable
  * @property {string} note        why it exists / what happens without it
  */
+
+// `parityRequired` is the machine-readable half of the "REQUIRED for prod parity" notes below, and it
+// exists because prose cannot fail a build. Without it the notes were advisory: a clone with no
+// `.dev.vars` produced a login page that rendered perfectly and simply offered fewer ways in, because
+// the page derives its buttons from which OAuth secrets are PRESENT. Nothing errored, so nothing said
+// so — the exact silent-degradation this repo's fence pattern is supposed to forbid ("flags are
+// EXPLICIT, never inferred from a missing secret").
+//
+// `relaxedBy` names the explicit opt-out. An external contributor with no credentials sets the flag and
+// is waved through; everyone else gets a hard failure naming what is missing. The flag is the
+// acknowledgement — the difference between choosing a degraded local stack and not noticing you have one.
+//
+// Enforced by `scripts/dev-preflight.mjs`, which `pnpm dev` runs before starting anything.
 
 /** Secrets that must be identical everywhere they appear. Generated once per machine. */
 export const SHARED = [
@@ -256,23 +277,43 @@ export const APPS = {
       {
         name: "GOOGLE_CLIENT_ID",
         scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "OAUTH_MODE", value: "optional" },
         note: "REQUIRED for prod parity. The SAME Google OAuth app prod uses — its callback list already includes http://localhost:3001. The team value is in the shared credential store; ask rather than inventing a substitute.",
       },
-      { name: "GOOGLE_CLIENT_SECRET", scope: "external", note: "Pairs with GOOGLE_CLIENT_ID." },
+      {
+        name: "GOOGLE_CLIENT_SECRET",
+        scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "OAUTH_MODE", value: "optional" },
+        note: "Pairs with GOOGLE_CLIENT_ID.",
+      },
       {
         name: "GITHUB_CLIENT_ID",
         scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "OAUTH_MODE", value: "optional" },
         note: "REQUIRED for prod parity. A SEPARATE GitHub OAuth app from prod's (GitHub allows one callback URL per app, so dev needs its own with http://localhost:3001/api/auth/callback/github). The team value is in the shared credential store.",
       },
-      { name: "GITHUB_CLIENT_SECRET", scope: "external", note: "Pairs with GITHUB_CLIENT_ID." },
+      {
+        name: "GITHUB_CLIENT_SECRET",
+        scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "OAUTH_MODE", value: "optional" },
+        note: "Pairs with GITHUB_CLIENT_ID.",
+      },
       {
         name: "RESEND_API_KEY",
         scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "EMAIL_MODE", value: "log" },
         note: "REQUIRED for prod parity — the same Resend key prod uses, so local really sends. Only if you cannot have it, set EMAIL_MODE=log and mail prints to the console instead.",
       },
       {
         name: "TURNSTILE_SECRET_KEY",
         scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "EMAIL_MODE", value: "log" },
         note: "REQUIRED for prod parity, and REQUIRED whenever mail really sends (readAuthEnv refuses to boot otherwise) — the captcha gate is what protects the public magic-link endpoint from being used to send mail. Use the SAME widget prod uses: its Cloudflare domain list already includes localhost and 127.0.0.1, so the real sitekey solves locally and the real secret verifies it. The team value is in the shared credential store. Only if you cannot have it, set EMAIL_MODE=log — then no mail is sent and the gate is not needed.",
       },
     ],

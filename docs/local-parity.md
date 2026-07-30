@@ -97,6 +97,19 @@ accepting that you are not testing what production does.
 **Setting them:** put the value in the app's `.dev.vars`. `pnpm dev:secrets` writes a commented template
 listing exactly what each app wants and which values are required for parity.
 
+**`pnpm dev` refuses to start without them.** `scripts/dev-preflight.mjs` runs first and fails loudly,
+naming every missing value, if an app has no `.dev.vars` or leaves a parity-required credential blank.
+
+This exists because the alternative was silent. A clone with no `apps/auth/.dev.vars` started perfectly
+happily and served a login page that rendered correctly and simply offered fewer ways in — the page
+derives its social buttons from which OAuth secrets are *present*, so absent credentials just meant absent
+buttons. Nothing errored, so nothing said so. That is the failure this repo's fence pattern explicitly
+forbids: **flags are explicit, never inferred from a missing secret.** The page was inferring.
+
+Setting one of the flags above is how you opt out, and that is the point — the flag is an
+acknowledgement. The difference that matters is between *choosing* a degraded local stack and not
+noticing you have one.
+
 ---
 
 ## No seeded events
