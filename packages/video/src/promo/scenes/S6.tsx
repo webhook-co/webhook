@@ -5,14 +5,14 @@
 // the terminal (linear · verified · 0197f0c1-…) reappears on a <DashboardCard>,
 // so the event "travels surface→surface". The whole light panel wipes in from
 // the terminal's last (center) position across local f0–21 (comp f360–381),
-// eased on rails (§3.4, no bounce). A provider counter rolls 0→142, fast then
+// eased on rails (§3.4, no bounce). A provider counter rolls 0→144, fast then
 // eased, local f40–70 (comp f400–430); the kinetic line "Verified at the edge.
-// 142 providers." settles in dark ink beneath. 142 is the film's only real
+// 144 providers." settles in dark ink beneath. 144 is the film's only real
 // number (brief §1). Authored in scene-local frames.
 
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 
-import { CAPTIONS } from "../captions";
+import { CAPTIONS, S6_HERO_TEXT, S6_PROVIDER_COUNT } from "../captions";
 import { DashboardCard } from "../components/DashboardCard";
 import { DotsBackground } from "../components/DotsBackground";
 import { KineticLine } from "../components/KineticLine";
@@ -25,7 +25,7 @@ interface S6Props {
 }
 
 const URL_TEXT = CAPTIONS.find((c) => c.scene === "S6" && c.kind === "url")?.text ?? "";
-const HERO_TEXT = CAPTIONS.find((c) => c.scene === "S6" && c.kind === "hero")?.text ?? "";
+const HERO_TEXT = S6_HERO_TEXT;
 
 // The same event as the terminal side (S3/S4), byte-for-byte.
 const EVENT = {
@@ -36,7 +36,11 @@ const EVENT = {
 } as const;
 
 // The one real number in the film (brief §1). The counter rolls 0 → this.
-const PROVIDER_COUNT = 142;
+//
+// Derived from the caption in `captions.ts` rather than written a second time here — the counter and
+// the caption render together, so two literals would eventually disagree on screen. See
+// `S6_PROVIDER_COUNT` there for why the derivation throws rather than defaulting.
+const PROVIDER_COUNT = S6_PROVIDER_COUNT;
 const COUNT_START = 40; // local f40 (comp f400)
 const COUNT_END = 70; // local f70 (comp f430)
 
@@ -160,7 +164,7 @@ export function S6({ format }: S6Props) {
           </div>
         </div>
 
-        {/* "Verified at the edge. 142 providers." — dark ink on the light page. */}
+        {/* "Verified at the edge. 144 providers." — dark ink on the light page. */}
         <div style={{ color: colors.pageInk }}>
           <KineticLine
             text={HERO_TEXT}

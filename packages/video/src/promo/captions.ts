@@ -21,7 +21,7 @@ export const CAPTIONS = [
   },
   { scene: "S5", from: 330, to: 360, kind: "caption", text: "captured durably before it acks" },
   { scene: "S6", from: 360, to: 450, kind: "url", text: "app.webhook.co/events" },
-  { scene: "S6", from: 400, to: 450, kind: "hero", text: "Verified at the edge. 142 providers." },
+  { scene: "S6", from: 400, to: 450, kind: "hero", text: "Verified at the edge. 144 providers." },
   { scene: "S7", from: 474, to: 540, kind: "code", text: "RAW_BODY_MODIFIED" },
   {
     scene: "S7",
@@ -115,6 +115,36 @@ export const CAPTIONS = [
     text: "Open source · Apache-2.0 · Private by default",
   },
 ] as const;
+
+/** The S6 hero line — "Verified at the edge. <n> providers." */
+export const S6_HERO_TEXT = CAPTIONS.find((c) => c.scene === "S6" && c.kind === "hero")?.text ?? "";
+
+/**
+ * The number the S6 counter rolls up to, read OUT OF the caption above.
+ *
+ * S6 renders both at once: the counter ticks up and the caption settles directly beneath it. Written
+ * as two literals they drift, and the scene shows a counter reaching one number under a sentence
+ * stating another — so the counter is derived and there is one place the digit lives.
+ *
+ * Deriving has its own failure mode, and it is worth naming because the obvious guard does NOT cover
+ * it: pinning the caption STRING in a test does not protect this pattern. Reword the line to
+ * "144 signature schemes" and you update the caption and its pin together, the test stays green, and
+ * the match quietly yields `undefined` → a counter that rolls 0→0. So this throws instead, and
+ * `captions.test.ts` asserts the derived VALUE — that assertion, not the string pin, is the contract.
+ */
+function providerCountFromCaption(caption: string): number {
+  const n = Number(caption.match(/(\d+)\s+providers/)?.[1]);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(
+      `promo S6: no "<n> providers" found in the hero caption ${JSON.stringify(caption)}. The ` +
+        `counter renders this number directly above that line — keep the phrasing, or change the ` +
+        `caption and this derivation together.`,
+    );
+  }
+  return n;
+}
+
+export const S6_PROVIDER_COUNT = providerCountFromCaption(S6_HERO_TEXT);
 
 // Real product tables rendered as pre-formatted blocks (byte-for-byte).
 export const EVENTS_TABLE = [
