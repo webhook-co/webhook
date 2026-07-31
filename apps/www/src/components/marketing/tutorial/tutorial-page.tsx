@@ -16,7 +16,22 @@ import { relatedTutorials, type Tutorial, tutorialPath } from "@/lib/tutorials";
 // minimum is what lets sixteen sibling pages clear the near-duplicate guard; see `lib/tutorials.ts`.
 
 const h2 = "text-2xl font-semibold tracking-heading text-fg sm:text-[1.75rem]";
-const body = "text-md text-pretty text-fg-secondary";
+/**
+ * `break-words` is LOAD-BEARING here, not a nicety.
+ *
+ * This prose is authored per provider in `lib/tutorials.ts` and routinely contains a bare URL —
+ * "POST to https://api.calendly.com/webhook_subscriptions with url, events…". A URL is one
+ * unbreakable token under the default `overflow-wrap: normal`, so it does not wrap; it runs straight
+ * past the paragraph and drags the whole DOCUMENT sideways. `/test/calendly` measured 381px of
+ * content in a 360px viewport, `/test/github` 372px, `/test/notion` 345px at 320px.
+ *
+ * It went unseen because the sideways-scroll guard ran at exactly one viewport — the project's
+ * Pixel 5 default of 393px — which all three pages happen to fit. That guard now runs at 320/360/393.
+ *
+ * `break-words` (`overflow-wrap: break-word`) and not `break-all`: it breaks a long token only when
+ * the token cannot fit on a line of its own, so ordinary sentences keep wrapping at their spaces.
+ */
+const body = "text-md text-pretty break-words text-fg-secondary";
 
 // The two shared sentences of "The loop" section, reused VERBATIM as the first and last HowTo steps
 // so the machine-readable procedure can never drift from the visible one. They are exact substrings of
@@ -153,7 +168,10 @@ export function TutorialPage({ tutorial: t }: { tutorial: Tutorial }) {
               {t.gotchas.map((g) => (
                 <div key={g.heading} className="rounded-card border border-hairline bg-surface p-5">
                   <h3 className="mb-2 font-semibold text-fg">{g.heading}</h3>
-                  <p className="text-md text-pretty text-fg-secondary">{g.body}</p>
+                  {/* `body`, not a copy of its string. This is authored per-provider prose exactly
+                      like the paragraphs above, so it needs the same `break-words`; spelling the
+                      classes out again is how one of the two ends up without it. */}
+                  <p className={body}>{g.body}</p>
                 </div>
               ))}
             </div>
