@@ -114,7 +114,7 @@ export const APPS = {
       {
         name: "STRIPE_WEBHOOK_SIGNING_SECRET",
         scope: "external",
-        note: "Self-serve: `stripe listen --print-secret` prints your own. Without it the receiver returns 503 before reading the body.",
+        note: "⚠️ TWO different values exist. Local delivery is `stripe listen`, which mints its OWN secret per machine — run `stripe listen --print-secret` and use THAT. The team's `whsec_…` belongs to the REGISTERED endpoint, which POSTs to a public URL and can never reach localhost; it looks right and fails as `400 invalid signature`. Without any value the receiver returns 503 before reading the body.",
       },
       {
         name: "STRIPE_METER_EVENT_NAME",

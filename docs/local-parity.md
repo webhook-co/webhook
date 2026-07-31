@@ -142,6 +142,14 @@ prices, sandbox meter, a sandbox customer portal. Behaviour that depends on a *l
 Local inbound Stripe delivery is the CLI tunnel, never a registered endpoint — see
 `docs/local-billing-sandbox.md`.
 
+⚠️ **`STRIPE_WEBHOOK_SIGNING_SECRET` has two different values, and the wrong one looks right.** The team's
+`whsec_…` belongs to the *registered* endpoint and is correct for a deployed `BILLING_MODE=test`
+environment. It cannot verify anything locally: a registered endpoint POSTs to a public URL and never
+reaches localhost, so local delivery comes from the CLI's tunnel, which mints its **own** secret per
+machine. Run `stripe listen --print-secret` and use that one while forwarding. The symptom of getting this
+wrong is `400 invalid signature` with nothing naming the cause — which is exactly why the credential vault
+refuses to carry this variable in either direction.
+
 `KMS_MODE=local` is the one that has no alternative today: the engine is the sole KEK custodian and nobody
 should hold production AWS credentials to develop. The other two are conveniences, and using them means
 accepting that you are not testing what production does.
