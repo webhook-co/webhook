@@ -114,10 +114,14 @@ export default function SubProcessorsPage() {
                 </tr>
                 <tr>
                   <th scope="row">Google LLC</th>
-                  <td>"Sign in with Google" (OAuth) — only if you choose Google to sign in.</td>
+                  <td>
+                    &quot;Sign in with Google&quot; (OAuth), and Google Identity Services, which
+                    powers the one-tap sign-in prompt on our login page.
+                  </td>
                   <td>
                     Your Google account email and basic profile, shared when you sign in with
-                    Google.
+                    Google. Our login page loads Google&apos;s script on every visit, so Google can
+                    see your IP address and that you opened it — before you choose anything.
                   </td>
                   <td>United States</td>
                 </tr>

@@ -355,10 +355,14 @@ export default function PrivacyPage() {
             cookie in your browser.
           </p>
           <p>
-            The strictly-necessary cookies aren't used for tracking or advertising. Our login page
-            also loads <strong>Cloudflare Turnstile</strong> (bot protection), which may set its own
-            security cookies as a third-party service. Your dark-mode preference is stored in your
-            browser's local storage, not a cookie. We <strong>don't</strong> use advertising
+            The strictly-necessary cookies aren&apos;t used for tracking or advertising. Our login
+            page loads two third-party scripts: <strong>Cloudflare Turnstile</strong> (bot
+            protection), which may set its own security cookies, and{" "}
+            <strong>Google Identity Services</strong>, which powers the one-tap sign-in prompt.
+            Google&apos;s script loads on every visit to the login page — before you choose a
+            sign-in method — so Google can see your IP address and that you opened that page. You
+            are never signed in without tapping to confirm. Your dark-mode preference is stored in
+            your browser's local storage, not a cookie. We <strong>don't</strong> use advertising
             cookies.
           </p>
 

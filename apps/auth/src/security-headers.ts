@@ -6,10 +6,11 @@
  * can't mint a per-request nonce — the same constraint apps/www documents. Script/style therefore fall back
  * to `'unsafe-inline'` (Next's hydration injects inline `<script>`/`<style>`). React's output-escaping
  * stays the primary XSS defense; this CSP is defense-in-depth that still locks down framing, base-uri,
- * plugins, form targets, and the connect/script/frame origins to `'self'` plus the one third-party the UI
- * loads — Cloudflare Turnstile (the login captcha: its script + widget iframe + telemetry all live on
- * challenges.cloudflare.com). A nonce/hash CSP is a follow-up gated on a Workers nonce-injection story.
- * See docs/adr/0056-auth-csp.md.
+ * plugins, form targets, and the connect/script/frame origins to `'self'` plus a CLOSED set of exactly two
+ * third parties the login page loads: Cloudflare Turnstile (the magic-link captcha) and Google Identity
+ * Services (the One Tap prompt). A test pins that the set stays closed at two. A nonce/hash CSP is a
+ * follow-up gated on a Workers nonce-injection story.
+ * See docs/adr/0056-auth-csp.md and docs/adr/0133-google-one-tap.md.
  */
 
 /** Cloudflare Turnstile — the login captcha (script + widget iframe + telemetry). */

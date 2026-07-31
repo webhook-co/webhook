@@ -34,7 +34,7 @@ describe("dashboard CSP (production)", () => {
     expect(csp).toContain("connect-src 'self' https://wbhk.my wss://wbhk.my");
   });
 
-  it("allowlists ONLY the ingest apex — no other third-party origin (unlike apps/auth's Turnstile)", () => {
+  it("allowlists ONLY the ingest apex — no other third-party origin", () => {
     const csp = buildContentSecurityPolicy();
     const origins = csp.match(/https?:\/\/[^\s;]+|wss?:\/\/[^\s;]+/g) ?? [];
     // Exactly the two ingest-apex origins (https + wss); nothing else.
