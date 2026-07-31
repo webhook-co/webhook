@@ -40,6 +40,28 @@ export interface Env {
   EMAIL_MODE?: string;
 }
 
+/**
+ * Read EMAIL_MODE with the same contract as `resolveEmailMode` in @webhook-co/shared.
+ *
+ * Duplicated rather than imported because apps/dmarc deliberately depends on nothing in the workspace,
+ * and a dependency added for three lines would put lockfile churn in front of every dmarc deploy. The
+ * contract is what matters and it is copied exactly:
+ *
+ *   · BLANK is UNSET, not a typo — `pnpm dev:secrets` writes an unconfigured flag as `EMAIL_MODE=`, and
+ *     treating "" as unknown would make a file our own generator produced throw.
+ *   · anything other than "" / "send" / "log" THROWS. A silent fallthrough on `EMAIL_MODE=Log` would
+ *     send real mail while the operator believed it was being printed, which is the wrong direction to
+ *     fail in.
+ */
+function emailMode(env: Env): "send" | "log" {
+  const mode = env.EMAIL_MODE?.trim();
+  if (mode === undefined || mode === "" || mode === "send") return "send";
+  if (mode !== "log") {
+    throw new Error(`EMAIL_MODE must be "send" or "log" (got ${JSON.stringify(mode)})`);
+  }
+  return "log";
+}
+
 /** Hard ceiling on the raw message we will buffer. Real aggregates are single-digit KB; the mailbox is
  *  public, so this bounds what an unsolicited sender can make us hold in memory. */
 const MAX_RAW_BYTES = 12 * 1024 * 1024;
@@ -209,19 +231,20 @@ export default {
     }
 
     const { subject, text } = formatAlert(findings, now);
-    if (env.EMAIL_MODE === "log") {
-      // The explicit opt-out, not a fallback: without it a missing key is a hard preflight failure.
-      // Printing keeps the rest of the cron path exercisable — parse, diff, state-write — for someone
-      // who cannot hold a Resend credential.
+    // The log branch replaces ONLY the send. It must not return early: the state writes below are what
+    // stop the next tick re-alerting the same findings, so returning here would make EMAIL_MODE=log
+    // behave like a FAILED send rather than a delivered one — and the whole point of the opt-out is to
+    // leave the rest of this path exercisable for someone who cannot hold a Resend credential.
+    if (emailMode(env) === "log") {
       console.log(`[dmarc] EMAIL_MODE=log — alert NOT sent\n${subject}\n${text}`);
-      return;
+    } else {
+      await sendAlert(
+        { apiKey: env.RESEND_API_KEY, from: ALERT_FROM, to: env.ALERT_TO },
+        subject,
+        text,
+        (url, init) => fetch(url, init),
+      );
     }
-    await sendAlert(
-      { apiKey: env.RESEND_API_KEY, from: ALERT_FROM, to: env.ALERT_TO },
-      subject,
-      text,
-      (url, init) => fetch(url, init),
-    );
 
     if (snapshot.maxReportPk > snapshot.cursor) {
       await writeState(env, "last_alerted_report_pk", snapshot.maxReportPk);
