@@ -294,7 +294,7 @@ describe("buildAuthConfig", () => {
     expect(hooks?.user?.create?.after).toBe(userAfter);
 
     const filled = await hooks?.user?.create?.before?.(
-      { email: "ada@example.dev", name: "Ada Lovelace" } as never,
+      { email: "ada@example.dev", name: "Ada Lovelace", emailVerified: true } as never,
       null as never,
     );
     expect(filled).toEqual({ data: { firstName: "Ada", lastName: "Lovelace" } });
@@ -312,7 +312,7 @@ describe("buildAuthConfig", () => {
     const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
     const token = `${b64({ alg: "RS256" })}.${b64({ email: "ada@example.dev", ...profile })}.sig`;
     const viaOneTap = await config.databaseHooks?.user?.create?.before?.(
-      { email: "ada@example.dev", name: "Ada Lovelace" } as never,
+      { email: "ada@example.dev", name: "Ada Lovelace", emailVerified: true } as never,
       { path: "/one-tap/callback", body: { idToken: token } } as never,
     );
 
@@ -602,5 +602,37 @@ describe("buildAuthConfig — sign-in telemetry", () => {
 describe("buildAuthConfig — origin check", () => {
   it("pins origin + callbackURL validation ON rather than inheriting the isTest() default", () => {
     expect(buildAuthConfig(input(), cfgDeps()).advanced?.disableOriginCheck).toBe(false);
+  });
+});
+
+// --- Unverified-email refusal ------------------------------------------------------------------------
+// better-auth checks a provider's `emailVerified` only when LINKING to an existing user; the signup
+// branch of handleOAuthUserInfo creates the row with no check at all. Composed here so every auth
+// instance refuses, and OUTSIDE the name back-fill so a row that must not exist is never processed.
+describe("buildAuthConfig — unverified-email refusal", () => {
+  const before = (deps?: Partial<AuthConfigDeps>) =>
+    buildAuthConfig(input(), cfgDeps(deps)).databaseHooks?.user?.create?.before as unknown as (
+      u: unknown,
+      c: unknown,
+    ) => Promise<unknown>;
+
+  it("ABORTS a signup whose email the provider did not verify", async () => {
+    expect(await before()({ email: "victim@company.com", emailVerified: false }, null)).toBe(false);
+  });
+
+  it("aborts when the flag is absent entirely", async () => {
+    expect(await before()({ email: "victim@company.com" }, null)).toBe(false);
+  });
+
+  it("still runs the name back-fill for a VERIFIED signup", async () => {
+    expect(
+      await before()({ email: "ada@example.dev", name: "Ada Lovelace", emailVerified: true }, null),
+    ).toEqual({ data: { firstName: "Ada", lastName: "Lovelace" } });
+  });
+
+  it("reports the refusal through the log sink, without the address", async () => {
+    const log = vi.fn();
+    await before({ log })({ email: "victim@company.com", emailVerified: false }, null);
+    expect(log).toHaveBeenCalledWith("signup.refused_unverified_email", {});
   });
 });

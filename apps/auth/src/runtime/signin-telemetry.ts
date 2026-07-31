@@ -52,6 +52,22 @@ export function signInMethodForPath(path: unknown): SignInMethod | undefined {
   return typeof path === "string" ? SIGNIN_METHOD_BY_PATH[path] : undefined;
 }
 
+/**
+ * The OAuth provider a sign-in went through, when the endpoint identifies one.
+ *
+ * `/callback/:id` serves Google AND GitHub, so `method: "social"` alone cannot answer the question this
+ * module exists for — "is anyone using One Tap *instead of the Google button*". better-call puts the
+ * matched route params on the context, so `params.id` is the provider id at the after-hook. Undefined
+ * for the endpoints that have no `:id` (One Tap, magic link), which is why it is emitted only when set.
+ */
+function providerFromContext(context: unknown): string | undefined {
+  if (typeof context !== "object" || context === null) return undefined;
+  const params = (context as { params?: unknown }).params;
+  if (typeof params !== "object" || params === null) return undefined;
+  const id = (params as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
 /** The structured observability sink `buildAuthConfig` threads through (`deps.log`). */
 type LogSink = (event: string, fields?: Record<string, unknown>) => void;
 
@@ -63,9 +79,10 @@ type LogSink = (event: string, fields?: Record<string, unknown>) => void;
  * same way; without it this fires on every request to a matched path including rejected ones, and a
  * failed One Tap token would be recorded as a successful One Tap sign-in.
  *
- * The payload is `{ method }` and nothing else. The context in scope holds the user's email, name, image
- * and id, so the event is built by naming the one field it may carry rather than by removing fields —
- * PII-free by construction, and pinned by a test that asserts the exact key set.
+ * The payload is `{ method }` plus, where the endpoint identifies one, `{ provider }` — and nothing
+ * else. The context in scope holds the user's email, name, image and id, so the event is built by naming
+ * the fields it may carry rather than by removing fields — PII-free by construction, and pinned by a
+ * test that asserts the exact key set.
  *
  * Total by construction: this runs INSIDE the sign-in request, so a telemetry fault must never cost a
  * user their session. Every failure — a malformed context, a missing sink, a throwing sink — resolves to
@@ -87,7 +104,10 @@ export async function emitSignInTelemetry(
     const newSession = (authContext as { newSession?: unknown } | undefined)?.newSession;
     if (newSession === null || newSession === undefined) return;
 
-    log("signin.method", { method });
+    // `provider` disambiguates the shared /callback/:id endpoint (google vs github). It is a provider
+    // id, never user data, so the event stays PII-free — a test pins the exact key set.
+    const provider = providerFromContext(context);
+    log("signin.method", provider === undefined ? { method } : { method, provider });
   } catch {
     // A sign-in must never fail because its telemetry did.
   }

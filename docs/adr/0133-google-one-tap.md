@@ -106,6 +106,39 @@ with a live Google session. It is kept, and confirming it is on the human-verifi
 defaults to `self` for a top-level document, so nothing changes today — it is pinned so a future tightening
 cannot silently disable One Tap with no failing test.
 
+## amendment 2026-07-31 — an unverified provider email could create an account
+
+Human verification passed on iPhone/Safari, desktop Chrome and desktop Safari, which also settles the
+open `frame-src` question: Safari has no FedCM, so it took the legacy `accounts.google.com` iframe path
+and the prompt rendered. That directive is necessary and sufficient, now on evidence rather than on
+documentation.
+
+An adversarial pass then found what two prior reviews did not. better-auth enforces a provider's
+`emailVerified` **only when LINKING to an existing user** — the check sits inside `if (dbUser)` in
+`oauth2/link-account.mjs`. The signup branch a few lines below calls
+`createOAuthUser({ …, emailVerified: userInfo.emailVerified })` with no check at all. So
+`accountLinking.requireLocalEmailVerified` and an empty `trustedProviders`, both of which this app sets
+and both of which are correct, govern linking and say nothing about creation.
+
+The chain: an attacker holding a Google account for `victim@company.com` that Google reports as
+`email_verified: false` taps One Tap; a row for that address is created with the attacker's `sub` linked.
+The victim later signs in by magic link, and `revokeUnprovenAccountAccess` deletes only
+`providerId === "credential"` accounts — this app has none — so the attacker's Google link survives,
+`emailVerified` flips to true, and the attacker keeps permanent access to the victim's account and org.
+
+This predates One Tap; the Google button reaches the same code. One Tap removes the remaining speed
+bumps, making it a single unauthenticated POST with no redirect and no captcha.
+
+**Closed by `runtime/unverified-email-hooks.ts`**, a `user.create.before` that returns `false` — 
+better-auth's abort signal — for any row whose `emailVerified` is not literally `true`. It is composed
+outside the name back-fill, so a row that must not exist is never processed further. Verified against
+the installed package that this breaks nothing: magic link creates with a literal `emailVerified: true`,
+Google and One Tap pass the real claim, GitHub resolves `verified` from its email API, and nothing in
+this repo creates users outside better-auth. Accepted cost: a GitHub signup whose email API call fails
+resolves to `false` upstream and is refused rather than admitted — the correct direction, and magic link
+remains available. Proven end to end by a contract test that signs a real token with
+`email_verified: false` and asserts no user, no account and no session result.
+
 ## accepted risks
 
 - **ID-token replay inside the 1h window.** `verifyGoogleIdToken` enforces issuer, audience, signature,
@@ -126,6 +159,12 @@ cannot silently disable One Tap with no failing test.
 - **A second mount in one JS context.** Our wrapper prompts once per mount, so the plugin's stuck-flag
   hazard does not apply — but Google's own `cancel()`/prompt semantics on a client-side revisit to `/login`
   are on the human-verification checklist.
+- **GSI loads before any consent, for EU visitors included.** `apps/www`'s consent banner states the house
+  position that a non-essential cookie "may only be stored after consent" under ePrivacy, and One Tap is
+  framed in this very ADR as an enhancement on a page that already works — which is the standard argument
+  *against* the strictly-necessary exemption. GSI also sets a first-party `g_state` cookie to remember a
+  dismissal. This is a legal-basis decision, not an engineering one, and it is **open**: either gate the
+  script on `/login` behind consent, or record a written basis for treating it as exempt.
 
 ## consequences
 

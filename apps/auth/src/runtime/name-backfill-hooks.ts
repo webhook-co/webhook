@@ -200,18 +200,20 @@ export function withNameBackfill(hooks: DatabaseHooks | undefined): DatabaseHook
     // `false` means "abort the insert" — the caller's decision is final and must not be overridden.
     if (priorResult === false) return false;
 
-    const merged =
+    // Normalize ONCE, and to `undefined` rather than passing the prior's value through. Returning it
+    // verbatim looked harmless and was not: a prior hook that returns `null` would be handed straight
+    // back to better-auth, which does `typeof r === "object" && "data" in r` — and `"data" in null`
+    // THROWS, turning a signup into a 500. Any shape that is not `{data}` means "change nothing".
+    const priorData: Record<string, unknown> | undefined =
       typeof priorResult === "object" && priorResult !== null && "data" in priorResult
-        ? { ...user, ...(priorResult as { data: Record<string, unknown> }).data }
-        : user;
+        ? ((priorResult as { data?: unknown }).data as Record<string, unknown> | undefined)
+        : undefined;
 
+    const merged = priorData ? { ...user, ...priorData } : user;
     const ours = await nameBackfillBefore(merged as CreatingUser, context);
-    if (ours === undefined) return priorResult as undefined;
-    const priorData =
-      typeof priorResult === "object" && priorResult !== null && "data" in priorResult
-        ? (priorResult as { data: Record<string, unknown> }).data
-        : {};
-    return { data: { ...priorData, ...ours.data } };
+
+    if (ours === undefined) return priorData ? { data: priorData } : undefined;
+    return { data: { ...(priorData ?? {}), ...ours.data } };
   };
 
   return {

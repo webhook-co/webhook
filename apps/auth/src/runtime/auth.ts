@@ -33,6 +33,7 @@ import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
 import { isGoogleClientId } from "./google-client-id";
 import { emitSignInTelemetry } from "./signin-telemetry";
+import { withUnverifiedEmailRejection } from "./unverified-email-hooks";
 import { withNameBackfill } from "./name-backfill-hooks";
 import {
   APP_BASE_URL,
@@ -266,12 +267,20 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     // Compose the account OAuth-token stripping (data minimization — see account-token-hooks.ts) into the
     // signup→bootstrap hooks here, so EVERY auth instance persists no provider tokens regardless of caller.
     //
-    // The name back-fill composes INSIDE the token stripping, so stripping stays the outermost and last
-    // word on the account model (it is authoritative and non-negotiable), while the back-fill owns
-    // `user.create.before`. Both spread shallowly, so the bootstrap's `user.create.after` — the personal-org
-    // provisioning — survives by reference through both wrappers. See name-backfill-hooks.ts for why the
-    // back-fill is needed at all: the one-tap plugin bypasses `mapProfileToUser` entirely.
-    databaseHooks: withAccountTokenStripping(withNameBackfill(deps.databaseHooks)),
+    // Three wrappers, and the ORDER is the design. Token stripping stays outermost — it is the
+    // authoritative, non-negotiable last word on the account model. Inside it, the unverified-email
+    // refusal runs BEFORE the name back-fill, because a row that must not exist needs no display name;
+    // it returns `false`, which better-auth reads as "abort the insert". All three spread shallowly, so
+    // the bootstrap's `user.create.after` — the personal-org provisioning — survives by reference
+    // through every wrapper.
+    //
+    // See unverified-email-hooks.ts for the account-takeover it closes (better-auth checks
+    // `emailVerified` only when LINKING to an existing user, never when creating one), and
+    // name-backfill-hooks.ts for why the back-fill is needed at all (the one-tap plugin bypasses
+    // `mapProfileToUser` entirely).
+    databaseHooks: withAccountTokenStripping(
+      withUnverifiedEmailRejection(withNameBackfill(deps.databaseHooks), deps.log),
+    ),
     // Sign-in METHOD telemetry — the one dimension the database cannot recover, because One Tap and the
     // Google button write identical account rows (same providerId, same `sub`). Deliberately a
     // request-level after-hook and not a databaseHook: `user.create.after` and `session.create.after`

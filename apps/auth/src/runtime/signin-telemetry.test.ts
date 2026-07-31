@@ -132,3 +132,48 @@ describe("SIGNIN_METHOD_BY_PATH", () => {
     ]);
   });
 });
+
+// `/callback/:id` serves BOTH Google and GitHub, so `method: "social"` alone cannot answer the question
+// this module was built for: is anyone using One Tap INSTEAD of the Google button. Without the provider
+// the comparison is still unavailable and the feature stays unfalsifiable.
+describe("emitSignInTelemetry — provider", () => {
+  const withParams = (path: string, params: unknown) => ({
+    path,
+    params,
+    context: { newSession: { user: { id: "u_1" } } },
+  });
+
+  it("distinguishes the Google button from GitHub on the shared callback path", async () => {
+    const log = vi.fn();
+    await emitSignInTelemetry(log, withParams("/callback/:id", { id: "google" }));
+    await emitSignInTelemetry(log, withParams("/callback/:id", { id: "github" }));
+
+    expect(log.mock.calls.map(([, f]) => f)).toEqual([
+      { method: "social", provider: "google" },
+      { method: "social", provider: "github" },
+    ]);
+  });
+
+  it("omits provider entirely for endpoints that identify none", async () => {
+    const log = vi.fn();
+    await emitSignInTelemetry(log, withParams("/one-tap/callback", undefined));
+    expect(log).toHaveBeenCalledWith("signin.method", { method: "one_tap" });
+  });
+
+  it("stays PII-free — only method and provider, never anything from params", async () => {
+    const log = vi.fn();
+    await emitSignInTelemetry(
+      log,
+      withParams("/callback/:id", { id: "google", email: "ada@example.dev", token: "secret" }),
+    );
+    const [, fields] = log.mock.calls[0]!;
+    expect(Object.keys(fields as object).sort()).toEqual(["method", "provider"]);
+    expect(JSON.stringify(fields)).not.toMatch(/ada|secret/);
+  });
+
+  it("ignores a non-string provider id", async () => {
+    const log = vi.fn();
+    await emitSignInTelemetry(log, withParams("/callback/:id", { id: 42 }));
+    expect(log).toHaveBeenCalledWith("signin.method", { method: "social" });
+  });
+});
