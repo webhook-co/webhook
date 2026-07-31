@@ -13,6 +13,7 @@ import {
   inspectorPortFor,
   portAssignments,
   CRON_APPS,
+  devBindingsCommand,
 } from "./dev-ports.mjs";
 import {
   appsMissingDevScript,
@@ -253,4 +254,38 @@ test("every cron app's COMMITTED script carries --test-scheduled", () => {
       `${app} declares a cron but its committed dev script cannot fire it`,
     );
   }
+});
+
+// `next dev` is not wrangler: it takes no -c, so an app running under it CANNOT have a service binding.
+// For apps/web that means its 10 bindings are absent and the readers DEGRADE rather than throwing —
+// silent, which is the failure mode this lane keeps finding. `dev:bindings` runs the same code path
+// production does, at the cost of fast refresh, so it is opt-in rather than the default.
+test("a Next app WITH service bindings gets a bindings-mode command", () => {
+  const cmd = devBindingsCommand("web");
+  assert.ok(cmd, "web has 10 service bindings but no way to run with them");
+  assert.match(cmd, /-c wrangler\.dev\.jsonc/, "bindings mode must load the generated overlay");
+  assert.match(cmd, new RegExp(`--port ${DEV_APPS.web.port}\\b`));
+  assert.match(
+    cmd,
+    /opennextjs-cloudflare preview/,
+    "bindings mode must use the preview, not next dev",
+  );
+});
+
+test("bindings mode is offered only where it changes something", () => {
+  // www is a Next app with NO service bindings; the workers already load the overlay in their normal
+  // dev command. Offering a second mode there would be noise pretending to be capability.
+  assert.equal(devBindingsCommand("www"), null);
+  assert.equal(devBindingsCommand("engine"), null);
+  assert.equal(devBindingsCommand("auth"), null);
+});
+
+test("web's committed dev:bindings script matches the derived command", () => {
+  const pkg = JSON.parse(
+    readFileSync(new URL("../apps/web/package.json", import.meta.url), "utf8"),
+  );
+  assert.equal(pkg.scripts["dev:bindings"], devBindingsCommand("web"));
+  // …and the DEFAULT stays the fast loop. Changing that is a deliberate call, not a silent drift.
+  assert.equal(pkg.scripts.dev, devCommand("web"));
+  assert.match(pkg.scripts.dev, /next dev/);
 });
