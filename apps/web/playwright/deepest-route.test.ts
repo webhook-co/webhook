@@ -284,3 +284,66 @@ describe("authOriginMismatch", () => {
     expect(authOriginMismatch(307, null, "http://127.0.0.1:3199")).toBe(false);
   });
 });
+
+// The parser must accept everything a real `.dev.vars` can hold, because anything it mishandles silently
+// reinstates the 180s misdiagnosis this file exists to remove. `scripts/dev-preflight.mjs` strips
+// surrounding quotes; a hand-rolled parser that did not would read `"http://localhost:3001"` — quotes
+// included — and never match the redirect.
+describe("effectiveAuthOrigin parses what .dev.vars actually contains", () => {
+  it("strips surrounding quotes, as the repo's own .dev.vars parser does", () => {
+    expect(effectiveAuthOrigin('AUTH_BASE_URL="http://localhost:3001"\n', "http://x")).toBe(
+      "http://localhost:3001",
+    );
+    expect(effectiveAuthOrigin("AUTH_BASE_URL='http://localhost:3001'\n", "http://x")).toBe(
+      "http://localhost:3001",
+    );
+  });
+
+  it("ignores a COMMENTED-OUT key rather than reading it as configuration", () => {
+    expect(effectiveAuthOrigin("# AUTH_BASE_URL=http://commented\n", "http://x")).toBe("http://x");
+  });
+
+  it("is not fooled by a key that merely ends with the name", () => {
+    expect(effectiveAuthOrigin("NEXT_AUTH_BASE_URL=http://other\n", "http://x")).toBe("http://x");
+  });
+
+  it("finds the key wherever it sits in the file", () => {
+    expect(effectiveAuthOrigin("A=1\nAUTH_BASE_URL=http://found\nB=2\n", "http://x")).toBe(
+      "http://found",
+    );
+  });
+
+  it("strips a trailing slash from the FALLBACK too, not just the value", () => {
+    expect(effectiveAuthOrigin(null, "http://127.0.0.1:3199/")).toBe("http://127.0.0.1:3199");
+  });
+});
+
+// `startsWith` cannot distinguish http://localhost:3001 from http://localhost:30010, so a genuinely
+// mismatched origin sharing a prefix would go unflagged — and fall back to the 180s timeout this PR is
+// removing. Compare ORIGINS.
+describe("origin comparison is exact, not prefix-based", () => {
+  it("does not treat a longer port as the expected origin", () => {
+    expect(isRouteTableReady(307, "http://localhost:30010/login", "http://localhost:3001")).toBe(
+      false,
+    );
+    expect(authOriginMismatch(307, "http://localhost:30010/login", "http://localhost:3001")).toBe(
+      true,
+    );
+  });
+
+  it("still accepts the genuine redirect", () => {
+    expect(isRouteTableReady(307, "http://localhost:3001/login", "http://localhost:3001")).toBe(
+      true,
+    );
+    expect(authOriginMismatch(307, "http://localhost:3001/login", "http://localhost:3001")).toBe(
+      false,
+    );
+  });
+
+  it("treats an unparseable or relative Location as 'keep polling', never as a mismatch", () => {
+    // Conservative on purpose: a false fast-fail would replace a slow correct answer with a fast wrong
+    // one, which is a worse trade than the timeout it avoids.
+    expect(authOriginMismatch(307, "/login", "http://localhost:3001")).toBe(false);
+    expect(isRouteTableReady(307, "/login", "http://localhost:3001")).toBe(false);
+  });
+});

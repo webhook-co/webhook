@@ -122,7 +122,7 @@ export function isRouteTableReady(
   location: string | null,
   authOrigin: string,
 ): boolean {
-  return status === 307 && (location ?? "").startsWith(authOrigin);
+  return status === 307 && locationHasOrigin(location, authOrigin) === true;
 }
 
 // ── Waiting for the SCAN, not for a request ──────────────────────────────────────────────────────────
@@ -177,12 +177,43 @@ export function routeTypesInclude(text: string, route: readonly string[]): boole
  * the app points at — so this widens nothing where the old assumption already held.
  */
 export function effectiveAuthOrigin(devVars: string | null, fallback: string): string {
-  const line = (devVars ?? "").split("\n").find((l) => l.trim().startsWith("AUTH_BASE_URL="));
-  const value = line ? line.slice(line.indexOf("=") + 1).trim() : "";
+  // Parsed the way `scripts/dev-preflight.mjs` parses the same file, because anything this mishandles
+  // silently reinstates the 180-second misdiagnosis above. In particular a QUOTED value — which that
+  // parser strips and a naive one does not — would be read with its quotes and never match the redirect.
+  let value = "";
+  for (const raw of (devVars ?? "").split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue; // a commented key is not configuration
+    const at = line.indexOf("=");
+    if (at < 0 || line.slice(0, at).trim() !== "AUTH_BASE_URL") continue; // exact key, not a suffix match
+    value = line.slice(at + 1).trim();
+    if (value.length >= 2 && /^(".*"|'.*')$/s.test(value)) value = value.slice(1, -1);
+    break;
+  }
   // A blank is UNSET — `pnpm dev:secrets` writes an unconfigured key as `NAME=`, and demanding a redirect
   // to the empty string would never match.
-  if (value === "") return fallback;
-  return value.replace(/\/+$/, "");
+  return stripTrailingSlash(value === "" ? fallback : value);
+}
+
+const stripTrailingSlash = (s: string): string => s.replace(/\/+$/, "");
+
+/**
+ * Does `location` point at `origin`? Compared as ORIGINS, never as a string prefix.
+ *
+ * `startsWith` cannot tell http://localhost:3001 from http://localhost:30010, so a genuinely mismatched
+ * origin that happens to share a prefix would read as correct — the readiness predicate would accept the
+ * wrong server, and the fast-fail would miss the case it exists for.
+ *
+ * A relative or unparseable Location is NOT a match and NOT a mismatch: it means "keep polling". A false
+ * fast-fail would trade a slow correct answer for a quick wrong one, which is the worse bargain.
+ */
+export function locationHasOrigin(location: string | null, origin: string): boolean | null {
+  if (location === null) return null;
+  try {
+    return new URL(location).origin === new URL(origin).origin;
+  } catch {
+    return null; // relative or malformed — undecidable, so decide nothing
+  }
 }
 
 /**
@@ -199,5 +230,5 @@ export function authOriginMismatch(
   location: string | null,
   authOrigin: string,
 ): boolean {
-  return status === 307 && location !== null && !location.startsWith(authOrigin);
+  return status === 307 && locationHasOrigin(location, authOrigin) === false;
 }
