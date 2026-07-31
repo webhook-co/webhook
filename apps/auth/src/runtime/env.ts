@@ -586,4 +586,10 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
 
 // URL/string constants live in ./urls (dependency-free) so client components can import them without
 // pulling this module's server-only deps into the browser bundle. Re-exported for the runtime's imports.
-export { APP_BASE_URL, MAGIC_LINK_FROM, PROD_AUTH_BASE_URL, TURNSTILE_ACTION } from "./urls";
+export {
+  APP_BASE_URL,
+  AUTH_BASE_PATH,
+  MAGIC_LINK_FROM,
+  PROD_AUTH_BASE_URL,
+  TURNSTILE_ACTION,
+} from "./urls";

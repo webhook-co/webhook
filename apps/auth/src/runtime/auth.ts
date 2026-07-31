@@ -34,6 +34,7 @@ import { isGoogleClientId } from "./google-client-id";
 import { withNameBackfill } from "./name-backfill-hooks";
 import {
   APP_BASE_URL,
+  AUTH_BASE_PATH,
   MAGIC_LINK_FROM,
   PROD_AUTH_BASE_URL,
   TURNSTILE_ACTION,
@@ -223,7 +224,7 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
   const { baseURL, secrets } = input;
   return {
     baseURL,
-    basePath: "/api/auth",
+    basePath: AUTH_BASE_PATH,
     secret: secrets.betterAuthSecret,
     // CSRF origin allow-list: this surface + the app it hands off to.
     trustedOrigins: [baseURL, APP_BASE_URL],

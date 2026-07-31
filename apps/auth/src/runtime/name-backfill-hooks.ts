@@ -44,13 +44,16 @@
 
 import { splitName } from "@webhook-co/shared";
 
+import { ONE_TAP_CALLBACK_PATH } from "./urls";
+
 import type { betterAuth } from "better-auth";
 
 type AuthConfig = Parameters<typeof betterAuth>[0];
 type DatabaseHooks = NonNullable<AuthConfig["databaseHooks"]>;
 
-/** The one-tap plugin's registered endpoint path, as it appears on the endpoint context (basePath stripped). */
-export const ONE_TAP_CALLBACK_PATH = "/one-tap/callback";
+// Re-exported for the tests that already import it from here, but DEFINED in urls.ts alongside the
+// request-path form the edge throttle matches — one basePath, one place, so the two cannot drift.
+export { ONE_TAP_CALLBACK_PATH };
 
 /**
  * The ONLY columns this hook may write, and the artifact that makes that true.

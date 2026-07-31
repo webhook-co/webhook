@@ -20,7 +20,15 @@ export type EdgeEndpoint =
   | "device_verify"
   | "logout"
   | "session_handoff"
-  | "session_exchange";
+  | "session_exchange"
+  /**
+   * The ONE entry here that does not name a branch this dispatch handles. `POST /api/auth/one-tap/callback`
+   * is served by better-auth behind OpenNext; the dispatch throttles it and falls through. It still belongs
+   * on this list because it is a public, unauthenticated POST whose only other limiter is better-auth's
+   * generic in-memory, per-isolate 100-req/10s — fleet-wide ineffective, the same shape that made the
+   * magic-link send need a durable throttle.
+   */
+  | "one_tap";
 
 // Coarse per-IP-per-minute ceilings — generous for legitimate use (a human consent flow, a CLI token
 // exchange), tight enough to blunt a flood. windowSeconds is KV's 60s minimum. Tune from observability.
@@ -37,6 +45,18 @@ export const EDGE_RULES: Record<EdgeEndpoint, RateLimitRule> = {
   logout: { limit: 60, windowSeconds: 60 },
   session_handoff: { limit: 60, windowSeconds: 60 },
   session_exchange: { limit: 60, windowSeconds: 60 },
+  // Tighter than /token, and it can afford to be. A One Tap callback is a once-per-sign-in human action,
+  // where /token is hit repeatedly by the CLI for refresh — so 30 distinct humans tapping from behind one
+  // corporate NAT inside 60s is already an extreme burst. What makes 30 safe rather than merely tight is
+  // that this endpoint has three fallbacks on the very same page: a 429 on One Tap leaves the Google
+  // button, the GitHub button and magic link all working, so the throttle degrades the convenience and
+  // never the ability to sign in. Every other rule here guards a path with no such alternative.
+  //
+  // What it is defending: on any body carrying a well-formed JWT header, the handler calls
+  // `getGooglePublicKey`, a plain uncached fetch to Google's certs endpoint — one outbound subrequest per
+  // request, forgeable header and all. (Truly random junk is free: `decodeProtectedHeader` bails before
+  // the fetch.) Modest as amplifiers go, but unmetered and attacker-triggerable is the part worth fixing.
+  one_tap: { limit: 30, windowSeconds: 60 },
 };
 
 /**

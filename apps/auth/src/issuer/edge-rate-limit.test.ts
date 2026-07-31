@@ -183,12 +183,22 @@ describe("edgeRateLimit", () => {
       "device_verify",
       "session_handoff",
       "session_exchange",
+      "one_tap",
     ];
     for (const e of endpoints) {
       expect(EDGE_RULES[e].limit).toBeGreaterThan(0);
       // KV's fixed-window minimum is 60s.
       expect(EDGE_RULES[e].windowSeconds).toBeGreaterThanOrEqual(60);
     }
+  });
+
+  it("gates the One Tap callback, the one gated path better-auth (not this dispatch) serves", () => {
+    // Every other rule here guards a branch this file handles itself. one_tap guards a THROTTLE-AND-FALL-
+    // THROUGH branch: the request continues to OpenNext and better-auth's own handler. Without a rule the
+    // only limiter on it is better-auth's generic 100-req/10s, which is in-memory and PER-ISOLATE, i.e.
+    // fleet-wide ineffective — the exact shape runtime/auth.ts already calls out for the magic-link send.
+    expect(Object.keys(EDGE_RULES)).toContain("one_tap");
+    expect(EDGE_RULES.one_tap.limit).toBeLessThanOrEqual(EDGE_RULES.token.limit);
   });
 
   it("gates every public issuer endpoint — no branch ships without a volume rule", () => {
