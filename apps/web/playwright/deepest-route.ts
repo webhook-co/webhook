@@ -122,7 +122,7 @@ export function isRouteTableReady(
   location: string | null,
   authOrigin: string,
 ): boolean {
-  return status === 307 && (location ?? "").startsWith(authOrigin);
+  return status === 307 && locationHasOrigin(location, authOrigin) === true;
 }
 
 // ── Waiting for the SCAN, not for a request ──────────────────────────────────────────────────────────
@@ -158,4 +158,77 @@ export function routeTypesListRoutes(text: string): readonly string[] {
 export function routeTypesInclude(text: string, route: readonly string[]): boolean {
   const want = `/${urlSegments(route).join("/")}`;
   return routeTypesListRoutes(text).includes(want);
+}
+
+/**
+ * The auth origin the app will ACTUALLY redirect to, given the `.dev.vars` this machine has.
+ *
+ * The probe's whole discriminator is "a 307 to the auth origin, which the catch-all cannot produce". That
+ * only works if the harness expects the origin the app really uses — and the harness does not get to
+ * choose. `getAuthBaseUrl()` resolves BINDING-FIRST (`workerEnv() ?? process.env`), and under `next dev`
+ * the binding comes from `getPlatformProxy`, which reads `apps/web/.dev.vars`. So a machine that has run
+ * `pnpm dev:secrets` redirects to http://localhost:3001 no matter what the harness puts in process.env.
+ *
+ * The symptom was maximally misleading: a route serving correctly within a second, reported after 180
+ * seconds as "never entered its route table". Green on CI, where there is no `.dev.vars` at all, and dead
+ * on every developer machine.
+ *
+ * Falling back to the harness's own origin keeps CI isolated exactly as before — an origin nothing else in
+ * the app points at — so this widens nothing where the old assumption already held.
+ */
+export function effectiveAuthOrigin(devVars: string | null, fallback: string): string {
+  // Parsed the way `scripts/dev-preflight.mjs` parses the same file, because anything this mishandles
+  // silently reinstates the 180-second misdiagnosis above. In particular a QUOTED value — which that
+  // parser strips and a naive one does not — would be read with its quotes and never match the redirect.
+  let value = "";
+  for (const raw of (devVars ?? "").split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue; // a commented key is not configuration
+    const at = line.indexOf("=");
+    if (at < 0 || line.slice(0, at).trim() !== "AUTH_BASE_URL") continue; // exact key, not a suffix match
+    value = line.slice(at + 1).trim();
+    if (value.length >= 2 && /^(".*"|'.*')$/s.test(value)) value = value.slice(1, -1);
+    break;
+  }
+  // A blank is UNSET — `pnpm dev:secrets` writes an unconfigured key as `NAME=`, and demanding a redirect
+  // to the empty string would never match.
+  return stripTrailingSlash(value === "" ? fallback : value);
+}
+
+const stripTrailingSlash = (s: string): string => s.replace(/\/+$/, "");
+
+/**
+ * Does `location` point at `origin`? Compared as ORIGINS, never as a string prefix.
+ *
+ * `startsWith` cannot tell http://localhost:3001 from http://localhost:30010, so a genuinely mismatched
+ * origin that happens to share a prefix would read as correct — the readiness predicate would accept the
+ * wrong server, and the fast-fail would miss the case it exists for.
+ *
+ * A relative or unparseable Location is NOT a match and NOT a mismatch: it means "keep polling". A false
+ * fast-fail would trade a slow correct answer for a quick wrong one, which is the worse bargain.
+ */
+export function locationHasOrigin(location: string | null, origin: string): boolean | null {
+  if (location === null) return null;
+  try {
+    return new URL(location).origin === new URL(origin).origin;
+  } catch {
+    return null; // relative or malformed — undecidable, so decide nothing
+  }
+}
+
+/**
+ * Is this response a CONFIGURATION mismatch rather than a route table still filling in?
+ *
+ * The catch-all `(app)/[...legacy]` rejects a first segment of `org` and calls `notFound()`, so a partial
+ * table yields 404 — never a redirect. A 307 therefore proves the real route is serving; if its Location
+ * points somewhere other than the origin the harness expects, the route is fine and the EXPECTATION is
+ * wrong. Continuing to poll that for the full boot budget and then reporting "never entered its route
+ * table" sends the reader through the wrong subsystem entirely, which is precisely what happened.
+ */
+export function authOriginMismatch(
+  status: number,
+  location: string | null,
+  authOrigin: string,
+): boolean {
+  return status === 307 && locationHasOrigin(location, authOrigin) === false;
 }
