@@ -12,12 +12,13 @@ import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
 import {
   ROUTE_TYPES_FILE,
+  type RouteScanOutcome,
   authOriginMismatch,
+  awaitRouteScan,
   deepestAppRoute,
   effectiveAuthOrigin,
   isRouteTableReady,
   probeUrlFor,
-  routeTypesInclude,
 } from "./deepest-route";
 import { BASE_URL, PORT, writeFixture, type Fixture } from "./fixture";
 
@@ -203,24 +204,16 @@ async function routeTableIsComplete(probe: string): Promise<ProbeResult> {
 const SCAN_BUDGET_MS = 60_000;
 
 /**
- * Resolve once `next dev` has scanned `src/app` far enough to know about `route` — or once the budget
- * lapses, whichever comes first.
+ * Wait for the route scan, and REMEMBER what it saw — see `awaitRouteScan`. The outcome is what turns one
+ * ambiguous timeout into a message that names a subsystem.
  *
  * Never throws. A missing or unreadable file is not a failure: the types file is undocumented and
  * version-dependent (`typedRoutes` defaults to false, yet Next 16.2 emits it in dev anyway), so this must
  * degrade to "probe anyway" rather than become a new way for the suite to fail.
  */
-async function waitForRouteScan(route: readonly string[]): Promise<void> {
+async function waitForRouteScan(route: readonly string[]): Promise<RouteScanOutcome> {
   const file = resolve(process.cwd(), ROUTE_TYPES_FILE);
-  const deadline = Date.now() + SCAN_BUDGET_MS;
-  while (Date.now() < deadline) {
-    try {
-      if (routeTypesInclude(await readFile(file, "utf8"), route)) return;
-    } catch {
-      /* not written yet — keep waiting */
-    }
-    await sleep(250);
-  }
+  return await awaitRouteScan(() => readFile(file, "utf8"), route, { budgetMs: SCAN_BUDGET_MS });
 }
 
 /** Boot `next dev` against the seeded database and resolve once it answers. */
@@ -275,7 +268,7 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
   // of compiling anything. Gate on that first. It is an OPTIMISATION, never a precondition: if the file
   // never appears we fall through to the probe and behave exactly as before, so the worst case here is
   // today's behaviour.
-  await waitForRouteScan(deepestRoute);
+  const scan = await waitForRouteScan(deepestRoute);
 
   let lastProbe: ProbeResult | undefined;
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
@@ -326,11 +319,25 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
   if (lastProbe === undefined) {
     throw new Error(`e2e: next dev did not answer on ${BASE_URL} within ${BOOT_TIMEOUT_MS}ms`);
   }
+  // Say WHICH subsystem, not just "the route never arrived". The scan outcome is the discriminator: a
+  // route that WAS in next dev's route table and still 404s did not fail to be scanned — it failed to
+  // compile or serve, which is a different investigation entirely.
+  const diagnosis: Record<RouteScanOutcome, string> = {
+    listed:
+      "the route WAS in next dev's route table (its types file listed it) and STILL answered 404 — so " +
+      "this is not the scan. Look at compilation/serving of that route, not at src/app discovery.",
+    "missing-route":
+      "next dev was writing its route table and this route never appeared in it within " +
+      `${SCAN_BUDGET_MS}ms — the scan of src/app genuinely did not reach the deepest route.`,
+    absent:
+      "next dev never wrote a readable route-types file, so the scan gate was INERT here and proved " +
+      "nothing either way. Do not read this as 'the scan was fine'.",
+  };
   throw new Error(
     `e2e: next dev answered on ${BASE_URL} but ${probeUrlFor(deepestRoute)} never entered its route ` +
       `table within ${BOOT_TIMEOUT_MS}ms — last probe: ${lastProbe.status} ` +
-      `${lastProbe.location ?? "(no Location)"}, expected 307 to ${AUTH_ORIGIN}. The catch-all answered ` +
-      `instead, so next dev began serving before its scan of src/app reached the deepest route.`,
+      `${lastProbe.location ?? "(no Location)"}, expected 307 to ${AUTH_ORIGIN}.\n` +
+      `  route scan: ${scan} — ${diagnosis[scan]}`,
   );
 }
 

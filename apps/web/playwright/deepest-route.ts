@@ -232,3 +232,46 @@ export function authOriginMismatch(
 ): boolean {
   return status === 307 && locationHasOrigin(location, authOrigin) === false;
 }
+
+/** What the route-scan gate saw before it stopped waiting. */
+export type RouteScanOutcome = "listed" | "absent" | "missing-route";
+
+/**
+ * Wait until `next dev` has scanned `src/app` far enough to know about `route` — and REPORT WHICH of the
+ * three things happened, because the probe's failure message cannot distinguish them on its own.
+ *
+ * A CI failure reported `last probe: 404` for the full 180-second budget: the catch-all answered every
+ * poll, so the deep route never served. That single sentence covers two unrelated causes —
+ *
+ *   · `missing-route` — next dev is writing its route table and this route is not in it yet, so the SCAN
+ *     genuinely did not reach it. A filesystem-walk problem.
+ *   · `listed` — the route WAS in the table and still 404s, so it registered and never compiled or served.
+ *     A completely different subsystem, and the scan is exonerated.
+ *
+ * plus `absent`, which is not a failure but is worth saying out loud: the types file is undocumented and
+ * version-dependent, so when it never appears this gate contributes nothing and we fall through to the
+ * probe exactly as before. Reporting it stops someone concluding "the scan was fine" from a gate that was
+ * never able to say so.
+ *
+ * Injectable read/sleep so all three outcomes are testable without a running dev server or a real clock.
+ */
+export async function awaitRouteScan(
+  readRouteTypes: () => Promise<string>,
+  route: readonly string[],
+  { budgetMs, sleepMs = 250 }: { budgetMs: number; sleepMs?: number },
+): Promise<RouteScanOutcome> {
+  const deadline = Date.now() + budgetMs;
+  let everReadable = false;
+  do {
+    try {
+      const text = await readRouteTypes();
+      everReadable = true;
+      if (routeTypesInclude(text, route)) return "listed";
+    } catch {
+      /* not written yet — keep waiting, and remember we never saw it */
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, sleepMs));
+  } while (Date.now() < deadline);
+  return everReadable ? "missing-route" : "absent";
+}
