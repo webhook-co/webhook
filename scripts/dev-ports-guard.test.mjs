@@ -13,7 +13,7 @@ import {
   inspectorPortFor,
   portAssignments,
   CRON_APPS,
-  devBindingsCommand,
+  devFastCommand,
 } from "./dev-ports.mjs";
 import {
   appsMissingDevScript,
@@ -257,35 +257,53 @@ test("every cron app's COMMITTED script carries --test-scheduled", () => {
 });
 
 // `next dev` is not wrangler: it takes no -c, so an app running under it CANNOT have a service binding.
-// For apps/web that means its 10 bindings are absent and the readers DEGRADE rather than throwing —
-// silent, which is the failure mode this lane keeps finding. `dev:bindings` runs the same code path
-// production does, at the cost of fast refresh, so it is opt-in rather than the default.
-test("a Next app WITH service bindings gets a bindings-mode command", () => {
-  const cmd = devBindingsCommand("web");
-  assert.ok(cmd, "web has 10 service bindings but no way to run with them");
-  assert.match(cmd, /-c wrangler\.dev\.jsonc/, "bindings mode must load the generated overlay");
-  assert.match(cmd, new RegExp(`--port ${DEV_APPS.web.port}\\b`));
+// For apps/web that meant its 10 bindings were absent and the readers DEGRADED rather than throwing.
+// Concretely: exchangeTicket() prefers the AUTH_SESSION_EXCHANGE RPC and falls back to a public HTTP
+// fetch when unbound, so the DEFAULT local login took a transport production never uses, silently. The
+// default is now the bindings path; fast refresh is the named opt-out.
+test("a Next app WITH service bindings runs WITH them by default", () => {
+  const cmd = devCommand("web");
+  assert.match(cmd, /-c wrangler\.dev\.jsonc/, "the default must load the generated overlay");
   assert.match(
     cmd,
     /opennextjs-cloudflare preview/,
-    "bindings mode must use the preview, not next dev",
+    "the default must be the preview, not next dev",
   );
+  assert.ok(!/next dev/.test(cmd), "the default still runs next dev, so the bindings are absent");
+  assert.match(cmd, new RegExp(`--port ${DEV_APPS.web.port}\\b`));
 });
 
-test("bindings mode is offered only where it changes something", () => {
-  // www is a Next app with NO service bindings; the workers already load the overlay in their normal
-  // dev command. Offering a second mode there would be noise pretending to be capability.
-  assert.equal(devBindingsCommand("www"), null);
-  assert.equal(devBindingsCommand("engine"), null);
-  assert.equal(devBindingsCommand("auth"), null);
+test("a Next app with NO service bindings keeps the fast loop", () => {
+  // www has no bindings, so the preview would cost fast refresh and buy nothing. The trade is only worth
+  // making where a binding actually changes the code path.
+  assert.match(devCommand("www"), /next dev/);
+  assert.ok(!/opennextjs-cloudflare/.test(devCommand("www")));
 });
 
-test("web's committed dev:bindings script matches the derived command", () => {
+test("fast refresh stays reachable as an explicit opt-out", () => {
+  const fast = devFastCommand("web");
+  assert.match(fast, /next dev/);
+  assert.match(fast, new RegExp(`-p ${DEV_APPS.web.port}\\b`));
+  // …and it is offered ONLY where the default is something else, so it cannot read as a second way to do
+  // the same thing.
+  assert.equal(
+    devFastCommand("www"),
+    null,
+    "www's default IS next dev; a second name would be noise",
+  );
+  assert.equal(devFastCommand("engine"), null);
+});
+
+test("web's committed dev scripts match the derived commands", () => {
   const pkg = JSON.parse(
     readFileSync(new URL("../apps/web/package.json", import.meta.url), "utf8"),
   );
-  assert.equal(pkg.scripts["dev:bindings"], devBindingsCommand("web"));
-  // …and the DEFAULT stays the fast loop. Changing that is a deliberate call, not a silent drift.
-  assert.equal(pkg.scripts.dev, devCommand("web"));
-  assert.match(pkg.scripts.dev, /next dev/);
+  assert.equal(
+    pkg.scripts.dev,
+    devCommand("web"),
+    "the committed default drifted from the derived one",
+  );
+  assert.equal(pkg.scripts["dev:fast"], devFastCommand("web"));
+  // The opt-in name is gone: leaving `dev:bindings` behind would imply bindings are still the exception.
+  assert.equal(pkg.scripts["dev:bindings"], undefined);
 });

@@ -172,6 +172,13 @@ export const CRON_APPS = new Set(
 export function devCommand(app) {
   const spec = DEV_APPS[app];
   if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
+  // A Next app that CALLS other Workers runs under the OpenNext preview, because `next dev` is not
+  // wrangler: it takes no `-c`, so it cannot carry a service binding at all. apps/web has ten, and their
+  // readers DEGRADE rather than throw when unbound — `exchangeTicket()` prefers the AUTH_SESSION_EXCHANGE
+  // RPC and quietly falls back to a public HTTP fetch. So the old default served a login flow over a
+  // transport production never uses, and nothing said so. Fast refresh is the trade; `dev:fast` keeps it
+  // one command away for pure UI work, where no binding is in the path anyway.
+  if (spec.kind === "next" && SERVICE_BINDINGS[app]) return devBindingsCommand(app);
   if (spec.kind === "next") return `next dev -p ${spec.port}`;
   const inspector = `--inspector-port ${inspectorPortFor(app)}`;
   if (spec.kind === "opennext") {
@@ -220,6 +227,20 @@ export function duplicatePorts() {
  *
  * @returns {string | null} null when the app has no bindings to gain.
  */
+/**
+ * The fast-refresh opt-OUT for a Next app whose default is now the bindings preview.
+ *
+ * Returns null where the default already IS `next dev` — offering a second name for the same command
+ * would read as a capability rather than what it is. Use it for pure UI work, where no service binding is
+ * in the path; anything touching login, endpoints, or delivery wants the default.
+ */
+export function devFastCommand(app) {
+  const spec = DEV_APPS[app];
+  if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
+  if (spec.kind !== "next" || !SERVICE_BINDINGS[app]) return null;
+  return `next dev -p ${spec.port}`;
+}
+
 export function devBindingsCommand(app) {
   const spec = DEV_APPS[app];
   if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);

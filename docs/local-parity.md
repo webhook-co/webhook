@@ -62,6 +62,34 @@ repointing them needed no new provisioning.
 
 ---
 
+## ~~apps/web runs without its service bindings~~ — CLOSED
+
+**`pnpm dev` now runs apps/web under the OpenNext preview with all 10 service bindings.** It used to run
+`next dev`, and `next dev` is not wrangler: it takes no `-c`, so it cannot carry a service binding at all.
+
+That mattered more than "a binding is missing", because the readers **degrade rather than throw**.
+`exchangeTicket()` prefers the `AUTH_SESSION_EXCHANGE` RPC and quietly falls back to a public
+`POST /session/exchange` when unbound — a route that exists *only* for local dev and preview, and is
+retired to a 404 on the prod host. So the default local login exercised a transport production never uses,
+and produced exactly the same redirect either way.
+
+Measured with the same bogus ticket against the same auth worker, watching auth's request log:
+
+```
+pnpm dev      (bindings)  → auth received 0 HTTP requests   ← redeemed over the RPC
+pnpm dev:fast (next dev)  → auth received POST /session/exchange 401   ← the fetch fallback
+```
+
+Identical `307` to the caller both times. Nothing in the UI, the logs, or the status code distinguished
+them — which is precisely why it survived this long.
+
+The cost is fast refresh, so it is kept one command away: **`pnpm --filter @webhook-co/web dev:fast`** for
+pure UI work, where no binding is in the path. Anything touching login, endpoints, or delivery wants the
+default. `apps/www` keeps `next dev` outright — it has no service bindings, so the preview would cost the
+fast loop and buy nothing.
+
+---
+
 ## Marketing site: two routes its worker adds
 
 `apps/www` runs under `next dev` for a fast content loop, but its wrangler `main` is a custom worker
