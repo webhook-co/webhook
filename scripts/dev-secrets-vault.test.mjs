@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   collectFromDevVars,
   mergeIntoDevVars,
+  NOT_SHAREABLE,
   parseEnv,
   pullSet,
   sharedSecretNames,
@@ -21,11 +22,13 @@ test("shares the credentials that actually need sharing", () => {
     "GOOGLE_CLIENT_SECRET",
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
-    "RESEND_API_KEY",
     "TURNSTILE_SECRET_KEY",
   ]) {
     assert.ok(names.includes(required), `${required} is parity-required but not shared`);
   }
+  // RESEND_API_KEY is parity-required too, and deliberately NOT here — it is the same key production
+  // sends with, so it is excluded by NOT_SHAREABLE and stays a manual step. See the test below.
+  assert.ok(!names.includes("RESEND_API_KEY"));
 });
 
 test("never shares a mode FLAG", () => {
@@ -53,13 +56,12 @@ test("never shares a name that is a LOCAL literal in any app", () => {
 
 // The exact set, not a floor. A floor of 6 passed while every STRIPE_* name silently dropped out of
 // discovery — the tool would still report success, just quietly stop sharing half of what it claims to.
-test("the shared set is exactly the documented 11 names", () => {
+test("the shared set is exactly the documented 10 names", () => {
   assert.deepEqual(sharedSecretNames(), [
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
-    "RESEND_API_KEY",
     "STRIPE_METER_ID",
     "STRIPE_PLANS",
     "STRIPE_PORTAL_CONFIGURATION_ID",
@@ -72,13 +74,35 @@ test("the shared set is exactly the documented 11 names", () => {
   }
 });
 
+// A credential that is ALSO live in production must never enter this vault. The vault's protection is a
+// passphrase, and repo read access yields the ciphertext and the wrapped key together — fine for a
+// Stripe test key, not for something that can send mail as webhook.co.
+test("a production credential is never shareable, by either direction", () => {
+  for (const name of NOT_SHAREABLE) {
+    assert.ok(
+      !sharedSecretNames().includes(name),
+      `${name} is a prod credential and must not be vaulted`,
+    );
+    assert.deepEqual(
+      [...pullSet(new Map([[name, "leaked"]]), [name])],
+      [],
+      `${name} would still be applied by a pull from an older vault`,
+    );
+  }
+});
+
 // --- Pull applies the SAME allowlist push does ----------------------------------------------------
 // The ciphertext is committed, so it outlives the allowlist that produced it. A vault written before a
 // name was reclassified still carries that name, and a pull that trusts the file's contents would
 // re-apply it — reintroducing precisely the STRIPE_METER_EVENT_NAME bug, from a file, months later.
 // The allowlist has to be enforced on the way OUT as well as the way in.
 
-const APP_SPECS = ["GOOGLE_CLIENT_ID", "OAUTH_MODE", "STRIPE_METER_EVENT_NAME", "RESEND_API_KEY"];
+const APP_SPECS = [
+  "GOOGLE_CLIENT_ID",
+  "OAUTH_MODE",
+  "STRIPE_METER_EVENT_NAME",
+  "STRIPE_SECRET_KEY",
+];
 
 test("pull ignores a name the vault carries but the allowlist does not", () => {
   const vault = new Map([
@@ -96,21 +120,21 @@ test("pull ignores a name the vault carries but the allowlist does not", () => {
 test("pull skips a blank, so it cannot clobber a real local value", () => {
   // `!== undefined` treats "" as present. Merging that would blank a working credential and the only
   // symptom would be a provider quietly vanishing from /login.
-  assert.deepEqual([...pullSet(new Map([["RESEND_API_KEY", ""]]), APP_SPECS)], []);
+  assert.deepEqual([...pullSet(new Map([["STRIPE_SECRET_KEY", ""]]), APP_SPECS)], []);
 });
 
 test("pull still delivers every allowlisted name the app actually declares", () => {
   // Anti-vacuity: the two tests above would also pass if pullSet returned nothing at all.
   const vault = new Map([
     ["GOOGLE_CLIENT_ID", "a"],
-    ["RESEND_API_KEY", "b"],
+    ["STRIPE_SECRET_KEY", "b"],
     ["TURNSTILE_SECRET_KEY", "not-this-app"],
   ]);
   assert.deepEqual(
     [...pullSet(vault, APP_SPECS)].sort(),
     [
       ["GOOGLE_CLIENT_ID", "a"],
-      ["RESEND_API_KEY", "b"],
+      ["STRIPE_SECRET_KEY", "b"],
     ],
     "a name this app declares and the allowlist shares was not delivered",
   );

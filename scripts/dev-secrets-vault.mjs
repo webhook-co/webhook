@@ -66,6 +66,8 @@ const LOCAL_KEY = join(homedir(), ".config", "sops", "age", "keys.txt");
  *    otherwise, because both are plausible strings. A name that is a literal SOMEWHERE is never a shared
  *    credential; the generator already writes it.
  *
+ *  - **anything that is also a PRODUCTION credential.** See NOT_SHAREABLE below.
+ *
  * Derived from the manifest, never a second list.
  */
 export function sharedSecretNames(appNames = APP_NAMES) {
@@ -77,10 +79,32 @@ export function sharedSecretNames(appNames = APP_NAMES) {
     }
   }
   return [...scopes]
-    .filter(([name, seen]) => seen.has("external") && !seen.has("local") && !name.endsWith("_MODE"))
+    .filter(
+      ([name, seen]) =>
+        seen.has("external") &&
+        !seen.has("local") &&
+        !name.endsWith("_MODE") &&
+        !NOT_SHAREABLE.has(name),
+    )
     .map(([name]) => name)
     .sort();
 }
+
+/**
+ * Credentials this vault refuses to carry because the SAME value is live in production.
+ *
+ * The vault's threat model is "a private repo, plus a passphrase in your head". That is a fine trade for a
+ * Stripe *test-mode* key or an OAuth client for `localhost` callbacks — the blast radius of losing one is a
+ * local dev environment. It is NOT a fine trade for a credential that can send mail as webhook.co, because
+ * repo read access yields the ciphertext AND the wrapped key together, so the passphrase is the only thing
+ * standing between a repo reader and a production capability. Compliance-by-design puts production secrets
+ * in a KMS, and an offline-attackable git blob is not that.
+ *
+ * `RESEND_API_KEY` is currently one key shared by local dev and prod. The fix is a dev-scoped Resend key
+ * rather than a weaker vault; until that exists, this stays a documented manual step and the other ten
+ * credentials still travel. Removing a name from here is a decision about blast radius, not a cleanup.
+ */
+export const NOT_SHAREABLE = new Set(["RESEND_API_KEY"]);
 
 /** Parse a .dev.vars into name → value. Splits on the FIRST `=` (base64 padding, URLs with queries). */
 export function parseEnv(text) {
