@@ -150,6 +150,21 @@ export const NOT_SHAREABLE = new Map([
     "it is the same key production sends with — a prod capability does not belong in a passphrase-protected git blob",
   ],
   [
+    "AWS_SECRET_ACCESS_KEY",
+    // Blast radius, same test as RESEND_API_KEY: this grants kms:Decrypt against the PRODUCTION KEK. The
+    // policy is narrow — one key, two actions — but "narrow" is not "not production". The vault's
+    // protection is a passphrase sitting beside the ciphertext, and a production capability does not
+    // belong behind one. KMS_KEY_ARN and AWS_REGION DO travel: an ARN and a region name are identifiers,
+    // and withholding them would cost setup friction for no security.
+    "it grants Decrypt against the production KEK — narrow is not the same as non-production",
+  ],
+  [
+    "AWS_ACCESS_KEY_ID",
+    // Useless alone, but it names the principal the secret half belongs to. Splitting a credential pair
+    // across "vaulted" and "fetch by hand" invites someone to wonder which half is the secret one.
+    "it is one half of a credential whose other half reaches production; they travel together or not at all",
+  ],
+  [
     "STRIPE_WEBHOOK_SIGNING_SECRET",
     // Machine scope. A registered Stripe endpoint POSTs to a public URL and can never reach localhost, so
     // the local receiver is fed by the CLI's outbound tunnel and `.dev.vars` holds the CLI's OWN whsec_

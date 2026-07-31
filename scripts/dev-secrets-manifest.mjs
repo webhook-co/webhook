@@ -143,11 +143,55 @@ export const APPS = {
         scope: "external",
         note: "Stripe billing-meter id from your sandbox. Pairs with STRIPE_METER_EVENT_NAME.",
       },
+      // --- The KEK custodian ------------------------------------------------------------------
+      // Local dev now uses the SAME custodian production does: real AWS KMS, through the same
+      // `AwsKmsProvider` seam, with the team's existing least-privilege IAM user (kms:GenerateDataKey +
+      // kms:Decrypt on one key, and nothing else). The KEK itself never leaves AWS — only wrapped data
+      // keys cross the wire — so what a machine holds is the ability to wrap and unwrap, not the key.
+      //
+      // This used to default to the hermetic LocalKmsProvider, which meant the envelope-encryption path
+      // that seals provider secrets and ingest tokens — the compliance-critical one — was never exercised
+      // before a deploy. AGENTS.md: look for the real credential before inventing a substitute. It
+      // existed the whole time.
+      //
+      // ⚠️ apps/engine REFUSES `KMS_MODE=local` when any AWS field is bound, so these two configurations
+      // cannot be half-applied: bind AWS and the flag is rejected outright rather than quietly sealing
+      // secrets under a throwaway key nobody custodies.
+      {
+        name: "KMS_KEY_ARN",
+        scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "KMS_MODE", value: "local" },
+        note: "REQUIRED for prod parity — the KEK ARN. An identifier, not a secret, so the vault carries it.",
+      },
+      {
+        name: "AWS_REGION",
+        scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "KMS_MODE", value: "local" },
+        note: "REQUIRED for prod parity — the KEK's region (us-east-2). Not a secret; the vault carries it.",
+      },
+      {
+        name: "AWS_ACCESS_KEY_ID",
+        scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "KMS_MODE", value: "local" },
+        note: "REQUIRED for prod parity — the IAM user scoped to kms:GenerateDataKey + kms:Decrypt on that one key. NOT vaulted: it pairs with a credential that reaches production.",
+      },
+      {
+        name: "AWS_SECRET_ACCESS_KEY",
+        scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "KMS_MODE", value: "local" },
+        note: "REQUIRED for prod parity. NOT vaulted — it grants Decrypt against the production KEK, which is a production capability regardless of how narrow the policy is.",
+      },
       {
         name: "KMS_MODE",
-        scope: "local",
-        value: "local",
-        note: "Selects the hermetic dev KEK custodian instead of AWS KMS. Without it, creating an endpoint needs real AWS IAM credentials. Lives ONLY here — .dev.vars is never sent by `wrangler deploy`, kmsProviderFromEnv refuses it whenever AWS KMS config is bound, and scripts/kms-mode-guard.mjs keeps it out of every committed Worker config.",
+        // `external`, and correct value BLANK: blank means real AWS KMS, matching production. It was
+        // `local`/"local", which made the substitute the default for everyone. Set it to "local" only if
+        // you cannot hold AWS credentials — the endpoint-creation path then seals under a throwaway KEK.
+        scope: "external",
+        note: 'LEAVE BLANK so the real AWS KMS custodian runs, exactly as in production. Set it to "local" ONLY if you cannot hold AWS credentials; endpoint creation then seals under a hermetic throwaway KEK and the AWS path is never exercised. Lives ONLY here — .dev.vars is never sent by `wrangler deploy`, kmsProviderFromEnv refuses it whenever AWS KMS config is bound, and scripts/kms-mode-guard.mjs keeps it out of every committed Worker config.',
       },
       {
         name: "LOCAL_KEK",
