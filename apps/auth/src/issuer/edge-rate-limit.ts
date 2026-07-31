@@ -53,9 +53,11 @@ export const EDGE_RULES: Record<EdgeEndpoint, RateLimitRule> = {
   // never the ability to sign in. Every other rule here guards a path with no such alternative.
   //
   // What it is defending: on any body carrying a well-formed JWT header, the handler calls
-  // `getGooglePublicKey`, a plain uncached fetch to Google's certs endpoint — one outbound subrequest per
-  // request, forgeable header and all. (Truly random junk is free: `decodeProtectedHeader` bails before
-  // the fetch.) Modest as amplifiers go, but unmetered and attacker-triggerable is the part worth fixing.
+  // `getGooglePublicKey`, which holds no cache of its own — one outbound fetch to Google's certs endpoint
+  // per request, forgeable header and all. Truly random junk is free, since `decodeProtectedHeader` bails
+  // before the fetch. The Workers platform cache may still honour Google's Cache-Control on that GET, so
+  // this is an amplifier of bounded size rather than an unbounded one — modest as amplifiers go, but
+  // unmetered and attacker-triggerable is the part worth fixing.
   one_tap: { limit: 30, windowSeconds: 60 },
 };
 

@@ -496,7 +496,7 @@ describe("makeAuth", () => {
 describe("buildAuthConfig — Google One Tap", () => {
   // A realistically-shaped id: the SECRETS fixture's "google-id" is a placeholder that (correctly) does
   // not pass the shape guard, which is itself pinned by a test below.
-  const CLIENT_ID = "231453726280-abc123def456.apps.googleusercontent.com";
+  const CLIENT_ID = "1234567890-abc123def456.apps.googleusercontent.com";
   const withOneTap: ResolvedAuthSecrets = { ...SECRETS, googleClientId: CLIENT_ID };
 
   const oneTapPlugin = (secrets: ResolvedAuthSecrets) =>
@@ -548,12 +548,14 @@ describe("buildAuthConfig — Google One Tap", () => {
     expect(oneTapPlugin({ ...withOneTap, googleClientId: "GOCSPX-1a2b3c4d5e6f" })).toBeUndefined();
   });
 
-  it("trims the resolved id before pinning it as the audience", () => {
-    const options = (
-      oneTapPlugin({ ...withOneTap, googleClientId: ` ${CLIENT_ID}\n` }) as
-        { options?: { clientId?: string } } | undefined
-    )?.options;
-    expect(options?.clientId).toBe(CLIENT_ID);
+  // Whitespace is canonicalized ONCE, in resolveAuthSecrets (env.ts), not here. Trimming locally is what
+  // let the two consumers of this one secret disagree: One Tap trimmed before validating while
+  // `socialProviders` used the raw value, so a single stray newline produced a WORKING One Tap prompt
+  // and a BROKEN "Continue with Google" button — the enhancement surviving while the primary affordance
+  // failed. This pins the consequence: by the time a secret reaches here it is already canonical, so an
+  // untrimmed value is a genuinely malformed id and the gate refuses it rather than repairing it.
+  it("does not repair an untrimmed id — canonicalization belongs to resolveAuthSecrets", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientId: ` ${CLIENT_ID}\n` })).toBeUndefined();
   });
 
   // The plugin contributes NO schema key, so it adds no columns and the Better Auth drift guard — which

@@ -1,21 +1,28 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The auth surface's real-browser gate. A real Chromium against a real `next dev` — and, unlike
-// apps/web's e2e, against NO database.
+// The auth surface's real-browser gate. A real Chromium against a real PRODUCTION BUILD served by
+// `next start` — and, unlike apps/web's e2e, against NO database.
 //
-// That is not a shortcut, it is a property of the page: a signed-out visitor's /login render touches
-// neither secrets nor Postgres. `isSignedIn()` short-circuits on the absent session cookie before it
-// ever builds an auth instance (resolve-signed-in.ts:49), and `socialProvidersForLogin()` catches any
+// The production build is the load-bearing half: the suite's central assertion is about the CSP, and the
+// dev and production policies deliberately differ (see security-headers.ts). Running this against
+// `next dev` would exercise the relaxed policy and prove nothing about what ships. See the webServer note
+// below for why the build is part of the server command rather than a separate step.
+//
+// No database is not a shortcut, it is a property of the page: a signed-out visitor's /login render
+// touches neither secrets nor Postgres. `isSignedIn()` short-circuits on the absent session cookie before
+// it ever builds an auth instance (resolve-signed-in.ts:49), and `socialProvidersForLogin()` catches any
 // fault and degrades to the production shape (social-providers.ts:25). So this job needs no Postgres
-// service, no dbmate, and no migrations — it starts a dev server and opens a page.
+// service, no dbmate, and no migrations.
 //
 // PORT 3101, not the app's usual 3001, deliberately. With `reuseExistingServer` on locally, pointing at
 // 3001 would silently adopt whatever a developer already had running there — possibly a different app,
 // possibly a stale build — and report its behaviour as this suite's result. A dedicated port means the
 // server under test is always the one this config started.
 const PORT = 3101;
-// 127.0.0.1, never localhost: next.config.ts pins `allowedDevOrigins: ["127.0.0.1"]`, and serving from
-// the other spelling refuses the client bundle so React never hydrates (see the note in login.spec.ts).
+// 127.0.0.1, never localhost. `allowedDevOrigins` does NOT apply here — Next only enforces it under
+// `next dev`, and this serves a production build — but the two spellings are still distinct origins to
+// the browser, and pinning one keeps this suite consistent with the rest of the dev stack (and with
+// docs/local-parity.md's note on the same trap).
 const baseURL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({

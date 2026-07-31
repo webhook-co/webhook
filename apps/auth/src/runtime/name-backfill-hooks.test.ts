@@ -2,12 +2,8 @@ import { splitName } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { personalOrgName, personalOrgSlug } from "./bootstrap";
-import {
-  NAME_BACKFILL_FIELDS,
-  nameBackfillBefore,
-  ONE_TAP_CALLBACK_PATH,
-  withNameBackfill,
-} from "./name-backfill-hooks";
+import { NAME_BACKFILL_FIELDS, nameBackfillBefore, withNameBackfill } from "./name-backfill-hooks";
+import { ONE_TAP_CALLBACK_PATH } from "./urls";
 
 /**
  * Build a Google-shaped ID token. UNSIGNED on purpose — the signature is deliberately garbage.
@@ -307,5 +303,61 @@ describe("withNameBackfill — composition", () => {
 
   it("tolerates undefined hooks", () => {
     expect(() => withNameBackfill(undefined)).not.toThrow();
+  });
+});
+
+// CHAINING, not replacing. `withAccountTokenStripping` overrides its hook unconditionally because data
+// minimization is authoritative; a name back-fill has no such claim, so discarding a caller's
+// `user.create.before` would be a silent bug — and one that ships green, because nothing supplies one today.
+describe("withNameBackfill — composition with an existing user.create.before", () => {
+  const call = (hooks: ReturnType<typeof withNameBackfill>, user: unknown, context?: unknown) =>
+    (
+      hooks.user?.create?.before as unknown as (
+        u: unknown,
+        c: unknown,
+      ) => Promise<{ data?: Record<string, unknown> } | false | undefined>
+    )(user, context ?? null);
+
+  it("runs a prior before-hook and keeps BOTH results", async () => {
+    const prior = vi.fn(async () => ({ data: { email: "normalized@example.dev" } }));
+    const hooks = withNameBackfill({ user: { create: { before: prior } } } as never);
+
+    const result = await call(hooks, { email: "MESSY@example.dev", name: "Ada Lovelace" });
+
+    expect(prior).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      data: { email: "normalized@example.dev", firstName: "Ada", lastName: "Lovelace" },
+    });
+  });
+
+  it("lets the prior hook ABORT the insert — its `false` is final", async () => {
+    const prior = vi.fn(async () => false);
+    const hooks = withNameBackfill({ user: { create: { before: prior } } } as never);
+    expect(await call(hooks, { name: "Ada Lovelace" })).toBe(false);
+  });
+
+  // The back-fill only ever writes ABSENT fields, so a prior hook that already set a name wins. That is
+  // the correct precedence for a fallback, and it means chaining cannot regress a caller's intent.
+  it("does not overwrite a name the prior hook set", async () => {
+    const prior = vi.fn(async () => ({ data: { firstName: "Augusta" } }));
+    const hooks = withNameBackfill({ user: { create: { before: prior } } } as never);
+
+    const result = await call(hooks, { name: "Ada Lovelace" });
+
+    expect(result?.data?.firstName).toBe("Augusta");
+    expect(result?.data?.lastName).toBe("Lovelace");
+  });
+
+  it("still works when there is no prior hook at all (the production shape today)", async () => {
+    const hooks = withNameBackfill(undefined);
+    expect(await call(hooks, { name: "Ada Lovelace" })).toEqual({
+      data: { firstName: "Ada", lastName: "Lovelace" },
+    });
+  });
+
+  it("returns undefined when neither hook wants to change anything", async () => {
+    const prior = vi.fn(async () => undefined);
+    const hooks = withNameBackfill({ user: { create: { before: prior } } } as never);
+    expect(await call(hooks, { firstName: "Ada", lastName: "Lovelace" })).toBeUndefined();
   });
 });

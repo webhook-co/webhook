@@ -18,10 +18,11 @@ export const ONE_TAP_CALLBACK_PATH = "/one-tap/callback";
 /**
  * The same endpoint as a REQUEST path, which is what the Worker dispatch matches on.
  *
- * Derived rather than written out, because the two forms are read by code that never meets: the name
- * back-fill hook matches the stripped form, and the edge throttle in issuer-handler.ts matches this one.
- * Spelling them independently would let a basePath change silently unmeter the endpoint — the gate would
- * simply stop matching, with nothing failing to say so.
+ * Derived rather than written out, because the two forms are read by code that never meets. The STRIPPED
+ * form is what an endpoint context carries, so the name back-fill hook and the sign-in telemetry map both
+ * match on it; the REQUEST form is what the Worker dispatch sees, so the edge throttle and the browser's
+ * exchange POST both use this one. Spelling them independently would let a basePath change silently
+ * unmeter the endpoint — the gate would simply stop matching, with nothing failing to say so.
  */
 export const ONE_TAP_CALLBACK_URL_PATH = `${AUTH_BASE_PATH}${ONE_TAP_CALLBACK_PATH}`;
 /** The verified Resend sender (mail.webhook.co; tracking off — see magic-link.ts). */

@@ -19,7 +19,7 @@ import type { ResolvedAuthSecrets } from "./env";
 // better-auth's in-memory one — so the assertions are about OUR wiring, never about Google's uptime.
 
 const GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs";
-const CLIENT_ID = "231453726280-abc123def456.apps.googleusercontent.com";
+const CLIENT_ID = "1234567890-abc123def456.apps.googleusercontent.com";
 const KID = "test-key-1";
 
 const SECRETS: ResolvedAuthSecrets = {

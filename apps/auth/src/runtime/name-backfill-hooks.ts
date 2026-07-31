@@ -51,10 +51,6 @@ import type { betterAuth } from "better-auth";
 type AuthConfig = Parameters<typeof betterAuth>[0];
 type DatabaseHooks = NonNullable<AuthConfig["databaseHooks"]>;
 
-// Re-exported for the tests that already import it from here, but DEFINED in urls.ts alongside the
-// request-path form the edge throttle matches — one basePath, one place, so the two cannot drift.
-export { ONE_TAP_CALLBACK_PATH };
-
 /**
  * The ONLY columns this hook may write, and the artifact that makes that true.
  *
@@ -65,12 +61,10 @@ export { ONE_TAP_CALLBACK_PATH };
  * mark a brand-new user as already onboarded and skip onboarding permanently. Every value written below
  * is projected through this list, and a test feeds the hook a hostile payload to prove it.
  */
-export const NAME_BACKFILL_FIELDS: readonly string[] = ["firstName", "lastName"];
+export const NAME_BACKFILL_FIELDS = ["firstName", "lastName"] as const;
 
-interface NamePatch {
-  firstName?: string;
-  lastName?: string;
-}
+/** Exactly the fields {@link NAME_BACKFILL_FIELDS} names — so the list and the type cannot drift. */
+type NamePatch = Partial<Record<(typeof NAME_BACKFILL_FIELDS)[number], string>>;
 
 /** A user row as handed to `user.create.before` — everything optional, because it is library-shaped. */
 interface CreatingUser {
@@ -153,15 +147,20 @@ export async function nameBackfillBefore(
     if (!wantFirst && !wantLast) return undefined;
 
     const candidate = exactNamesFromContext(row, context) ?? splitName(asString(row.name));
+    const wanted: Record<(typeof NAME_BACKFILL_FIELDS)[number], boolean> = {
+      firstName: wantFirst,
+      lastName: wantLast,
+    };
 
+    // A REAL projection, not a described one. Building the patch by iterating the allowlist is what makes
+    // "this hook can only ever write these two columns" a property of the code rather than of a comment —
+    // and it is load-bearing, because a `create.before` return is merged straight into the adapter payload
+    // with no `input:false` filtering, so a stray `onboardedAt` here would permanently skip onboarding.
     const patch: NamePatch = {};
-    // Projection through the allowlist: every write below names a field from NAME_BACKFILL_FIELDS and
-    // nothing reaches `patch` by any other route.
-    if (wantFirst && asString(candidate.firstName) !== undefined) {
-      patch.firstName = asString(candidate.firstName);
-    }
-    if (wantLast && asString(candidate.lastName) !== undefined) {
-      patch.lastName = asString(candidate.lastName);
+    for (const field of NAME_BACKFILL_FIELDS) {
+      if (!wanted[field]) continue;
+      const value = asString(candidate[field]);
+      if (value !== undefined) patch[field] = value;
     }
 
     return Object.keys(patch).length > 0 ? { data: patch } : undefined;
@@ -179,15 +178,49 @@ export async function nameBackfillBefore(
  * bootstrap's `user.create.after`, which provisions the personal org — pass through BY REFERENCE. A
  * single composition point in `buildAuthConfig` is what guarantees the back-fill for every auth instance
  * regardless of caller, rather than depending on which deps a particular caller happened to pass.
+ *
+ * An existing `user.create.before` is CHAINED, not replaced, and the difference from its sibling is
+ * deliberate. `withAccountTokenStripping` overrides unconditionally because token-stripping is
+ * authoritative — no caller may opt out of data minimization. A name back-fill has no such claim, so
+ * silently discarding a caller's hook (a normalization, a policy gate) would be a bug, and one that ships
+ * green because nothing supplies a `user.create.before` today.
+ *
+ * The prior hook runs FIRST and this one merges over it, keeping the ordering intuitive: the caller
+ * shapes the row, then the back-fill fills what is still absent. Because the back-fill only ever writes
+ * ABSENT fields, a prior hook that sets a name wins — which is the correct precedence for a fallback.
  */
 export function withNameBackfill(hooks: DatabaseHooks | undefined): DatabaseHooks {
+  const prior = hooks?.user?.create?.before as
+    ((user: unknown, context: unknown) => Promise<unknown>) | undefined;
+
+  const before = async (user: CreatingUser, context: unknown) => {
+    if (prior === undefined) return nameBackfillBefore(user, context);
+
+    const priorResult = await prior(user, context);
+    // `false` means "abort the insert" — the caller's decision is final and must not be overridden.
+    if (priorResult === false) return false;
+
+    const merged =
+      typeof priorResult === "object" && priorResult !== null && "data" in priorResult
+        ? { ...user, ...(priorResult as { data: Record<string, unknown> }).data }
+        : user;
+
+    const ours = await nameBackfillBefore(merged as CreatingUser, context);
+    if (ours === undefined) return priorResult as undefined;
+    const priorData =
+      typeof priorResult === "object" && priorResult !== null && "data" in priorResult
+        ? (priorResult as { data: Record<string, unknown> }).data
+        : {};
+    return { data: { ...priorData, ...ours.data } };
+  };
+
   return {
     ...hooks,
     user: {
       ...hooks?.user,
       create: {
         ...hooks?.user?.create,
-        before: nameBackfillBefore,
+        before,
       },
     },
   } as DatabaseHooks;

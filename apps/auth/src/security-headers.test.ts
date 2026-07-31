@@ -27,6 +27,10 @@ const PRODUCTION_CSP: ReadonlyArray<[string, string]> = [
   ["object-src", "'none'"],
 ];
 
+/** One directive's value, read out of a SERIALIZED policy — i.e. out of the code, not out of a fixture. */
+const directiveIn = (csp: string, directive: string): string =>
+  csp.split("; ").find((part) => part.startsWith(`${directive} `)) ?? "";
+
 describe("auth CSP", () => {
   it("serializes EXACTLY the production policy — every directive, every value", () => {
     expect(buildContentSecurityPolicy()).toBe(
@@ -55,19 +59,18 @@ describe("auth CSP", () => {
   // what the experiment could NOT settle. style-src is called out because it is the one commonly missed:
   // GSI loads an external stylesheet, which 'unsafe-inline' does not cover.
   it("grants Google Identity Services exactly the directives One Tap needs", () => {
+    // Read from the CODE, never from PRODUCTION_CSP. Asserting the fixture against itself is how a test
+    // ends up unable to fail for the reason its name gives.
     const csp = buildContentSecurityPolicy();
     for (const directive of ["script-src", "style-src", "connect-src", "frame-src"]) {
-      const value = PRODUCTION_CSP.find(([d]) => d === directive)?.[1];
-      expect(value).toContain(GOOGLE_IDENTITY_ORIGIN);
-      expect(csp).toContain(`${directive} ${value}`);
+      expect(directiveIn(csp, directive)).toContain(GOOGLE_IDENTITY_ORIGIN);
     }
   });
 
   it("does NOT grant Google img-src — the avatar is never governed by this page's CSP", () => {
     // Under FedCM it is browser chrome; under the legacy path it is inside a cross-origin iframe. Adding
     // lh3.googleusercontent.com here would widen the policy for something it cannot affect.
-    const imgSrc = PRODUCTION_CSP.find(([d]) => d === "img-src")?.[1];
-    expect(imgSrc).not.toContain("google");
+    expect(directiveIn(buildContentSecurityPolicy(), "img-src")).not.toContain("google");
   });
 });
 

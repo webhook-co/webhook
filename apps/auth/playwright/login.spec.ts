@@ -14,25 +14,11 @@ import { expect, test } from "@playwright/test";
 //
 // Deliberately NOT asserted: that the Turnstile widget SOLVES. That needs Cloudflare's CDN to answer
 // and its iframe to complete a challenge — a real network dependency and a documented flake source in
-// this repo. The assertions below all hold without a single third-party byte arriving.
+// this repo. Every assertion below holds without any third-party script EXECUTING: Cloudflare's is never
+// waited on, and Google's is stubbed for every test (see the beforeEach).
 
 /** Third-party origins whose console noise is not ours to gate (a CDN hiccup is not our regression). */
 const THIRD_PARTY = ["challenges.cloudflare.com", "accounts.google.com"];
-
-/**
- * Console errors the BROWSER emits about FedCM, attributed to our document rather than to any script.
- *
- * The source-URL filter above cannot catch these: Chrome logs them against the page URL, not against
- * accounts.google.com, because they come from the browser's own FedCM implementation rather than from
- * Google's script. "Provider's accounts list is empty" is simply what FedCM says when the visitor has no
- * Google session — the ordinary state for a signed-out visitor, and therefore something a large share of
- * real users will produce. It is a notice, not a fault: nothing is broken and One Tap correctly shows no
- * prompt.
- *
- * Matched on the EXACT string, so this exemption cannot quietly grow into "ignore anything mentioning
- * Google". A different FedCM error still fails this test.
- */
-const BROWSER_FEDCM_NOTICES = ["Provider's accounts list is empty."];
 
 interface CspViolation {
   violatedDirective: string;
@@ -85,6 +71,22 @@ async function captureCspViolations(page: import("@playwright/test").Page): Prom
 }
 
 test.describe("/login", () => {
+  // HERMETIC BY DEFAULT. Every test in this file stubs accounts.google.com, so no assertion here depends
+  // on Google being reachable — which is what the header above promises and what two of these tests were
+  // quietly breaking before. It matters beyond flakiness: with a placeholder client id registered to no
+  // Google project, the real GSI script emits errors attributed to OUR document, and the console-error
+  // test would then fail for a reason no commit caused.
+  //
+  // An EMPTY script body is deliberate. The question these tests can answer is whether the browser was
+  // ALLOWED to fetch GSI under the production CSP — a refusal blocks the request before any route handler
+  // runs. Whether Google's real script then initializes is a question only a human with a live Google
+  // session can settle, and it is on the ADR's verification checklist.
+  test.beforeEach(async ({ page }) => {
+    await page.route("https://accounts.google.com/**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
+    });
+  });
+
   test("renders the sign-in form and hydrates", async ({ page }) => {
     await page.goto("/login");
 
@@ -139,7 +141,6 @@ test.describe("/login", () => {
       // Everything our bundle logs still fails this test.
       const source = message.location().url;
       if (THIRD_PARTY.some((host) => source.includes(host))) return;
-      if (BROWSER_FEDCM_NOTICES.includes(message.text().trim())) return;
       errors.push(`${source}: ${message.text()}`);
     });
 
@@ -174,11 +175,8 @@ test.describe("/login", () => {
     await captureCspViolations(page);
 
     const gsiRequests: string[] = [];
-    await page.route("https://accounts.google.com/**", async (route) => {
-      gsiRequests.push(route.request().url());
-      // An empty script: GSI never initializes, which is fine — the question here is whether the browser
-      // was permitted to FETCH it. A CSP refusal would block the request before this handler ever runs.
-      await route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
+    page.on("request", (r) => {
+      if (r.url().includes("accounts.google.com")) gsiRequests.push(r.url());
     });
 
     await page.goto("/login");
@@ -201,9 +199,9 @@ test.describe("/login", () => {
     // egress shape: with the prompt active, the only origin traffic is /gsi/*, so a future change that
     // starts beaconing somewhere else on this page fails loudly.
     const attempted: string[] = [];
-    await page.route("https://accounts.google.com/**", async (route) => {
-      attempted.push(new URL(route.request().url()).pathname);
-      await route.abort();
+    page.on("request", (r) => {
+      const u = new URL(r.url());
+      if (u.hostname === "accounts.google.com") attempted.push(u.pathname);
     });
 
     await page.goto("/login");

@@ -21,6 +21,8 @@
 // which this now records for every sign-in, the first one included. Counting signups per method is a join
 // of two things that both exist, rather than a third number that might be wrong.
 
+import { ONE_TAP_CALLBACK_PATH } from "./urls";
+
 /** The sign-in methods this app can complete a sign-in through. */
 export type SignInMethod = "one_tap" | "social" | "magic_link";
 
@@ -40,7 +42,7 @@ export type SignInMethod = "one_tap" | "social" | "magic_link";
  * the right direction for telemetry, but is exactly why the map is pinned by a test.
  */
 export const SIGNIN_METHOD_BY_PATH: Readonly<Record<string, SignInMethod>> = {
-  "/one-tap/callback": "one_tap",
+  [ONE_TAP_CALLBACK_PATH]: "one_tap",
   "/callback/:id": "social",
   "/magic-link/verify": "magic_link",
 };

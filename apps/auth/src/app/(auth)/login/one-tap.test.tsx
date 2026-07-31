@@ -10,7 +10,7 @@ import type { OneTapOutcome } from "./one-tap-exchange";
 // better-auth's `oneTapClient()`, so they are what these tests pin: prompt exactly once per mount,
 // never silently, take the prompt down on unmount, and keep a failed script load off the user's screen.
 
-const CLIENT_ID = "231453726280-abc.apps.googleusercontent.com";
+const CLIENT_ID = "1234567890-abc.apps.googleusercontent.com";
 
 type InitConfig = Parameters<NonNullable<Window["google"]>["accounts"]["id"]["initialize"]>[0];
 
@@ -84,9 +84,11 @@ describe("OneTap — prompting", () => {
     expect(config.itp_support).toBe(true);
   });
 
-  // React StrictMode double-invokes effects in development, and next.config.ts turns it on. Two
-  // initialize+prompt cycles for one mount is what better-auth's module-global guard exists to stop —
-  // ours is a ref, which is per-mount rather than per-JS-context.
+  // React StrictMode double-invokes effects in development, and next.config.ts turns it on. This is the
+  // regression test for a real bug in the first draft: a `useRef` "fire once" guard looks like the
+  // obvious fix and is actively wrong, because the first (already-cancelled) pass claims the single
+  // allowed attempt and the second returns early — so One Tap never prompts AT ALL in development.
+  // Ordinary cancellation gives exactly one initialize+prompt per mount, which is what this pins.
   it("prompts ONCE under StrictMode's double effect invocation", async () => {
     const exchange = vi.fn(async () => signedIn());
     render(

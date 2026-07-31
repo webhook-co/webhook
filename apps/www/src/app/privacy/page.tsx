@@ -362,8 +362,8 @@ export default function PrivacyPage() {
             Google&apos;s script loads on every visit to the login page — before you choose a
             sign-in method — so Google can see your IP address and that you opened that page. You
             are never signed in without tapping to confirm. Your dark-mode preference is stored in
-            your browser's local storage, not a cookie. We <strong>don't</strong> use advertising
-            cookies.
+            your browser&apos;s local storage, not a cookie. We <strong>don&apos;t</strong> use
+            advertising cookies.
           </p>
 
           <AnchoredHeading id={PRIVACY_ANCHORS.children}>11. Children</AnchoredHeading>

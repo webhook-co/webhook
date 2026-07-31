@@ -142,10 +142,11 @@ describe("One Tap callback edge throttle", () => {
     }
   });
 
-  // The constant is the coupling between the plugin's registered path and the gate's path. If the
-  // basePath or the plugin path ever moves and only one side is updated, the gate silently stops
-  // matching and the endpoint goes unmetered with no other signal.
-  it("gates the path better-auth actually mounts", () => {
+  // Pins OUR constant only — it reads nothing from better-auth, so an upstream path rename would sail
+  // straight through it. What actually proves the endpoint is mounted where we throttle is
+  // one-tap-contract.test.ts, which POSTs to this path against a real betterAuth() instance and asserts
+  // 400 rather than 404. This is the cheap change-detector that sits under that.
+  it("pins the request path the throttle matches on", () => {
     expect(ONE_TAP_CALLBACK_URL_PATH).toBe("/api/auth/one-tap/callback");
   });
 });

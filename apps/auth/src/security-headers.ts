@@ -47,6 +47,22 @@ export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
  *
  * The frame-src question is on the human-verification checklist precisely because it is the one the
  * experiment could not settle.
+ *
+ * WHY THIS IS NOT SCOPED TO `/login`, though only `/login` loads GSI. Minimality says the consent screen
+ * and the `/api/auth/*` responses should not advertise a third-party script origin, and that is a fair
+ * point — it is declined on mechanics, not on principle. Next applies EVERY matching `headers()` rule, so
+ * a second `/login`-scoped entry emits a SECOND `Content-Security-Policy` header, and a browser given two
+ * policies enforces their INTERSECTION. The base policy (no Google) would keep winning and One Tap would
+ * be blocked with a correct-looking config — the worst possible failure. Doing it properly means the base
+ * rule must not match `/login` at all, i.e. a negative-lookahead route pattern guarding a security
+ * header, which is precisely the kind of construct that breaks quietly.
+ *
+ * The residual exposure is small and worth stating plainly rather than implying it is zero: `script-src`
+ * and `style-src` already carry `'unsafe-inline'` (no nonce is possible without middleware — ADR-0021),
+ * so anyone with an injection point on an auth page can already execute script. Adding an origin does not
+ * lower that bar; it adds a script-gadget surface on top of a directive that is already effectively open.
+ * If the nonce/hash follow-up in ADR-0056 ever lands, `'unsafe-inline'` disappears and per-route scoping
+ * becomes worth the mechanism — revisit together.
  */
 export const GOOGLE_IDENTITY_ORIGIN = "https://accounts.google.com";
 

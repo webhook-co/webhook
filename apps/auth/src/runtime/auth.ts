@@ -177,7 +177,7 @@ function captchaPlugins(baseURL: string, secrets: ResolvedAuthSecrets) {
  * ADR-0133; reversing this is a one-line change to the captcha `endpoints` array.
  */
 function oneTapPlugins(secrets: ResolvedAuthSecrets) {
-  const clientId = secrets.googleClientId.trim();
+  const clientId = secrets.googleClientId;
   if (!secrets.googleClientSecret || !isGoogleClientId(clientId)) return [];
   return [oneTap({ clientId })];
 }

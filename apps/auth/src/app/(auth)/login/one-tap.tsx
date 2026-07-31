@@ -56,9 +56,12 @@ let scriptPromise: Promise<void> | null = null;
 /**
  * Load Google's GSI script once per document; later callers await the same promise.
  *
- * On failure it resets `scriptPromise` AND removes the dead `<script>` before rejecting, so a retry
- * neither reuses a poisoned promise nor accumulates tags — the two things better-auth's own loader gets
- * wrong. Same shape as `loadTurnstileScript`, minus the leak.
+ * On failure it does two things before rejecting, and they answer two different problems. Removing the
+ * dead `<script>` fixes what better-auth's loader gets wrong: it rejects and leaves the tag in the
+ * document, so every retry appends another. Resetting `scriptPromise` answers a hazard OUR OWN design
+ * introduces — better-auth builds a fresh promise per call and so has nothing to poison, whereas caching
+ * one here would otherwise hand every later mount the same rejected promise. Same shape as
+ * `loadTurnstileScript`, which already solves this correctly in this codebase.
  */
 function loadGoogleScript(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();

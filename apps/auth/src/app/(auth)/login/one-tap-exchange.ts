@@ -19,8 +19,7 @@ import { resolvePostLoginTarget } from "./post-login-target";
 //   - It retries a dismissed prompt on an exponential ladder (1+2+4+8+16s) of `setTimeout`s that nothing
 //     cancels, so they outlive unmount and can re-prompt on a page the user has already left.
 //   - It never calls `google.accounts.id.cancel()`, so there is no way to take the prompt down.
-//   - Its script loader rejects without removing the failed `<script>` or resetting its own
-//     `googleScriptInitialized` flag, leaking a dead tag per attempt.
+//   - Its script loader rejects without removing the failed `<script>`, leaking a dead tag per attempt.
 //   - With no `callbackURL` it navigates to `"/"`, skipping `/session/handoff` — the exact loop
 //     post-login-target.tsx exists to prevent.
 //

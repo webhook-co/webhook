@@ -4,11 +4,11 @@ import { isGoogleClientId } from "./google-client-id";
 
 describe("isGoogleClientId", () => {
   it("accepts the current format", () => {
-    expect(isGoogleClientId("231453726280-abc123def456.apps.googleusercontent.com")).toBe(true);
+    expect(isGoogleClientId("1234567890-abc123def456.apps.googleusercontent.com")).toBe(true);
   });
 
   it("accepts the legacy suffix-less format", () => {
-    expect(isGoogleClientId("231453726280.apps.googleusercontent.com")).toBe(true);
+    expect(isGoogleClientId("1234567890.apps.googleusercontent.com")).toBe(true);
   });
 
   // The fault this exists for: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are adjacent keys in every
@@ -21,14 +21,14 @@ describe("isGoogleClientId", () => {
     ["empty", ""],
     ["whitespace", "   "],
     ["no project number", "-abc123.apps.googleusercontent.com"],
-    ["wrong host", "231453726280-abc123.apps.example.com"],
-    ["host as a prefix only", "231453726280-abc.apps.googleusercontent.com.evil.test"],
-    ["host as a suffix of another label", "evil-231453726280-abc.apps.googleusercontent.com"],
-    ["uppercase random part", "231453726280-ABC123.apps.googleusercontent.com"],
-    ["untrimmed", " 231453726280-abc.apps.googleusercontent.com "],
-    ["a URL", "https://231453726280-abc.apps.googleusercontent.com"],
+    ["wrong host", "1234567890-abc123.apps.example.com"],
+    ["host as a prefix only", "1234567890-abc.apps.googleusercontent.com.evil.test"],
+    ["host as a suffix of another label", "evil-1234567890-abc.apps.googleusercontent.com"],
+    ["uppercase random part", "1234567890-ABC123.apps.googleusercontent.com"],
+    ["untrimmed", " 1234567890-abc.apps.googleusercontent.com "],
+    ["a URL", "https://1234567890-abc.apps.googleusercontent.com"],
     ["a JWT", "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxIn0.sig"],
-    ["newline-smuggled second value", "231453726280-abc.apps.googleusercontent.com\nevil"],
+    ["newline-smuggled second value", "1234567890-abc.apps.googleusercontent.com\nevil"],
   ])("rejects %s", (_label, value) => {
     expect(isGoogleClientId(value)).toBe(false);
   });
