@@ -21,6 +21,7 @@ import {
   stampSignupMilestone,
 } from "@webhook-co/db";
 import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 import { captcha, oneTap } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
@@ -31,6 +32,7 @@ import { resolveEmailMode } from "@webhook-co/shared/email-transport";
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
 import { isGoogleClientId } from "./google-client-id";
+import { emitSignInTelemetry } from "./signin-telemetry";
 import { withNameBackfill } from "./name-backfill-hooks";
 import {
   APP_BASE_URL,
@@ -270,6 +272,17 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     // provisioning — survives by reference through both wrappers. See name-backfill-hooks.ts for why the
     // back-fill is needed at all: the one-tap plugin bypasses `mapProfileToUser` entirely.
     databaseHooks: withAccountTokenStripping(withNameBackfill(deps.databaseHooks)),
+    // Sign-in METHOD telemetry — the one dimension the database cannot recover, because One Tap and the
+    // Google button write identical account rows (same providerId, same `sub`). Deliberately a
+    // request-level after-hook and not a databaseHook: `user.create.after` and `session.create.after`
+    // both carry the bootstrap, so putting telemetry there would mean chaining a load-bearing hook for
+    // the sake of a log line. Here the endpoint path arrives on the context directly. Never throws, and
+    // emits only `{ method }` — see signin-telemetry.ts.
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => {
+        await emitSignInTelemetry(deps.log, ctx);
+      }),
+    },
     advanced: {
       // On Workers the TCP peer is Cloudflare's edge, not the client, so Better Auth's rate limiter must
       // read the trusted client-IP header or it falls back to ONE shared per-path bucket (every caller

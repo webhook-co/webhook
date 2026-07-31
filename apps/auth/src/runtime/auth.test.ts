@@ -571,3 +571,24 @@ describe("buildAuthConfig — Google One Tap", () => {
     expect(plugins?.map((p) => p.id).sort()).toEqual(["captcha", "magic-link", "one-tap"]);
   });
 });
+
+// --- Sign-in method telemetry -------------------------------------------------------------------------
+// One Tap and the Google button write identical rows (same providerId, same sub), so without this the
+// question "is anyone using One Tap" has no answer. Wired as a request-level after-hook rather than a
+// databaseHook, so the bootstrap's user/session create.after hooks are untouched.
+describe("buildAuthConfig — sign-in telemetry", () => {
+  it("wires an after-hook when a log sink is provided", () => {
+    const log = vi.fn();
+    const cfg = buildAuthConfig(input(), cfgDeps({ log }));
+    expect(typeof cfg.hooks?.after).toBe("function");
+  });
+
+  it("does NOT displace the bootstrap's databaseHooks (the reason it is not a databaseHook)", () => {
+    const log = vi.fn();
+    const userAfter = vi.fn();
+    const databaseHooks = { user: { create: { after: userAfter } } } as never;
+    const hooks = buildAuthConfig(input(), cfgDeps({ log, databaseHooks })).databaseHooks;
+    // Identity, not just "is a function": a lost create.after means signups get no personal org.
+    expect(hooks?.user?.create?.after).toBe(userAfter);
+  });
+});
