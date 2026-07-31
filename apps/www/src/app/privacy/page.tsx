@@ -182,6 +182,12 @@ export default function PrivacyPage() {
               safe, reliable service (Art 6(1)(f)).
             </li>
             <li>
+              <strong>To offer one-tap sign-in</strong> (Google Identity Services on our sign-in
+              page, which loads before you choose a method) — <em>our legitimate interests</em> (Art
+              6(1)(f)) in a faster, phishing-resistant way to sign in. You can object, ignore the
+              prompt, or use any other sign-in method; nothing signs you in without a tap.
+            </li>
+            <li>
               <strong>To understand and improve the Service</strong> (anonymous CLI telemetry,
               aggregate cookieless website analytics) — <em>legitimate interests</em>; you can opt
               out of CLI telemetry.
@@ -361,8 +367,11 @@ export default function PrivacyPage() {
             <strong>Google Identity Services</strong>, which powers the one-tap sign-in prompt.
             Google&apos;s script loads on every visit to the login page — before you choose a
             sign-in method — so Google can see your IP address and that you opened that page. You
-            are never signed in without tapping to confirm. Your dark-mode preference is stored in
-            your browser&apos;s local storage, not a cookie. We <strong>don&apos;t</strong> use
+            are never signed in without tapping to confirm. Google&apos;s script also sets one
+            first-party cookie on our sign-in domain, <code>g_state</code>, which remembers that the
+            prompt was shown so it isn&apos;t shown again; it lasts up to 180 days, and you can
+            delete it like any other cookie. Your dark-mode preference is stored in your
+            browser&apos;s local storage, not a cookie. We <strong>don&apos;t</strong> use
             advertising cookies.
           </p>
 
