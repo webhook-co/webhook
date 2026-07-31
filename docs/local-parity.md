@@ -144,22 +144,29 @@ default**, and each is refused outright if it is ever seen on a deployed Worker
 | `OAUTH_MODE=optional` | providers without both halves configured are not wired; magic link still works — and with Google unwired, **no Google script loads on the login page at all** |
 | `KMS_MODE=local` | a process-local KEK instead of AWS KMS, so endpoints can be created without AWS |
 
-### `TURNSTILE_MODE` — the playground's captcha is OFF locally, ON in production
+### ~~`TURNSTILE_MODE`~~ — CLOSED: the playground's captcha runs locally
 
-`apps/play` declares `TURNSTILE_MODE: "off"` in its committed config and flips it to `"on"` in the
-`production` env block. With it off, `verifyTurnstile()` returns `true` without calling Cloudflare at all
-(`apps/play/src/index.ts`), so **the playground's abuse gate is not exercised locally** — every mint
-succeeds, token or no token, and the rate limits are the only thing standing in front of it.
+`apps/play` now runs `TURNSTILE_MODE=on` locally, against the **real** `webhook-play mint` widget, exactly
+as production does. It used to be `off`, so `verifyTurnstile()` returned `true` without calling Cloudflare
+and every mint succeeded with or without a token.
 
-This is a genuine deviation and it had gone unrecorded until `dev-parity-guard` learned to read wrangler
-`vars` as well as the secrets manifest. It is not the same thing as the *auth* captcha entry closed at the
-top of this page: that one is the login widget, which really does run against the real Turnstile secret.
+Two facts had to be established, and only one was the obvious one:
 
-**To close it**, someone needs to check the one thing that closed the auth entry — whether the playground's
-Turnstile widget lists `localhost`/`127.0.0.1` under its allowed hostnames in the Cloudflare dashboard. If
-it does, local can run `TURNSTILE_MODE=on` with the real secret and the gap disappears. Do not assume it
-does because the auth widget does: they are separate widgets with separate hostname lists, and the auth
-entry above is a worked example of exactly that assumption being wrong in the other direction.
+- **The widget already allowed `localhost`.** Verified against the Cloudflare API rather than assumed —
+  `webhook-play mint` lists `127.0.0.1, localhost, webhook.co, www.webhook.co`.
+- **The real blocker was a NAME COLLISION.** `webhook-auth login` and `webhook-play mint` are *separate*
+  widgets with separate sitekeys and separate secrets, but both Workers read `env.TURNSTILE_SECRET_KEY`.
+  The vault stored one value per name, so sharing it would have handed play auth's secret — failing every
+  challenge with no useful error, which is worse than the gap it replaced.
+
+So the vault now stores **app-scoped** entries (`AUTH__TURNSTILE_SECRET_KEY`, `PLAY__TURNSTILE_SECRET_KEY`)
+for any name whose values legitimately differ, and a pull prefers the app-scoped one. Both travel; neither
+cross-wires. `--push` prints every split it makes, because a disagreement that is a *mistake* looks
+identical to one that is legitimate and somebody has to be able to see it.
+
+⚠️ The committed wrangler var stays `"off"`. That is not an oversight — the **workerd tests** mint without
+a challenge and must keep doing so. `.dev.vars` overrides it for `wrangler dev` only, which is why
+`TURNSTILE_MODE` is one of the few flags whose correct local value is a literal rather than blank.
 
 ### `BILLING_MODE` — always different from production, on purpose
 

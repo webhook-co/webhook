@@ -129,13 +129,15 @@ test("the check is not vacuous — an empty file yields findings for every app",
 // while six apps were missing from the manifest entirely. A floor cannot notice an omission.
 
 test("apps that declare secrets are required; apps that declare none are not", () => {
-  for (const app of ["dmarc", "health"]) {
+  // play joined this list when its Turnstile challenge was turned on locally — it needs the
+  // `webhook-play mint` widget's OWN secret, which is not auth's value despite the identical name.
+  for (const app of ["dmarc", "health", "play"]) {
     assert.ok(
       APPS_NEEDING_SECRETS.includes(app),
       `${app} declares secrets but is not required to have them`,
     );
   }
-  for (const app of ["www", "play", "get", "telemetry"]) {
+  for (const app of ["www", "get", "telemetry"]) {
     assert.ok(
       !APPS_NEEDING_SECRETS.includes(app),
       `${app} needs no secrets but is required to supply some`,
@@ -163,4 +165,35 @@ test("dmarc's Resend key is ENFORCED, not merely described as required", () => {
   );
   assert.ok(isRelaxed(spec, new Map([["EMAIL_MODE", "log"]])), "the opt-out does not relax it");
   assert.ok(!isRelaxed(spec, new Map([["EMAIL_MODE", ""]])), "a blank flag must NOT relax it");
+});
+
+// play's Turnstile gate, mirroring the dmarc Resend test. Membership in APPS_NEEDING_SECRETS cannot catch
+// a dropped `parityRequired`, a wrong `relaxedBy`, or TURNSTILE_MODE=on with a blank secret sailing past.
+test("play's Turnstile secret is ENFORCED when the challenge is on", () => {
+  const spec = requiredSpecs("play").find((s) => s.name === "TURNSTILE_SECRET_KEY");
+  assert.ok(spec, "a blank play Turnstile secret would still start `pnpm dev`");
+  assert.deepEqual(spec.relaxedBy, { name: "TURNSTILE_MODE", value: "off" });
+
+  const on = new Map([
+    ["TURNSTILE_MODE", "on"],
+    ["TURNSTILE_SECRET_KEY", ""],
+  ]);
+  assert.ok(!isRelaxed(spec, on), "mode=on must NOT relax the secret — that is the parity path");
+
+  const off = new Map([
+    ["TURNSTILE_MODE", "off"],
+    ["TURNSTILE_SECRET_KEY", ""],
+  ]);
+  assert.ok(isRelaxed(spec, off), "a contributor with no play secret has no way through");
+});
+
+test("a blank play secret with the challenge ON is reported by findings()", () => {
+  const problems = findings([
+    { app: "play", exists: true, source: "TURNSTILE_MODE=on\nTURNSTILE_SECRET_KEY=\n" },
+  ]);
+  const missing = problems.flatMap((p) => p.missing ?? []);
+  assert.ok(
+    missing.includes("TURNSTILE_SECRET_KEY"),
+    "the playground would mint with an unverifiable challenge and nothing would say so",
+  );
 });

@@ -199,6 +199,101 @@ test("an explicit WEBHOOK_INTERNAL_REPO always wins", () => {
   );
 });
 
+// --- Per-app values: one NAME, two legitimately different secrets ---------------------------------
+// `webhook-auth login` and `webhook-play mint` are separate Turnstile widgets with separate secrets
+// (verified against the Cloudflare API), but both Workers read `env.TURNSTILE_SECRET_KEY`. Sharing one
+// value per NAME would cross-wire them; refusing outright would mean neither travels. So a name whose
+// values genuinely disagree is stored APP-SCOPED, and the pull prefers the app-scoped entry.
+
+test("a name every app agrees on stays a single global entry", () => {
+  const { values, perApp, split } = collectFromDevVars(
+    () => "GOOGLE_CLIENT_ID=same\n",
+    ["GOOGLE_CLIENT_ID"],
+    ["auth", "web"],
+  );
+  assert.deepEqual([...values], [["GOOGLE_CLIENT_ID", "same"]]);
+  assert.equal(perApp.size, 0, "an agreed name must not be duplicated per app");
+  assert.deepEqual(split, []);
+});
+
+test("a name whose values DISAGREE is split per app, not silently collapsed", () => {
+  const { values, perApp, split } = collectFromDevVars(
+    (app) => `TURNSTILE_SECRET_KEY=${app}-secret\n`,
+    ["TURNSTILE_SECRET_KEY"],
+    ["auth", "play"],
+  );
+  assert.equal(
+    values.has("TURNSTILE_SECRET_KEY"),
+    false,
+    "a global entry would cross-wire the two",
+  );
+  assert.deepEqual(
+    [...perApp].sort(),
+    [
+      ["AUTH__TURNSTILE_SECRET_KEY", "auth-secret"],
+      ["PLAY__TURNSTILE_SECRET_KEY", "play-secret"],
+    ],
+    "each app's own value must survive under its own key",
+  );
+  // Reported, never silent: a disagreement that is a MISTAKE has to be visible in the output.
+  assert.deepEqual(split, ["TURNSTILE_SECRET_KEY"]);
+});
+
+test("pull prefers the app-scoped value over the global one", () => {
+  const vault = new Map([
+    ["TURNSTILE_SECRET_KEY", "global"],
+    ["PLAY__TURNSTILE_SECRET_KEY", "play-only"],
+  ]);
+  assert.deepEqual(
+    [...pullSet(vault, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "play")],
+    [["TURNSTILE_SECRET_KEY", "play-only"]],
+    "play received another app's secret",
+  );
+  // …and auth gets NOTHING from this vault, not the global. A global sitting beside a scoped entry can
+  // only be a leftover from a push that predates the split — a correct push writes one form or the other,
+  // never both — so honouring it would hand auth whatever value happened to be there. See the stale-entry
+  // test below. An app-scoped-free vault still falls back to the global, which is the ordinary case.
+  assert.deepEqual([...pullSet(vault, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "auth")], []);
+  const ordinary = new Map([["TURNSTILE_SECRET_KEY", "global"]]);
+  assert.deepEqual(
+    [...pullSet(ordinary, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "auth")],
+    [["TURNSTILE_SECRET_KEY", "global"]],
+    "a name nobody has split must still travel globally",
+  );
+});
+
+test("a STALE global entry never leaks into an app that has its own", () => {
+  // A vault pushed BEFORE the split carries a bare TURNSTILE_SECRET_KEY. Falling back to it for an app
+  // with no scoped entry would hand that app another app's secret — the exact failure the split prevents,
+  // arriving later from a committed file. Same shape as [[an-allowlist-must-be-enforced-on-read-too]].
+  const legacy = new Map([
+    ["TURNSTILE_SECRET_KEY", "auths-old-global"],
+    ["AUTH__TURNSTILE_SECRET_KEY", "auths-own"],
+  ]);
+  assert.deepEqual(
+    [...pullSet(legacy, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "play")],
+    [],
+    "play took a stale global secret belonging to auth",
+  );
+  assert.deepEqual(
+    [...pullSet(legacy, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "auth")],
+    [["TURNSTILE_SECRET_KEY", "auths-own"]],
+  );
+});
+
+test("an app-scoped entry is still subject to the allowlist", () => {
+  // The encoding must not become a way to smuggle an unshareable name back in.
+  const vault = new Map([["DMARC__RESEND_API_KEY", "leaked"]]);
+  assert.deepEqual([...pullSet(vault, ["RESEND_API_KEY"], sharedSecretNames(), "dmarc")], []);
+});
+
+test("no real secret name contains the app-scope separator", () => {
+  // `APP__NAME` is only unambiguous while no genuine variable has a double underscore in it.
+  for (const name of sharedSecretNames()) {
+    assert.ok(!name.includes("__"), `${name} would be ambiguous under app-scoped encoding`);
+  }
+});
+
 test("parseEnv splits on the FIRST = and ignores comments", () => {
   const v = parseEnv("A=1\n# note\nB=b64==\nC=http://x/?a=b\n\nD=\n");
   assert.equal(v.get("A"), "1");
@@ -237,14 +332,19 @@ test("a value containing regex metacharacters is not treated as a pattern", () =
   assert.match(out, /^A\.B=new$/m);
 });
 
-test("collecting flags a name that DISAGREES between apps", () => {
-  // Publishing whichever app was read last would bake the mismatch into every machine that pulls.
-  const { conflicts } = collectFromDevVars(
-    (app) => (app === "auth" ? "RESEND_API_KEY=one\n" : "RESEND_API_KEY=two\n"),
-    ["RESEND_API_KEY"],
+test("a disagreement is never collapsed to whichever app was read last", () => {
+  // The original contract REFUSED on disagreement, because publishing one app's value would bake the
+  // mismatch into every machine that pulls. Splitting per app keeps that guarantee and additionally lets
+  // both values travel — but the guarantee is the point, so it is asserted directly.
+  const { values, perApp, split } = collectFromDevVars(
+    (app) => (app === "auth" ? "TURNSTILE_SECRET_KEY=one\n" : "TURNSTILE_SECRET_KEY=two\n"),
+    ["TURNSTILE_SECRET_KEY"],
     ["auth", "api"],
   );
-  assert.deepEqual(conflicts, ["RESEND_API_KEY"]);
+  assert.equal(values.has("TURNSTILE_SECRET_KEY"), false, "one app's value was published for both");
+  assert.equal(perApp.get("AUTH__TURNSTILE_SECRET_KEY"), "one");
+  assert.equal(perApp.get("API__TURNSTILE_SECRET_KEY"), "two");
+  assert.deepEqual(split, ["TURNSTILE_SECRET_KEY"], "the split must be reported, not silent");
 });
 
 test("collecting skips apps with no .dev.vars, and blank values", () => {
