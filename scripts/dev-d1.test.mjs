@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { readFileSync } from "node:fs";
+
 import { d1Apps, discoverD1 } from "./dev-d1.mjs";
 
 // `pnpm dev` started apps/dmarc against a D1 database with NO SCHEMA: `d1 migrations apply` existed only
@@ -37,4 +39,30 @@ test("the real repo has at least one D1 app, so this is not vacuous", () => {
     apps.some((a) => a.app === "dmarc" && a.databaseName === "webhook-dmarc"),
     "dmarc's D1 database was not discovered",
   );
+});
+
+// --- The wiring, not just the logic ------------------------------------------------------------
+// Discovery being correct is worth nothing if `pnpm dev` stops calling it. Deleting it from the dev
+// script would restore an empty local D1 — the original bug — with every test above still green.
+
+test("`pnpm dev` actually applies D1 migrations before starting anything", () => {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.match(pkg.scripts.dev, /dev-d1/, "pnpm dev no longer applies D1 migrations");
+  assert.ok(
+    pkg.scripts.dev.indexOf("dev-d1") < pkg.scripts.dev.indexOf("turbo run dev"),
+    "D1 must be migrated BEFORE the apps start, or the first query still hits an empty database",
+  );
+  assert.equal(
+    pkg.scripts["dev:d1"],
+    "node scripts/dev-d1.mjs",
+    "the standalone entry point is gone",
+  );
+});
+
+test("a failed apply is fail-CLOSED", () => {
+  // Continuing past a failed migration is the original bug wearing a hat: dev starts, looks fine, and
+  // dies at the first query with `no such table`.
+  const src = readFileSync(new URL("./dev-d1.mjs", import.meta.url), "utf8");
+  assert.match(src, /status !== 0/, "the apply's exit status is not checked");
+  assert.match(src, /process\.exit\(1\)/, "a failed apply does not stop the run");
 });

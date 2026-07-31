@@ -361,10 +361,21 @@ export const APPS = {
       {
         name: "RESEND_API_KEY",
         scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "EMAIL_MODE", value: "log" },
         // Declared per-app rather than in SHARED because SHARED means "generated once per machine and
         // byte-identical everywhere"; this is a third-party credential. The vault's conflict check still
         // holds it to one value across apps, and NOT_SHAREABLE keeps it out of the vault itself.
         note: "REQUIRED for prod parity — the DMARC aggregate-report alert sends through Resend. Without it `pnpm cron dmarc` fails with a Resend 401, which is how this app's total absence from the manifest was found.",
+      },
+      {
+        name: "EMAIL_MODE",
+        // `external` rather than `local` for the same reason auth's is: requiredSpecs() treats every
+        // non-external spec as mandatory, so a `local` flag whose correct value is BLANK would fail
+        // preflight for everyone. A mode flag is optional by construction — that is what makes it an
+        // opt-out rather than a setting.
+        scope: "external",
+        note: 'LEAVE BLANK so the DMARC alert really sends, exactly as in prod. Set it to "log" only if you have no Resend key; the alert then prints to the console and the rest of the cron still runs.',
       },
       {
         name: "ALERT_TO",

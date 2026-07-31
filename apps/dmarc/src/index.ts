@@ -32,6 +32,12 @@ export interface Env {
   RESEND_API_KEY: string;
   /** Where alerts go. A SECRET too: it is a personal address and this repo is public. */
   ALERT_TO: string;
+  /**
+   * Local-dev opt-out, mirroring apps/auth. "log" prints the alert instead of sending it, for a
+   * contributor who cannot hold a Resend key. Absent everywhere else — `scripts/dev-mode-guard.mjs`
+   * refuses a mode flag on any deployed Worker, so production cannot silently stop alerting.
+   */
+  EMAIL_MODE?: string;
 }
 
 /** Hard ceiling on the raw message we will buffer. Real aggregates are single-digit KB; the mailbox is
@@ -203,6 +209,13 @@ export default {
     }
 
     const { subject, text } = formatAlert(findings, now);
+    if (env.EMAIL_MODE === "log") {
+      // The explicit opt-out, not a fallback: without it a missing key is a hard preflight failure.
+      // Printing keeps the rest of the cron path exercisable — parse, diff, state-write — for someone
+      // who cannot hold a Resend credential.
+      console.log(`[dmarc] EMAIL_MODE=log — alert NOT sent\n${subject}\n${text}`);
+      return;
+    }
     await sendAlert(
       { apiKey: env.RESEND_API_KEY, from: ALERT_FROM, to: env.ALERT_TO },
       subject,

@@ -6,5 +6,8 @@
 # EXTERNAL: REQUIRED for prod parity — the DMARC aggregate-report alert sends through Resend. Without it `pnpm cron dmarc` fails with a Resend 401, which is how this app's total absence from the manifest was found.
 RESEND_API_KEY=
 
+# EXTERNAL: LEAVE BLANK so the DMARC alert really sends, exactly as in prod. Set it to "log" only if you have no Resend key; the alert then prints to the console and the rest of the cron still runs.
+EMAIL_MODE=
+
 # LOCAL: Where the DMARC alert is addressed. A local literal so `pnpm cron dmarc` exercises the real send path without mailing anyone real — change it if you want to receive one.
 ALERT_TO=dev@localhost
