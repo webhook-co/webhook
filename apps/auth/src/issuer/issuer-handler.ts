@@ -13,6 +13,7 @@ import { makeAuthorizeDeps } from "./authorize-deps";
 import { handleAuthorize, handleConsentComplete, handleConsentDecision } from "./authorize-route";
 import { CIMD_AUTHORIZE_RULE, isCimdAuthorizeRequest } from "./cimd-fetch-guard";
 import { EDGE_RULES, edgeRateLimit } from "./edge-rate-limit";
+import { ONE_TAP_CALLBACK_URL_PATH } from "../runtime/urls";
 import { throttleByIp } from "./ip-throttle";
 import { nowSeconds } from "./issuer-constants";
 import type { RateLimitKv } from "./rate-limit";
@@ -257,6 +258,19 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
         } finally {
           drain(ctx, close, "revoke.pool_close_failed");
         }
+      }
+
+      // POST /api/auth/one-tap/callback — THROTTLE AND FALL THROUGH, the only branch here shaped that
+      // way. better-auth serves this endpoint itself (behind OpenNext); we are only metering it, so
+      // there is deliberately no `return` on the success path. Getting that wrong in either direction is
+      // silent: an early return 404s every One Tap sign-in, a missing gate leaves the endpoint unmetered.
+      //
+      // It needs a durable gate because better-auth's own limiter for this path is the generic
+      // 100-req/10s, which is in-memory and PER-ISOLATE and so does nothing fleet-wide — the same reason
+      // the magic-link send got one. Placed last so it costs nothing for any path handled above.
+      if (request.method === "POST" && url.pathname === ONE_TAP_CALLBACK_URL_PATH) {
+        const limited = await edgeRateLimit(rl, "one_tap", request, EDGE_RULES.one_tap);
+        if (limited) return limited;
       }
 
       return openNextHandler.fetch(request, env, ctx);

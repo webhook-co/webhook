@@ -85,6 +85,7 @@ provider, same key:
 | Social login | real Google + GitHub OAuth (GitHub uses its own dev app; GitHub permits one callback per app) |
 | Transactional email | really sends via Resend, from the verified `mail.webhook.co` sender |
 | Captcha | the real Turnstile widget and secret — its domain list includes `localhost` |
+| Google One Tap | the real Google Identity Services prompt, keyed by the same `GOOGLE_CLIENT_ID` binding as the button — **but only if your OAuth client lists your local origin under *Authorized JavaScript origins*** (see below) |
 | Billing | Stripe **test** mode, which is what a non-production environment should use |
 
 ### The opt-outs, for contributors with no credentials
@@ -96,7 +97,7 @@ default**, and each is refused outright if it is ever seen on a deployed Worker
 | Flag | Effect |
 | --- | --- |
 | `EMAIL_MODE=log` | mail prints to the console, link included, instead of sending |
-| `OAUTH_MODE=optional` | providers without both halves configured are not wired; magic link still works |
+| `OAUTH_MODE=optional` | providers without both halves configured are not wired; magic link still works — and with Google unwired, **no Google script loads on the login page at all** |
 | `KMS_MODE=local` | a process-local KEK instead of AWS KMS, so endpoints can be created without AWS |
 
 `KMS_MODE=local` is the one that has no alternative today: the engine is the sole KEK custodian and nobody
@@ -241,6 +242,25 @@ the binding is present and the call throws `Network connection lost` only when m
 structurally (`if (!env.AUTH_ISSUER) degrade`) starts passing that check and then throws. And wrangler
 prints the binding table **once at startup** — `[connected]` there is a point-in-time render, not a live
 readiness signal.
+
+### Google One Tap needs a *second*, easily-missed allowlist
+
+"Authorized JavaScript **origins**" is a different list from "Authorized **redirect URIs**" in the Google
+Cloud console, and One Tap is gated on the first while the "Continue with Google" button is gated on the
+second. So a contributor with a working Google OAuth app — button signs in fine — can still get no One Tap
+prompt, and the only signal is an `unregistered_origin` message in the browser console. No request fails, no
+test goes red, and the page looks exactly as it should minus the prompt.
+
+If you are running your own Google OAuth app and want One Tap locally, add `http://localhost:3001` (and
+`http://127.0.0.1:3001` if you use that spelling) to **Authorized JavaScript origins**. If you would rather
+not, nothing breaks: every other way in still works, and One Tap simply does not appear. This is a genuine
+local/production deviation and is recorded here rather than glossed — the deployed origin
+`https://auth.webhook.co` is on that list, so production shows the prompt where your machine may not.
+
+A second, milder deviation: One Tap also requires `GOOGLE_CLIENT_ID` to be shaped like a real Google client
+id (`<project-number>-<random>.apps.googleusercontent.com`). A free-text placeholder satisfies the social
+buttons, which only test PRESENCE, but turns One Tap off. That guard exists so a mis-bound client SECRET can
+never reach the page, and it means "my buttons render but One Tap doesn't" is usually a placeholder id.
 
 ---
 

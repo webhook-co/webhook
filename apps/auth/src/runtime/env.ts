@@ -538,14 +538,20 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
     readOptionalSecret(env.GITHUB_CLIENT_SECRET),
     readOptionalSecret(env.RESEND_API_KEY),
   ]);
+  // TRIMMED ONCE, HERE, so every consumer sees the same canonical value. A secret pasted into the
+  // Secrets Store with a trailing newline is an ordinary provisioning slip, and leaving it to consumers
+  // produced a genuinely confusing split: One Tap trimmed before validating its client id, while
+  // `socialProviders` used the raw value — so the same stray byte gave a WORKING One Tap prompt and a
+  // BROKEN "Continue with Google" button, i.e. the enhancement survived and the primary affordance
+  // failed. Whitespace is never significant in any of these credentials.
   const resolved = {
-    betterAuthSecret,
-    credentialPepper,
-    googleClientId,
-    googleClientSecret,
-    githubClientId,
-    githubClientSecret,
-    resendApiKey,
+    betterAuthSecret: betterAuthSecret.trim(),
+    credentialPepper: credentialPepper.trim(),
+    googleClientId: googleClientId.trim(),
+    googleClientSecret: googleClientSecret.trim(),
+    githubClientId: githubClientId.trim(),
+    githubClientSecret: githubClientSecret.trim(),
+    resendApiKey: resendApiKey.trim(),
   };
   // Fail closed on an EMPTY resolved value — readAuthEnv can't see inside a Secrets Store binding, so a
   // mis-provisioned (empty) store secret only surfaces here. Never sign sessions / mint with an empty key.
@@ -586,4 +592,10 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
 
 // URL/string constants live in ./urls (dependency-free) so client components can import them without
 // pulling this module's server-only deps into the browser bundle. Re-exported for the runtime's imports.
-export { APP_BASE_URL, MAGIC_LINK_FROM, PROD_AUTH_BASE_URL, TURNSTILE_ACTION } from "./urls";
+export {
+  APP_BASE_URL,
+  AUTH_BASE_PATH,
+  MAGIC_LINK_FROM,
+  PROD_AUTH_BASE_URL,
+  TURNSTILE_ACTION,
+} from "./urls";

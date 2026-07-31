@@ -21,7 +21,8 @@ import {
   stampSignupMilestone,
 } from "@webhook-co/db";
 import { betterAuth } from "better-auth";
-import { captcha } from "better-auth/plugins";
+import { createAuthMiddleware } from "better-auth/api";
+import { captcha, oneTap } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
@@ -30,8 +31,12 @@ import { resolveEmailMode } from "@webhook-co/shared/email-transport";
 
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
+import { isGoogleClientId } from "./google-client-id";
+import { emitSignInTelemetry } from "./signin-telemetry";
+import { withNameBackfill } from "./name-backfill-hooks";
 import {
   APP_BASE_URL,
+  AUTH_BASE_PATH,
   MAGIC_LINK_FROM,
   PROD_AUTH_BASE_URL,
   TURNSTILE_ACTION,
@@ -137,6 +142,47 @@ function captchaPlugins(baseURL: string, secrets: ResolvedAuthSecrets) {
 }
 
 /**
+ * Build the Google One Tap plugin list — mounted only when Google is FULLY configured and the resolved
+ * client id is actually shaped like one.
+ *
+ * "Is it mounted" is a security question here, not a feature flag. The plugin exposes a PUBLIC,
+ * unauthenticated `POST /one-tap/callback` whose first act on any well-formed input is an outbound fetch
+ * to Google's JWKS — reachable by anyone, with a trivially forgeable JWT header. So the endpoint should
+ * exist exactly when the feature does and not one deploy longer. Three gates, all of which must hold:
+ *
+ *   - A client SECRET. Without it the callback can never complete a sign-in, so mounting would leave an
+ *     unauthenticated JWKS-fetching endpoint that is guaranteed to fail. Same reasoning as
+ *     `socialProviders` refusing a half-configured pair.
+ *   - A client id that PASSES `isGoogleClientId`. This is the identical predicate the login page's
+ *     browser gate uses (login/one-tap-config.ts), which is the point: the prompt and the endpoint key
+ *     off one shared check of one shared secret, so they cannot drift into "prompt with no endpoint" or
+ *     "endpoint with no UI that can reach it".
+ *   - Both resolved non-empty, which `OAUTH_MODE=optional` makes false for a contributor with no Google
+ *     OAuth app — they get no endpoint and no prompt, and sign in by magic link.
+ *
+ * The audience is pinned EXPLICITLY. The plugin would otherwise fall back to
+ * `socialProviders.google.clientId` implicitly (`options?.clientId || googleProvider?.clientId`), which
+ * happens to resolve to the same value today. Stating it here is what makes a stolen id token minted for
+ * some other Google app useless against us survive a refactor of the social-provider map above.
+ *
+ * `disableSignup` is deliberately unset: One Tap is prompt-plus-tap-to-confirm WITH signup allowed
+ * (founder decision), and the plugin reads `options?.disableSignup || googleProvider?.disableSignUp`, so
+ * leaving both unset is the "signups allowed" state.
+ *
+ * NOT captcha-gated, unlike the magic-link send, and that is considered rather than overlooked: a garbage
+ * captcha token would only trade a Google-certs fetch for a Cloudflare siteverify fetch, the login page
+ * renders one Turnstile widget whose single-use token the magic-link submit already consumes, and
+ * magic-link's actual justification (it emails an attacker-chosen third party) does not transfer here.
+ * The abuse ceiling is handled where it belongs — a durable edge throttle in issuer-handler.ts. See
+ * ADR-0133; reversing this is a one-line change to the captcha `endpoints` array.
+ */
+function oneTapPlugins(secrets: ResolvedAuthSecrets) {
+  const clientId = secrets.googleClientId;
+  if (!secrets.googleClientSecret || !isGoogleClientId(clientId)) return [];
+  return [oneTap({ clientId })];
+}
+
+/**
  * Build the social-provider map, including only the providers that are FULLY configured.
  *
  * In production both are always configured (readAuthEnv requires all four secrets, and resolveAuthSecrets
@@ -180,7 +226,7 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
   const { baseURL, secrets } = input;
   return {
     baseURL,
-    basePath: "/api/auth",
+    basePath: AUTH_BASE_PATH,
     secret: secrets.betterAuthSecret,
     // CSRF origin allow-list: this surface + the app it hands off to.
     trustedOrigins: [baseURL, APP_BASE_URL],
@@ -211,10 +257,32 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     },
     socialProviders: socialProviders(secrets),
     // Captcha first (its onRequest gate runs before the magic-link send handler), then magic-link.
-    plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
+    // One Tap mounts its own endpoint and carries no request hooks, so its position is immaterial.
+    plugins: [
+      ...captchaPlugins(baseURL, secrets),
+      ...oneTapPlugins(secrets),
+      magicLink(magicLinkOptions(deps)),
+    ],
     // Compose the account OAuth-token stripping (data minimization — see account-token-hooks.ts) into the
     // signup→bootstrap hooks here, so EVERY auth instance persists no provider tokens regardless of caller.
-    databaseHooks: withAccountTokenStripping(deps.databaseHooks),
+    //
+    // The name back-fill composes INSIDE the token stripping, so stripping stays the outermost and last
+    // word on the account model (it is authoritative and non-negotiable), while the back-fill owns
+    // `user.create.before`. Both spread shallowly, so the bootstrap's `user.create.after` — the personal-org
+    // provisioning — survives by reference through both wrappers. See name-backfill-hooks.ts for why the
+    // back-fill is needed at all: the one-tap plugin bypasses `mapProfileToUser` entirely.
+    databaseHooks: withAccountTokenStripping(withNameBackfill(deps.databaseHooks)),
+    // Sign-in METHOD telemetry — the one dimension the database cannot recover, because One Tap and the
+    // Google button write identical account rows (same providerId, same `sub`). Deliberately a
+    // request-level after-hook and not a databaseHook: `user.create.after` and `session.create.after`
+    // both carry the bootstrap, so putting telemetry there would mean chaining a load-bearing hook for
+    // the sake of a log line. Here the endpoint path arrives on the context directly. Never throws, and
+    // emits only `{ method }` — see signin-telemetry.ts.
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => {
+        await emitSignInTelemetry(deps.log, ctx);
+      }),
+    },
     advanced: {
       // On Workers the TCP peer is Cloudflare's edge, not the client, so Better Auth's rate limiter must
       // read the trusted client-IP header or it falls back to ONE shared per-path bucket (every caller
@@ -222,6 +290,20 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
       // No `crossSubDomainCookies` — the cookie stays host-only; the auth.→app. handoff is the backchannel
       // session-exchange.
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+      // Origin + callbackURL validation, PINNED rather than inherited — and this one is not a style
+      // preference. Better Auth computes `skipOriginCheck` as
+      //   `advanced.disableOriginCheck ?? (isTest() ? true : false)`
+      // and `isTest()` is `NODE_ENV === "test" || TEST` (@better-auth/core env-impl). So the protection
+      // that rejects an untrusted `Origin` AND an off-origin `callbackURL` — the open-redirect guard the
+      // one-tap plugin's own schema comment says it depends on — silently disappears the moment either
+      // variable is set, with no warning and no failing test. Production does not set them today, so
+      // nothing is broken; the point is that nothing *pins* that, and the failure is invisible.
+      //
+      // It also had a second cost: with the default active under `NODE_ENV=test`, no test in this repo
+      // could observe the guard at all. The contract test that asserts an off-origin callbackURL is
+      // refused only became possible once this was explicit — the gate was untestable precisely because
+      // it was implicitly disabled in exactly the environment where we test.
+      disableOriginCheck: false,
     },
     // Explicitly DB-validated sessions: cookieCache off so a revoked session dies immediately (pinned
     // against Better Auth's default of caching for non-stateful instances).

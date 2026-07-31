@@ -4,8 +4,10 @@
 - date: 2026-06-23
 - scope: `apps/auth` (the login / consent / device UI on auth.webhook.co)
 - relates: [ADR-0021](0021-opennext-cloudflare-workers-app-and-auth.md) (OpenNext, no middleware);
-  [ADR-0044](0044-turnstile-magic-link-captcha.md) (the Turnstile login captcha — the one third-party the UI
-  loads); apps/www's `_headers` (the CSP precedent this mirrors).
+  [ADR-0044](0044-turnstile-magic-link-captcha.md) (the Turnstile login captcha);
+  [ADR-0133](0133-google-one-tap.md) (Google One Tap — the SECOND third party the login page loads, which
+  amends the "one third-party origin" decision below); apps/www's `_headers` (the CSP precedent this
+  mirrors).
 
 ## context
 
@@ -29,14 +31,22 @@ Next-served response), with the policy defined in a unit-tested `src/security-he
   (clickjacking); `object-src 'none'`; `base-uri 'self'`; `form-action 'self'` (the magic-link form posts to
   `/api/auth` same-origin; social sign-in is a top-level redirect, not a cross-origin form post). `img-src`
   adds `data:`; `font-src 'self'`.
-- **One third-party origin: Cloudflare Turnstile.** The login captcha loads its script, widget iframe, and
-  telemetry from `challenges.cloudflare.com`, so it's allowlisted in `script-src`, `frame-src`, and
-  `connect-src` — and a test pins that it is the *only* off-origin in the policy.
+- **Third-party origins: a CLOSED set, pinned by a test.** Originally one — Cloudflare Turnstile, whose
+  script, widget iframe and telemetry all live on `challenges.cloudflare.com`, allowlisted in `script-src`,
+  `frame-src` and `connect-src`.
+
+  > **Amended 2026-07-31 by [ADR-0133](0133-google-one-tap.md).** The set is now TWO: Google Identity
+  > Services (`accounts.google.com`) joins it for the One Tap prompt, in `script-src`, `style-src`,
+  > `connect-src` and `frame-src`. The DECISION here is unchanged — the allowlist is still a closed set and
+  > a test still pins it — only the count moved. Note `style-src`, which Turnstile never needed: GSI loads
+  > an external stylesheet, which `'unsafe-inline'` does not cover. ADR-0133 records how each directive was
+  > derived and which one could not be settled experimentally.
 - **Hardening headers (apps/www parity):** `X-Content-Type-Options: nosniff`,
   `Referrer-Policy: strict-origin-when-cross-origin` (cross-origin requests carry only the origin, so a
   consent/device ticket in the query never leaks), `Permissions-Policy: camera=(), microphone=(),
   geolocation=()`, and `Strict-Transport-Security: max-age=63072000` (leaf host — no includeSubDomains/
-  preload, mirroring www's caution).
+  preload, mirroring www's caution). ADR-0133 adds `identity-credentials-get=(self)` to the
+  `Permissions-Policy`, which gates the FedCM prompt.
 
 ## consequences
 

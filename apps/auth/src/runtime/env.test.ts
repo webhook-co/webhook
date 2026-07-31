@@ -157,6 +157,29 @@ describe("readAuthEnv — Turnstile is required when email really sends", () => 
   });
 });
 
+// A secret pasted into the Secrets Store with a trailing newline is an ordinary provisioning slip.
+// Canonicalizing it HERE — once — is what keeps every consumer of the same secret in agreement. Leaving
+// it to consumers had a real consequence: One Tap trimmed its client id before validating it while
+// `socialProviders` used the raw value, so one stray byte gave a working One Tap prompt and a broken
+// "Continue with Google" button.
+describe("resolveAuthSecrets — canonicalization", () => {
+  it("trims every resolved secret, so all consumers see the same value", async () => {
+    const secrets = await resolveAuthSecrets(
+      readAuthEnv({
+        ...RAW,
+        GOOGLE_CLIENT_ID: " 1234567890-abc.apps.googleusercontent.com\n",
+        GOOGLE_CLIENT_SECRET: "  GOCSPX-secret  ",
+        GITHUB_CLIENT_ID: "\tgh-id\n",
+        RESEND_API_KEY: " re_test\n",
+      }) as AuthEnv,
+    );
+    expect(secrets.googleClientId).toBe("1234567890-abc.apps.googleusercontent.com");
+    expect(secrets.googleClientSecret).toBe("GOCSPX-secret");
+    expect(secrets.githubClientId).toBe("gh-id");
+    expect(secrets.resendApiKey).toBe("re_test");
+  });
+});
+
 describe("resolveAuthSecrets — optional Turnstile", () => {
   // EMAIL_MODE=log because readAuthEnv now refuses a blank Turnstile when mail really sends — this test is
   // about the blank-STRING vs empty-BINDING distinction, not about the coupling.

@@ -280,6 +280,45 @@ describe("buildAuthConfig", () => {
     expect(stripped).toEqual({ data: { accessToken: null, refreshToken: null, idToken: null } });
   });
 
+  it("composes the name back-fill into EVERY auth instance, without displacing the bootstrap hook", async () => {
+    // The one-tap plugin never calls mapProfileToUser, so without this hook One Tap signups land with
+    // firstName/lastName NULL — worse data than the Google button. Wiring it in buildAuthConfig (rather
+    // than in makeBootstrapHooks) is what makes that true for every caller, so this asserts the wiring
+    // rather than the hook's own behaviour, which name-backfill-hooks.test.ts covers.
+    const userAfter = vi.fn();
+    const databaseHooks = { user: { create: { after: userAfter } } } as never;
+    const hooks = buildAuthConfig(input(), cfgDeps({ databaseHooks })).databaseHooks;
+
+    expect(typeof hooks?.user?.create?.before).toBe("function");
+    // Composition must not cost the bootstrap hook — a lost create.after means signups get no org at all.
+    expect(hooks?.user?.create?.after).toBe(userAfter);
+
+    const filled = await hooks?.user?.create?.before?.(
+      { email: "ada@example.dev", name: "Ada Lovelace" } as never,
+      null as never,
+    );
+    expect(filled).toEqual({ data: { firstName: "Ada", lastName: "Lovelace" } });
+  });
+
+  it("writes the SAME columns for a One Tap signup as mapProfileToUser writes for the button", async () => {
+    // The cross-path invariant, asserted through the real config object: the same human must not get
+    // different columns depending on which Google affordance they used.
+    const config = buildAuthConfig(input(), cfgDeps());
+    const google = config.socialProviders?.google as {
+      mapProfileToUser: (p: { given_name?: string; family_name?: string }) => unknown;
+    };
+    const profile = { given_name: "Ada", family_name: "Lovelace" };
+
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const token = `${b64({ alg: "RS256" })}.${b64({ email: "ada@example.dev", ...profile })}.sig`;
+    const viaOneTap = await config.databaseHooks?.user?.create?.before?.(
+      { email: "ada@example.dev", name: "Ada Lovelace" } as never,
+      { path: "/one-tap/callback", body: { idToken: token } } as never,
+    );
+
+    expect(viaOneTap).toEqual({ data: google.mapProfileToUser(profile) });
+  });
+
   it("does NOT enable storeAccountCookie (it would seed a cookie from in-memory tokens, bypassing the DB strip)", () => {
     // The stripping hook nulls tokens on DB write; storeAccountCookie would put the fresh in-memory provider
     // tokens into a cookie on re-auth — an exposure the DB strip can't reach. Keep it off.
@@ -445,5 +484,123 @@ describe("makeAuth", () => {
     expect(typeof made.handler).toBe("function");
     expect(typeof made.close).toBe("function");
     await expect(made.close()).resolves.toBeUndefined();
+  });
+});
+
+// --- Google One Tap -----------------------------------------------------------------------------------
+// The one-tap plugin mounts a PUBLIC, unauthenticated POST endpoint that performs an outbound fetch to
+// Google's JWKS, so "is it mounted at all" is a security-relevant question and not just a feature flag.
+// It is wired only when Google is fully configured AND the resolved client id is shaped like one — the
+// same predicate the login page's browser gate uses, so the endpoint's existence and the prompt's
+// existence cannot disagree.
+describe("buildAuthConfig — Google One Tap", () => {
+  // A realistically-shaped id: the SECRETS fixture's "google-id" is a placeholder that (correctly) does
+  // not pass the shape guard, which is itself pinned by a test below.
+  const CLIENT_ID = "1234567890-abc123def456.apps.googleusercontent.com";
+  const withOneTap: ResolvedAuthSecrets = { ...SECRETS, googleClientId: CLIENT_ID };
+
+  const oneTapPlugin = (secrets: ResolvedAuthSecrets) =>
+    buildAuthConfig({ baseURL: "https://auth.webhook.co", secrets }, cfgDeps()).plugins?.find(
+      (p) => p.id === "one-tap",
+    );
+
+  it("wires the plugin when Google is fully configured", () => {
+    expect(oneTapPlugin(withOneTap)).toBeDefined();
+  });
+
+  // The audience is what makes a stolen id token minted for ANOTHER Google app useless here. The plugin
+  // would otherwise fall back to `socialProviders.google.clientId` implicitly; pin it explicitly so the
+  // audience survives a refactor of the social-provider map.
+  it("pins the audience explicitly from the resolved secret", () => {
+    const options = (oneTapPlugin(withOneTap) as { options?: { clientId?: string } } | undefined)
+      ?.options;
+    expect(options?.clientId).toBe(CLIENT_ID);
+  });
+
+  // Signups are allowed by design (the founder chose prompt + tap-to-confirm WITH signup). Pin it: a
+  // stray `disableSignup: true` would turn One Tap into a silent no-op for every new user.
+  it("does not disable signup", () => {
+    const options = (
+      oneTapPlugin(withOneTap) as { options?: { disableSignup?: boolean } } | undefined
+    )?.options;
+    expect(options?.disableSignup).toBeFalsy();
+  });
+
+  it("does NOT wire the plugin under OAUTH_MODE=optional (no Google app at all)", () => {
+    expect(
+      oneTapPlugin({ ...withOneTap, googleClientId: "", googleClientSecret: "" }),
+    ).toBeUndefined();
+  });
+
+  // The id alone cannot complete a sign-in — the callback needs the provider pair. A mounted endpoint
+  // with no secret is an unauthenticated JWKS-fetching endpoint that can never succeed.
+  it("does NOT wire the plugin when the client secret is missing", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientSecret: "" })).toBeUndefined();
+  });
+
+  // Same predicate as the browser gate. A malformed id means we could not confirm the audience, so the
+  // endpoint must not exist rather than exist with an audience nothing can satisfy.
+  it("does NOT wire the plugin when the client id is not shaped like one", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientId: "google-id" })).toBeUndefined();
+  });
+
+  it("does NOT wire the plugin when the client id is a Google client SECRET", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientId: "GOCSPX-1a2b3c4d5e6f" })).toBeUndefined();
+  });
+
+  // Whitespace is canonicalized ONCE, in resolveAuthSecrets (env.ts), not here. Trimming locally is what
+  // let the two consumers of this one secret disagree: One Tap trimmed before validating while
+  // `socialProviders` used the raw value, so a single stray newline produced a WORKING One Tap prompt
+  // and a BROKEN "Continue with Google" button — the enhancement surviving while the primary affordance
+  // failed. This pins the consequence: by the time a secret reaches here it is already canonical, so an
+  // untrimmed value is a genuinely malformed id and the gate refuses it rather than repairing it.
+  it("does not repair an untrimmed id — canonicalization belongs to resolveAuthSecrets", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientId: ` ${CLIENT_ID}\n` })).toBeUndefined();
+  });
+
+  // The plugin contributes NO schema key, so it adds no columns and the Better Auth drift guard — which
+  // reads only apps/auth/src/auth.ts — stays correct without knowing this plugin exists. If a future
+  // upstream version starts declaring a schema, this fails and tells us a migration is now required.
+  it("contributes no schema (so no migration and no drift-guard blind spot)", () => {
+    expect(oneTapPlugin(withOneTap)).not.toHaveProperty("schema");
+  });
+
+  it("keeps magic-link and the captcha alongside it", () => {
+    const plugins = buildAuthConfig(
+      { baseURL: "https://auth.webhook.co", secrets: { ...withOneTap, turnstileSecretKey: "0xS" } },
+      cfgDeps(),
+    ).plugins;
+    expect(plugins?.map((p) => p.id).sort()).toEqual(["captcha", "magic-link", "one-tap"]);
+  });
+});
+
+// --- Sign-in method telemetry -------------------------------------------------------------------------
+// One Tap and the Google button write identical rows (same providerId, same sub), so without this the
+// question "is anyone using One Tap" has no answer. Wired as a request-level after-hook rather than a
+// databaseHook, so the bootstrap's user/session create.after hooks are untouched.
+describe("buildAuthConfig — sign-in telemetry", () => {
+  it("wires an after-hook when a log sink is provided", () => {
+    const log = vi.fn();
+    const cfg = buildAuthConfig(input(), cfgDeps({ log }));
+    expect(typeof cfg.hooks?.after).toBe("function");
+  });
+
+  it("does NOT displace the bootstrap's databaseHooks (the reason it is not a databaseHook)", () => {
+    const log = vi.fn();
+    const userAfter = vi.fn();
+    const databaseHooks = { user: { create: { after: userAfter } } } as never;
+    const hooks = buildAuthConfig(input(), cfgDeps({ log, databaseHooks })).databaseHooks;
+    // Identity, not just "is a function": a lost create.after means signups get no personal org.
+    expect(hooks?.user?.create?.after).toBe(userAfter);
+  });
+});
+
+// Better Auth computes skipOriginCheck as `advanced.disableOriginCheck ?? (isTest() ? true : false)`,
+// where isTest() is `NODE_ENV === "test" || TEST`. Left implicit, a stray env var in a deployed
+// environment silently removes both the untrusted-Origin rejection and the off-origin callbackURL
+// rejection — the open-redirect guard the one-tap plugin depends on — with no warning.
+describe("buildAuthConfig — origin check", () => {
+  it("pins origin + callbackURL validation ON rather than inheriting the isTest() default", () => {
+    expect(buildAuthConfig(input(), cfgDeps()).advanced?.disableOriginCheck).toBe(false);
   });
 });

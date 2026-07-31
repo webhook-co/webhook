@@ -2,10 +2,12 @@
  * Security response headers for the app.webhook.co dashboard, wired into next.config.ts `headers()` so
  * OpenNext applies them to every Next-served response. See docs/adr/0077-web-dashboard-surface.md.
  *
- * This module intentionally mirrors apps/auth/src/security-headers.ts — the two differ only in third-party
- * origins (auth allowlists Cloudflare Turnstile; the dashboard allowlists none). Folding both (and apps/www's
- * _headers) onto one shared parameterized builder is a tracked follow-up, deliberately not done here to keep
- * this slice out of the co-owned apps/auth.
+ * This module intentionally mirrors apps/auth/src/security-headers.ts in SHAPE. It deliberately does not
+ * describe what that file allowlists: nothing in CI ties the two together, so a note here about auth's
+ * third-party origins is a claim that goes stale silently the next time auth changes — as it did. Read
+ * that file for its own policy. Folding both (and apps/www's _headers) onto one shared parameterized
+ * builder is a tracked follow-up, deliberately not done here to keep this slice out of the co-owned
+ * apps/auth.
  *
  * CSP shape + the `'unsafe-inline'` tradeoff: OpenNext on Workers has no middleware (ADR-0021), so the
  * dashboard can't mint a per-request nonce — the same constraint apps/auth + apps/www document. Script and

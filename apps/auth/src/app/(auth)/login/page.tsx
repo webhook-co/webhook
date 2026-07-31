@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { LoginActions } from "./login-actions";
+import { googleOneTapClientId } from "./one-tap-config";
 import { socialProvidersForLogin } from "./social-providers";
 import { resolvePostLoginTarget } from "./post-login-target";
 import { isSignedIn } from "./resolve-signed-in";
@@ -105,7 +106,10 @@ export default async function LoginPage({
         </p>
       }
     >
-      <LoginActions providers={await socialProvidersForLogin()} />
+      <LoginActions
+        providers={await socialProvidersForLogin()}
+        googleClientId={await googleOneTapClientId()}
+      />
     </AuthShell>
   );
 }
