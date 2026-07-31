@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   collectFromDevVars,
+  LOCAL_KEY,
+  sopsEnv,
   mergeIntoDevVars,
   NOT_SHAREABLE,
   parseEnv,
@@ -31,6 +33,13 @@ test("shares the credentials that actually need sharing", () => {
   assert.ok(!names.includes("RESEND_API_KEY"));
 });
 
+// The Stripe CLI mints its OWN whsec_ per machine (`stripe listen --print-secret`); a registered endpoint
+// cannot reach localhost at all. Distributing one machine's value gives every other machine a signing
+// secret its own `stripe listen` will never produce — `400 invalid signature`, with no obvious cause.
+test("a PER-MACHINE credential is never shared", () => {
+  assert.ok(!sharedSecretNames().includes("STRIPE_WEBHOOK_SIGNING_SECRET"));
+});
+
 test("never shares a mode FLAG", () => {
   // OAUTH_MODE / EMAIL_MODE are scoped external but are switches, and must stay BLANK for prod parity.
   // Distributing them would push a DEGRADED stack onto the next machine.
@@ -56,7 +65,7 @@ test("never shares a name that is a LOCAL literal in any app", () => {
 
 // The exact set, not a floor. A floor of 6 passed while every STRIPE_* name silently dropped out of
 // discovery — the tool would still report success, just quietly stop sharing half of what it claims to.
-test("the shared set is exactly the documented 10 names", () => {
+test("the shared set is exactly the documented 9 names", () => {
   assert.deepEqual(sharedSecretNames(), [
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
@@ -66,7 +75,6 @@ test("the shared set is exactly the documented 10 names", () => {
     "STRIPE_PLANS",
     "STRIPE_PORTAL_CONFIGURATION_ID",
     "STRIPE_SECRET_KEY",
-    "STRIPE_WEBHOOK_SIGNING_SECRET",
     "TURNSTILE_SECRET_KEY",
   ]);
   for (const n of sharedSecretNames()) {
@@ -77,8 +85,9 @@ test("the shared set is exactly the documented 10 names", () => {
 // A credential that is ALSO live in production must never enter this vault. The vault's protection is a
 // passphrase, and repo read access yields the ciphertext and the wrapped key together — fine for a
 // Stripe test key, not for something that can send mail as webhook.co.
-test("a production credential is never shareable, by either direction", () => {
-  for (const name of NOT_SHAREABLE) {
+test("an unshareable credential is refused in BOTH directions, with a reason", () => {
+  for (const [name, why] of NOT_SHAREABLE) {
+    assert.ok(why && why.length > 20, `${name} is excluded without saying why`);
     assert.ok(
       !sharedSecretNames().includes(name),
       `${name} is a prod credential and must not be vaulted`,
@@ -144,6 +153,25 @@ test("push and pull agree on what is shareable", () => {
   // Two independent filters that must not drift apart: anything push would publish, pull must accept.
   const vault = new Map(sharedSecretNames().map((n) => [n, "v"]));
   assert.deepEqual([...pullSet(vault, sharedSecretNames()).keys()], sharedSecretNames());
+});
+
+// sops resolves its default age key location with Go's os.UserConfigDir, which is
+// ~/Library/Application Support/sops/age on macOS and ~/.config/sops/age on Linux. This script writes the
+// key to ONE path on every platform, so it must tell sops where that is instead of hoping the defaults
+// agree. They do not on macOS, where --pull failed with "identity did not match any of the recipients"
+// even though the identity was correct — and every throwaway test passed because it set the variable by
+// hand, bypassing the exact thing that was broken.
+test("every sops call pins the key location rather than trusting a platform default", () => {
+  const env = sopsEnv({ PATH: "/usr/bin" });
+  assert.equal(env.SOPS_AGE_KEY_FILE, LOCAL_KEY);
+  assert.equal(env.PATH, "/usr/bin", "the surrounding environment must survive");
+});
+
+test("an explicit SOPS_AGE_KEY_FILE from the caller still wins", () => {
+  // Someone keeping their identity elsewhere (a shared agent, a hardware-backed path) must not have it
+  // silently overridden by ours.
+  const env = sopsEnv({ SOPS_AGE_KEY_FILE: "/elsewhere/keys.txt" });
+  assert.equal(env.SOPS_AGE_KEY_FILE, "/elsewhere/keys.txt");
 });
 
 test("parseEnv splits on the FIRST = and ignores comments", () => {
