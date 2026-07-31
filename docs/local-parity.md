@@ -176,10 +176,21 @@ shape the deploy itself uses for `wrangler.prod.jsonc`.
 `wrangler dev` resolves a binding across **separate** dev sessions through its dev registry, keyed on the
 target's config `name`. That is why `pnpm dev` starting every app matters.
 
-**`apps/web`'s 10 are still absent, and cannot be fixed the same way.** web runs under `next dev`, which is
-not wrangler and takes no `-c`. Giving web its bindings means running it under the OpenNext preview instead
-— the same trade `apps/auth` already makes: a slower loop that is actually correct. That is a deliberate
-follow-up, not an oversight.
+**`apps/web`'s 10 need `pnpm --filter @webhook-co/web dev:bindings`.** web runs under `next dev`, which is
+not wrangler and takes no `-c` — so an app running that way *cannot* have a service binding at all. Its
+`dev:bindings` script runs the OpenNext preview instead, against the same generated overlay, and all 10
+resolve (verified with `wrangler types`; it boots in ~16s and serves).
+
+It is **opt-in rather than the default**, and that is a judgement worth stating rather than burying. The
+preview has no fast refresh: every change needs a rebuild. web is the app people iterate on most, so making
+that the default would tax every dashboard change to fix a gap that matters on a minority of them.
+`apps/auth` made the opposite call because under `next dev` its entire issuer surface does not exist —
+unusable, not merely reduced.
+
+⚠️ The honest cost of that choice: under plain `next dev` the 10 bindings are absent, and the readers check
+structurally and **degrade** rather than throwing. That is silent. If you are touching the session handoff,
+account deletion, connected apps, onboarding, email change, login methods, provider-secret sealing, delivery
+dispatch, ingest-URL reveal or cache eviction, use `dev:bindings` — the fast loop will quietly do less.
 
 **What is verified, and what is not.** `wrangler types -c wrangler.dev.jsonc` resolves all four bindings for
 each of api and mcp, and starting the engine flips them from `[not connected]` to `[connected]`. An

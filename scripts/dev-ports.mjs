@@ -203,3 +203,30 @@ export function duplicatePorts() {
     .filter(([, apps]) => apps.length > 1)
     .map(([port, apps]) => ({ port, apps }));
 }
+
+/**
+ * The command that runs a Next-kind app under the OpenNext preview instead of `next dev`, so its service
+ * bindings resolve.
+ *
+ * `next dev` is not wrangler: it takes no `-c`, so an app running under it CANNOT have a service binding.
+ * For `apps/web` that means its 10 bindings — session handoff, account deletion, connected apps, delivery
+ * dispatch, ingest-URL reveal, cache eviction — are absent, and the readers check structurally and DEGRADE
+ * rather than throwing. Silent, in other words.
+ *
+ * The preview is the same code path production runs. It costs fast refresh: every change needs a rebuild
+ * (~14s for web), which is why it is an OPT-IN rather than the default for the app people iterate on most.
+ * `apps/auth` made the opposite trade, because under `next dev` its entire issuer surface simply does not
+ * exist — unusable rather than merely reduced.
+ *
+ * @returns {string | null} null when the app has no bindings to gain.
+ */
+export function devBindingsCommand(app) {
+  const spec = DEV_APPS[app];
+  if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
+  if (spec.kind !== "next" || !SERVICE_BINDINGS[app]) return null;
+  const scheduled = CRON_APPS.has(app) ? " --test-scheduled" : "";
+  return (
+    "opennextjs-cloudflare build && opennextjs-cloudflare preview -- " +
+    `-c wrangler.dev.jsonc${scheduled} --port ${spec.port} --ip 127.0.0.1 --inspector-port ${spec.port + INSPECTOR_OFFSET}`
+  );
+}
