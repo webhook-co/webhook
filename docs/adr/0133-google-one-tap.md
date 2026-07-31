@@ -159,12 +159,15 @@ remains available. Proven end to end by a contract test that signs a real token 
 - **A second mount in one JS context.** Our wrapper prompts once per mount, so the plugin's stuck-flag
   hazard does not apply — but Google's own `cancel()`/prompt semantics on a client-side revisit to `/login`
   are on the human-verification checklist.
-- **GSI loads before any consent, for EU visitors included.** `apps/www`'s consent banner states the house
-  position that a non-essential cookie "may only be stored after consent" under ePrivacy, and One Tap is
-  framed in this very ADR as an enhancement on a page that already works — which is the standard argument
-  *against* the strictly-necessary exemption. GSI also sets a first-party `g_state` cookie to remember a
-  dismissal. This is a legal-basis decision, not an engineering one, and it is **open**: either gate the
-  script on `/login` behind consent, or record a written basis for treating it as exempt.
+- **GSI loads before any consent, for EU visitors included — RESOLVED 2026-07-31 (founder): record a
+  written basis, do not gate.** See [`docs/legal-basis-gsi-one-tap.md`](../legal-basis-gsi-one-tap.md).
+  In short: the IP disclosure rests on Art. 6(1)(f) legitimate interests with a full balancing
+  assessment; the first-party `g_state` cookie — measured as being set on load, before any interaction,
+  180-day, in both the FedCM and legacy paths — rests on ePrivacy Art. 5(3)'s strictly-necessary
+  exemption, on the ground that the page's sole purpose IS the authentication the visitor requested and
+  the cookie's function is to suppress the prompt. That record does not pretend the tension with
+  ADR-0128 away: it states the counter-arguments, records that no lawyer has reviewed it, and specifies
+  the exact one-condition change to make if counsel disagrees.
 
 ## consequences
 
