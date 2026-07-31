@@ -151,10 +151,19 @@ function requireTools() {
 function devVarsPath(app) {
   return join(REPO, "apps", app, ".dev.vars");
 }
-const readDevVars = (app) =>
-  existsSync(devVarsPath(app)) ? readFileSync(devVarsPath(app), "utf8") : null;
+/** Read an app's .dev.vars, or null when it has none. One syscall: a stat-then-read is a check-then-use
+ *  window, and "missing" and "unreadable" are the same answer here anyway. */
+function readDevVars(app) {
+  try {
+    return readFileSync(devVarsPath(app), "utf8");
+  } catch {
+    return null;
+  }
+}
 
 function cmdInit(internal) {
+  // A presence check that is NOT followed by a read in this process — sops/age open these paths
+  // themselves — so there is no check-then-use window to close here.
   if (existsSync(WRAPPED_KEY(internal))) {
     console.error(
       `\n✖ ${WRAPPED_KEY(internal)} already exists.\n  Re-running --init would orphan every value already ` +
@@ -218,10 +227,16 @@ function cmdPush(internal) {
     process.exit(1);
   }
   mkdirSync(join(internal, "secrets"), { recursive: true });
-  // The name must satisfy the .sops.yaml creation rule (`secrets/*.env`) or sops refuses to encrypt
-  // at all — and a refusal here would leave the credentials only on this machine.
-  const plaintext = join(internal, "secrets", ".dev-secrets.plain.env");
-  writeFileSync(plaintext, toEnv(values), { mode: 0o600 });
+  // Encrypt from STDIN — the plaintext never touches disk.
+  //
+  // The first version of this wrote the credentials to a temp file INSIDE the internal repo and deleted it
+  // afterwards. That is the one thing this tool exists to prevent: a crash between write and delete, a
+  // failed unlink, or a `git add` running concurrently would leave live production credentials sitting next
+  // to the ciphertext meant to protect them. A temp file elsewhere would be better but still writes them
+  // out; piping writes them nowhere.
+  //
+  // `--filename-override` is what makes it work: sops picks its creation rule from the FILE PATH, and
+  // /dev/stdin matches nothing, so without the override it refuses with "no matching creation rules found".
   const res = spawnSync(
     "sops",
     [
@@ -232,11 +247,12 @@ function cmdPush(internal) {
       "dotenv",
       "--output-type",
       "dotenv",
-      plaintext,
+      "--filename-override",
+      "secrets/dev-secrets.enc.env",
+      "/dev/stdin",
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", input: toEnv(values) },
   );
-  spawnSync("rm", ["-f", plaintext]); // never leave plaintext behind, even on failure
   if (res.status !== 0) {
     console.error(`\n✖ sops failed to encrypt:\n${res.stderr}\n`);
     process.exit(1);
@@ -284,11 +300,16 @@ function cmdPull(internal) {
     }
     if (wanted.size === 0) continue;
     const path = devVarsPath(app);
-    if (!existsSync(path)) {
+    // Read FIRST rather than stat-then-read: the stat is a check-then-use window, and a missing file
+    // throws here just the same, which is the answer the check was asking for.
+    let current;
+    try {
+      current = readFileSync(path, "utf8");
+    } catch {
       console.log(`   skipped ${app} — no .dev.vars yet (run \`pnpm dev:secrets\` first)`);
       continue;
     }
-    writeFileSync(path, mergeIntoDevVars(readFileSync(path, "utf8"), wanted), { mode: 0o600 });
+    writeFileSync(path, mergeIntoDevVars(current, wanted), { mode: 0o600 });
     console.log(`   ${app}: ${wanted.size} values`);
     touched++;
   }
