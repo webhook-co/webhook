@@ -403,6 +403,68 @@ jobs:
           # legitimately empty upload, not a second failure to report on top of the real one.
           if-no-files-found: ignore
 
+  # Real-browser gate for the AUTH surface — specifically /login, the single door into the product
+  # (the issuer bounces unauthenticated /authorize here, and app.'s session handoff bounces here).
+  #
+  # Until this job existed nothing in CI had ever opened that page in a browser: the jsdom suite injects
+  # a fake captcha through a prop so Cloudflare's script never loads, and build-cf only compiles. It found
+  # a real bug on its first run — the auth app had no dev/production CSP split, so `next dev` refused
+  # eval and the dev client runtime never booted.
+  #
+  # Unlike web-e2e this needs NO Postgres and no dbmate: a signed-out /login render touches neither
+  # secrets nor the database (resolve-signed-in.ts short-circuits on the absent session cookie, and
+  # social-providers.ts fails safe). It runs against a PRODUCTION build — see playwright.config.ts for
+  # why that is load-bearing rather than incidental.
+  #
+  # Add to the `main` ruleset's required checks to make it blocking.
+  auth-e2e:
+    name: auth-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: install
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      # Workspace dependencies only (`^...`). Without their dist/, the app's tsconfig `paths` redirect
+      # falls back to package SOURCE and `next build` typechecks packages/shared under this app's DOM
+      # lib, which fails on unrelated BufferSource variance. The app's own build happens in the
+      # Playwright webServer command so the served build can never be stale.
+      - name: Build workspace dependencies
+        run: pnpm exec turbo run build --filter='@webhook-co/auth^...'
+      # The login page decides which social buttons to render from what is CONFIGURED, reading the
+      # Worker env through OpenNext. With no .dev.vars it renders NEITHER button — verified, not assumed
+      # — so without this the production-shape assertion would fail in CI and pass locally. These are
+      # placeholders and no request leaves the box: the suite intercepts accounts.google.com.
+      #
+      # GOOGLE_CLIENT_ID must be validly SHAPED, unlike the other three. `configuredSocialProviders`
+      # only tests presence, but One Tap additionally requires the id to look like a Google client id
+      # (runtime/google-client-id.ts) — a guard against a mis-bound CLIENT SECRET reaching the page. A
+      # free-text placeholder there would turn One Tap off and silently reduce this job to the old
+      # pre-One-Tap coverage while still reporting green. Project number 000000000000 belongs to no
+      # Google project; not a secret, and never a real credential.
+      - name: Write placeholder OAuth config
+        run: |
+          cat > apps/auth/.dev.vars <<'VARS'
+          GOOGLE_CLIENT_ID=000000000000-e2eplaceholder.apps.googleusercontent.com
+          GOOGLE_CLIENT_SECRET=e2e-placeholder-client-secret
+          GITHUB_CLIENT_ID=e2e-placeholder-client-id
+          GITHUB_CLIENT_SECRET=e2e-placeholder-client-secret
+          VARS
+      - run: pnpm --filter @webhook-co/auth exec playwright install --with-deps chromium
+      - run: pnpm --filter @webhook-co/auth test:e2e
+      # `trace: "retain-on-failure"` writes DOM snapshots, console and network for every failed test.
+      # Without this the trace dies with the runner and a failure that does not reproduce locally is
+      # undiagnosable — the CSP assertions in particular are near-impossible to debug from assertion
+      # text alone, which is why the spec also records each violation's source file.
+      - name: Upload Playwright trace
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: auth-e2e-trace
+          path: apps/auth/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
   # Real-browser accessibility gate: builds the static export, serves it, and runs axe-core in
   # Chromium across the homepage's interactive states AND the five legal pages. This is the only
   # layer that sees real layout, so the only one that catches color contrast and target size. Add to

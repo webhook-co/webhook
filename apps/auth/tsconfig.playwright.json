@@ -1,0 +1,15 @@
+{
+  // Type-checks the Playwright harness that tsconfig.json (the app program) excludes. An untypechecked
+  // directory is where a signature change passes `tsc` and only fails at runtime — and this harness has
+  // real logic in it (the CSP-violation init script, the console-source filter).
+  //
+  // Extends the app config so the DOM lib comes along: the specs are node-run, but their
+  // `addInitScript` / `page.evaluate` callbacks execute in the browser and reference `window` and
+  // `document`. It just retargets `include` to playwright/** and drops the app's own sources.
+  "extends": "./tsconfig.json",
+  // The app program leaves `types` unset (Next supplies its ambient types); the harness needs Node's
+  // globals (process) explicitly and pulls @playwright/test in as a module import.
+  "compilerOptions": { "types": ["node"] },
+  "include": ["playwright/**/*.ts", "playwright.config.ts"],
+  "exclude": ["node_modules", ".next", ".open-next", "dist", ".turbo"]
+}
