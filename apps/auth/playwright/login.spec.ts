@@ -19,6 +19,21 @@ import { expect, test } from "@playwright/test";
 /** Third-party origins whose console noise is not ours to gate (a CDN hiccup is not our regression). */
 const THIRD_PARTY = ["challenges.cloudflare.com", "accounts.google.com"];
 
+/**
+ * Console errors the BROWSER emits about FedCM, attributed to our document rather than to any script.
+ *
+ * The source-URL filter above cannot catch these: Chrome logs them against the page URL, not against
+ * accounts.google.com, because they come from the browser's own FedCM implementation rather than from
+ * Google's script. "Provider's accounts list is empty" is simply what FedCM says when the visitor has no
+ * Google session — the ordinary state for a signed-out visitor, and therefore something a large share of
+ * real users will produce. It is a notice, not a fault: nothing is broken and One Tap correctly shows no
+ * prompt.
+ *
+ * Matched on the EXACT string, so this exemption cannot quietly grow into "ignore anything mentioning
+ * Google". A different FedCM error still fails this test.
+ */
+const BROWSER_FEDCM_NOTICES = ["Provider's accounts list is empty."];
+
 interface CspViolation {
   violatedDirective: string;
   blockedURI: string;
@@ -124,6 +139,7 @@ test.describe("/login", () => {
       // Everything our bundle logs still fails this test.
       const source = message.location().url;
       if (THIRD_PARTY.some((host) => source.includes(host))) return;
+      if (BROWSER_FEDCM_NOTICES.includes(message.text().trim())) return;
       errors.push(`${source}: ${message.text()}`);
     });
 
@@ -148,6 +164,53 @@ test.describe("/login", () => {
     const dividers = await page.getByText("magic link", { exact: true }).count();
 
     expect(dividers).toBe(socialButtons > 0 ? 1 : 0);
+  });
+
+  // --- Google One Tap -------------------------------------------------------------------------------
+  // Hermetic by construction: accounts.google.com is intercepted, so these assertions hold with no
+  // Google byte arriving and CI never depends on Google's uptime. What they prove is exactly what a unit
+  // test cannot — that the browser was ALLOWED to request the GSI script under the real production CSP.
+  test("requests the Google Identity Services script, and the CSP permits it", async ({ page }) => {
+    await captureCspViolations(page);
+
+    const gsiRequests: string[] = [];
+    await page.route("https://accounts.google.com/**", async (route) => {
+      gsiRequests.push(route.request().url());
+      // An empty script: GSI never initializes, which is fine — the question here is whether the browser
+      // was permitted to FETCH it. A CSP refusal would block the request before this handler ever runs.
+      await route.fulfill({ status: 200, contentType: "text/javascript", body: "" });
+    });
+
+    await page.goto("/login");
+    await expect(page.locator(".cf-turnstile")).toHaveCount(1);
+    await page.waitForTimeout(2_000);
+
+    expect(gsiRequests.some((u) => u.includes("/gsi/client"))).toBe(true);
+
+    // The specific failure this catches: a script-src that omits accounts.google.com. That produces a
+    // `script-src-elem` violation naming the GSI URL and NO request at all — which is precisely how the
+    // discovery pass first observed it.
+    const violations = await page.evaluate(() => window.__cspViolations ?? []);
+    expect(violations.filter((v) => v.blockedURI.includes("accounts.google.com"))).toEqual([]);
+  });
+
+  test("reaches Google ONLY for the GSI endpoints, nothing else", async ({ page }) => {
+    // Named for what it actually asserts. The CI fixture CONFIGURES Google, so this cannot exercise the
+    // unconfigured case — `googleOneTapClientId()` returning null is covered by one-tap-config.test.ts,
+    // and the "no prompt without a client id" wiring by login-actions. What a browser adds here is the
+    // egress shape: with the prompt active, the only origin traffic is /gsi/*, so a future change that
+    // starts beaconing somewhere else on this page fails loudly.
+    const attempted: string[] = [];
+    await page.route("https://accounts.google.com/**", async (route) => {
+      attempted.push(new URL(route.request().url()).pathname);
+      await route.abort();
+    });
+
+    await page.goto("/login");
+    await page.waitForTimeout(2_000);
+
+    expect(attempted.length).toBeGreaterThan(0);
+    for (const path of attempted) expect(path.startsWith("/gsi/")).toBe(true);
   });
 
   test("offers both social providers in the production shape", async ({ page }) => {

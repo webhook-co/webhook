@@ -1,8 +1,39 @@
 import { describe, expect, it } from "vitest";
 
-import { buildContentSecurityPolicy, SECURITY_HEADERS, TURNSTILE_ORIGIN } from "./security-headers";
+import {
+  buildContentSecurityPolicy,
+  GOOGLE_IDENTITY_ORIGIN,
+  SECURITY_HEADERS,
+  TURNSTILE_ORIGIN,
+} from "./security-headers";
+
+// The production policy, spelled out IN THE TEST rather than derived from the module under test. Written
+// this way on purpose: a `toContain` per directive silently tolerates a widened one (`script-src 'self'
+// … https://evil.example` still contains the expected prefix), and rebuilding the expectation from the
+// same `cspDirectives` it is checking would assert only that a function equals itself. A full literal is
+// the only form where ANY change — a new origin, a dropped directive, a reordering — has to be made
+// deliberately, in this file, where a reviewer sees it.
+const PRODUCTION_CSP: ReadonlyArray<[string, string]> = [
+  ["default-src", "'self'"],
+  ["script-src", `'self' 'unsafe-inline' ${TURNSTILE_ORIGIN} ${GOOGLE_IDENTITY_ORIGIN}`],
+  ["style-src", `'self' 'unsafe-inline' ${GOOGLE_IDENTITY_ORIGIN}`],
+  ["img-src", "'self' data:"],
+  ["font-src", "'self'"],
+  ["connect-src", `'self' ${TURNSTILE_ORIGIN} ${GOOGLE_IDENTITY_ORIGIN}`],
+  ["frame-src", `${TURNSTILE_ORIGIN} ${GOOGLE_IDENTITY_ORIGIN}`],
+  ["frame-ancestors", "'none'"],
+  ["base-uri", "'self'"],
+  ["form-action", "'self'"],
+  ["object-src", "'none'"],
+];
 
 describe("auth CSP", () => {
+  it("serializes EXACTLY the production policy — every directive, every value", () => {
+    expect(buildContentSecurityPolicy()).toBe(
+      PRODUCTION_CSP.map(([directive, value]) => `${directive} ${value}`).join("; "),
+    );
+  });
+
   it("locks down framing, plugins, base-uri, and form targets", () => {
     const csp = buildContentSecurityPolicy();
     expect(csp).toContain("default-src 'self'");
@@ -12,14 +43,40 @@ describe("auth CSP", () => {
     expect(csp).toContain("form-action 'self'");
   });
 
-  it("allowlists Cloudflare Turnstile — and ONLY Turnstile — as the third-party origin", () => {
+  // The set-equality is the part that catches a stray origin. It used to name Turnstile alone; the login
+  // page now also loads Google Identity Services for One Tap, so the allowlist is TWO — and still a
+  // closed set, which is the property worth keeping.
+  it("allowlists exactly two third-party origins, and no others", () => {
+    const origins = buildContentSecurityPolicy().match(/https?:\/\/[^\s;]+/g) ?? [];
+    expect(new Set(origins)).toEqual(new Set([TURNSTILE_ORIGIN, GOOGLE_IDENTITY_ORIGIN]));
+  });
+
+  // Empirically derived (playwright, four engines) — see GOOGLE_IDENTITY_ORIGIN for the evidence and for
+  // what the experiment could NOT settle. style-src is called out because it is the one commonly missed:
+  // GSI loads an external stylesheet, which 'unsafe-inline' does not cover.
+  it("grants Google Identity Services exactly the directives One Tap needs", () => {
     const csp = buildContentSecurityPolicy();
-    expect(csp).toContain(`script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN}`);
-    expect(csp).toContain(`frame-src ${TURNSTILE_ORIGIN}`);
-    expect(csp).toContain(`connect-src 'self' ${TURNSTILE_ORIGIN}`);
-    // the captcha is the only off-origin the UI loads — guard against a stray origin sneaking in
-    const origins = csp.match(/https?:\/\/[^\s;]+/g) ?? [];
-    expect(new Set(origins)).toEqual(new Set([TURNSTILE_ORIGIN]));
+    for (const directive of ["script-src", "style-src", "connect-src", "frame-src"]) {
+      const value = PRODUCTION_CSP.find(([d]) => d === directive)?.[1];
+      expect(value).toContain(GOOGLE_IDENTITY_ORIGIN);
+      expect(csp).toContain(`${directive} ${value}`);
+    }
+  });
+
+  it("does NOT grant Google img-src — the avatar is never governed by this page's CSP", () => {
+    // Under FedCM it is browser chrome; under the legacy path it is inside a cross-origin iframe. Adding
+    // lh3.googleusercontent.com here would widen the policy for something it cannot affect.
+    const imgSrc = PRODUCTION_CSP.find(([d]) => d === "img-src")?.[1];
+    expect(imgSrc).not.toContain("google");
+  });
+});
+
+describe("auth security headers", () => {
+  // FedCM is gated by `identity-credentials-get`. It already defaults to `self` for a top-level document,
+  // so this pins today's behaviour against a future tightening that would silently kill One Tap.
+  it("permits the FedCM credential request, and still denies camera/mic/geolocation", () => {
+    const value = new Map(SECURITY_HEADERS.map((h) => [h.key, h.value])).get("Permissions-Policy");
+    expect(value).toBe("camera=(), microphone=(), geolocation=(), identity-credentials-get=(self)");
   });
 });
 

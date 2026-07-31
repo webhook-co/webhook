@@ -12,8 +12,42 @@
  * See docs/adr/0056-auth-csp.md.
  */
 
-/** The only third-party origin the auth UI loads: Cloudflare Turnstile (the login captcha). */
+/** Cloudflare Turnstile — the login captcha (script + widget iframe + telemetry). */
 export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+/**
+ * Google Identity Services — the One Tap prompt on the login page.
+ *
+ * The directive set below was determined EMPIRICALLY (playwright, four engines: Chrome with FedCM,
+ * Chrome with FedCM force-disabled, Firefox, Safari/WebKit), not from Google's documentation, which says
+ * only that "changes are needed" without naming values. Findings:
+ *
+ *   PROVEN NEEDED — every engine issued the request, and removing the directive blocks it outright:
+ *     • script-src  — GET /gsi/client. Blocked first, which stops everything downstream, so it had to be
+ *                     allowed before any other directive could even be observed.
+ *     • style-src   — GET /gsi/style. GSI loads an EXTERNAL stylesheet, and `'unsafe-inline'` does not
+ *                     cover that. Worth stating because it is the one people leave out.
+ *     • connect-src — /gsi/fedcm.json (the FedCM manifest) and /gsi/log. Chrome-with-FedCM issues the
+ *                     first as an `other`-type request and the three non-FedCM engines issue XHRs.
+ *
+ *   INCLUDED ON DOCUMENTED BEHAVIOUR, NOT ON AN OBSERVED REQUEST:
+ *     • frame-src   — no engine requested an iframe during discovery, and it would be wrong to conclude
+ *                     none is needed. The runs had NO Google account signed in ("Provider's accounts list
+ *                     is empty"), so the prompt never rendered in any engine — the experiment could only
+ *                     ever show what loading and initializing costs, never what DISPLAYING costs. Google's
+ *                     legacy (non-FedCM) One Tap renders in an accounts.google.com iframe, and Safari and
+ *                     Firefox have no FedCM, so omitting this would break the prompt for exactly those
+ *                     users, in a way that only shows up for someone with a live Google session. Kept.
+ *
+ *   DELIBERATELY NOT ADDED:
+ *     • img-src     — the account avatar is either browser chrome (FedCM) or content INSIDE a cross-origin
+ *                     iframe (legacy). Neither is governed by this page's CSP, so allowing
+ *                     lh3.googleusercontent.com here would widen the policy for nothing.
+ *
+ * The frame-src question is on the human-verification checklist precisely because it is the one the
+ * experiment could not settle.
+ */
+export const GOOGLE_IDENTITY_ORIGIN = "https://accounts.google.com";
 
 // Insertion order is the serialized order. Each value array is space-joined; directives are "; "-joined.
 //
@@ -29,15 +63,20 @@ function cspDirectives(dev: boolean): Record<string, readonly string[]> {
   return {
     "default-src": ["'self'"],
     "script-src": dev
-      ? ["'self'", "'unsafe-inline'", "'unsafe-eval'", TURNSTILE_ORIGIN]
-      : ["'self'", "'unsafe-inline'", TURNSTILE_ORIGIN],
-    "style-src": ["'self'", "'unsafe-inline'"],
+      ? ["'self'", "'unsafe-inline'", "'unsafe-eval'", TURNSTILE_ORIGIN, GOOGLE_IDENTITY_ORIGIN]
+      : ["'self'", "'unsafe-inline'", TURNSTILE_ORIGIN, GOOGLE_IDENTITY_ORIGIN],
+    // GSI loads an EXTERNAL stylesheet (/gsi/style), which 'unsafe-inline' does not cover.
+    "style-src": ["'self'", "'unsafe-inline'", GOOGLE_IDENTITY_ORIGIN],
     "img-src": ["'self'", "data:"],
     "font-src": ["'self'"],
     // Dev also allows the Turbopack HMR websocket. Schemes, not origins — the third-party origin
     // allowlist is identical in both modes, and a test pins that it stays that way.
-    "connect-src": dev ? ["'self'", "ws:", "wss:", TURNSTILE_ORIGIN] : ["'self'", TURNSTILE_ORIGIN],
-    "frame-src": [TURNSTILE_ORIGIN],
+    "connect-src": dev
+      ? ["'self'", "ws:", "wss:", TURNSTILE_ORIGIN, GOOGLE_IDENTITY_ORIGIN]
+      : ["'self'", TURNSTILE_ORIGIN, GOOGLE_IDENTITY_ORIGIN],
+    // No 'self': neither third-party widget frames this origin, and adding it would only widen the
+    // policy. Google's entry covers the LEGACY (non-FedCM) One Tap iframe — see GOOGLE_IDENTITY_ORIGIN.
+    "frame-src": [TURNSTILE_ORIGIN, GOOGLE_IDENTITY_ORIGIN],
     "frame-ancestors": ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
@@ -64,7 +103,13 @@ const HARDENING: ReadonlyArray<{ key: string; value: string }> = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  // `identity-credentials-get` is what gates the FedCM prompt. It already defaults to `self` for a
+  // top-level document, so this changes nothing today — it is pinned so a future tightening of this
+  // header (or a stricter platform default) cannot silently disable One Tap with no failing test.
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=(), identity-credentials-get=(self)",
+  },
   // auth.webhook.co is a leaf host — no includeSubDomains/preload (sticky + hard to walk back; mirrors www).
   { key: "Strict-Transport-Security", value: "max-age=63072000" },
 ];

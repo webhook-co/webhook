@@ -434,12 +434,18 @@ jobs:
       # The login page decides which social buttons to render from what is CONFIGURED, reading the
       # Worker env through OpenNext. With no .dev.vars it renders NEITHER button — verified, not assumed
       # — so without this the production-shape assertion would fail in CI and pass locally. These are
-      # placeholders: `configuredSocialProviders` tests PRESENCE and never the value, and no request
-      # leaves the box. Not a secret, and never a real credential.
+      # placeholders and no request leaves the box: the suite intercepts accounts.google.com.
+      #
+      # GOOGLE_CLIENT_ID must be validly SHAPED, unlike the other three. `configuredSocialProviders`
+      # only tests presence, but One Tap additionally requires the id to look like a Google client id
+      # (runtime/google-client-id.ts) — a guard against a mis-bound CLIENT SECRET reaching the page. A
+      # free-text placeholder there would turn One Tap off and silently reduce this job to the old
+      # pre-One-Tap coverage while still reporting green. Project number 000000000000 belongs to no
+      # Google project; not a secret, and never a real credential.
       - name: Write placeholder OAuth config
         run: |
           cat > apps/auth/.dev.vars <<'VARS'
-          GOOGLE_CLIENT_ID=e2e-placeholder-client-id
+          GOOGLE_CLIENT_ID=000000000000-e2eplaceholder.apps.googleusercontent.com
           GOOGLE_CLIENT_SECRET=e2e-placeholder-client-secret
           GITHUB_CLIENT_ID=e2e-placeholder-client-id
           GITHUB_CLIENT_SECRET=e2e-placeholder-client-secret
