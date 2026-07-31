@@ -346,6 +346,65 @@ export const APPS = {
       },
     ],
   },
+
+  // --- Apps that boot under `pnpm dev` but were absent from this manifest entirely ----------------
+  // Eleven apps run; five were declared. The other six were not "covered with nothing to declare", they
+  // were unconsidered — so `pnpm dev:secrets` never wrote them a file and preflight never checked one,
+  // while printing a green "secrets present" line. dmarc proved the cost: it reads RESEND_API_KEY and
+  // `pnpm cron dmarc` failed on a Resend 401. Every runnable app now appears here, and one that genuinely
+  // needs nothing says so with an empty list — a decision, rather than an omission that looks identical.
+
+  dmarc: {
+    // Sends the DMARC aggregate-report alert. Both values are `wrangler secret put` in production.
+    shared: [],
+    own: [
+      {
+        name: "RESEND_API_KEY",
+        scope: "external",
+        // Declared per-app rather than in SHARED because SHARED means "generated once per machine and
+        // byte-identical everywhere"; this is a third-party credential. The vault's conflict check still
+        // holds it to one value across apps, and NOT_SHAREABLE keeps it out of the vault itself.
+        note: "REQUIRED for prod parity — the DMARC aggregate-report alert sends through Resend. Without it `pnpm cron dmarc` fails with a Resend 401, which is how this app's total absence from the manifest was found.",
+      },
+      {
+        name: "ALERT_TO",
+        scope: "local",
+        value: "dev@localhost",
+        note: "Where the DMARC alert is addressed. A local literal so `pnpm cron dmarc` exercises the real send path without mailing anyone real — change it if you want to receive one.",
+      },
+    ],
+  },
+
+  health: {
+    // The heartbeat/canary surface. In production these are Secrets Store bindings; locally they are
+    // plain strings, which is the same code path — readSecretBinding accepts either.
+    shared: [],
+    own: [
+      {
+        name: "HEARTBEAT_TOKEN",
+        scope: "generated",
+        note: "Authenticates the heartbeat POST. Generated per machine: it is a shared secret with the caller, and locally you are both ends of it.",
+      },
+    ],
+  },
+
+  // --- Considered, needs nothing ------------------------------------------------------------------
+  // Verified by reading each Env interface / `env.` usage, not assumed. If one of these grows a variable,
+  // the empty list is the thing that should look wrong in review.
+
+  // Bindings only (ASSETS, WWW_ANALYTICS) — no vars, no secrets.
+  www: { shared: [], own: [] },
+
+  // Every var it reads (TURNSTILE_MODE, PLAY_TTL_MS, PLAY_MAX_ACTIVE, PLAY_MAX_PER_IP) is supplied by its
+  // committed wrangler `vars`. TURNSTILE_SECRET_KEY is optional and only consulted when the mode is "on",
+  // which locally it is not — see docs/local-parity.md, that gap is recorded rather than filled here.
+  play: { shared: [], own: [] },
+
+  // No Env interface and no `env.` reads.
+  get: { shared: [], own: [] },
+
+  // One Analytics Engine binding (TELEMETRY), no vars.
+  telemetry: { shared: [], own: [] },
 };
 
 /** Every app that gets a generated `.dev.vars`. */
