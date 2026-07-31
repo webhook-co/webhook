@@ -110,8 +110,8 @@ listing exactly what each app wants and which values are required for parity.
 **Getting the shared credentials onto a new machine.** Most values need no sharing: the `generated` ones
 are random per machine and the `local` ones are non-secret literals already in the committed examples. What
 is left is 11 real third-party credentials — the Google and GitHub OAuth pairs, Resend, Turnstile, and the
-Stripe test-mode values. **Ten of them** travel in the vault below; Resend is fetched by hand, for the
-reason given after it.
+Stripe test-mode values. **Nine of them** travel in the vault below; two are fetched per machine, for two
+different reasons given after it.
 
 Those live **encrypted** in the private `internal` repo, via sops + age:
 
@@ -127,18 +127,24 @@ this org with push protection on, and vendors participate in that programme — 
 get it revoked **by the vendor**. A production incident caused by a convenience commit. Ciphertext is the
 only form git should ever see.
 
-**`RESEND_API_KEY` is deliberately NOT in the vault**, and is the one credential still fetched by hand. It
-is currently the *same key production sends with*, and this vault's protection is a passphrase: repo read
-access yields the ciphertext and the wrapped key together, so the passphrase is the only thing between a
-repo reader and a production capability. That trade is fine for a Stripe **test-mode** key or an OAuth
-client whose callbacks are `localhost` — losing one costs a dev environment. It is not fine for something
-that can send mail as webhook.co, and compliance-by-design puts production secrets in a KMS rather than an
-offline-attackable git blob.
+**Two credentials are deliberately NOT in the vault**, and `--push` prints both reasons every run rather
+than leaving you to discover them. `scripts/dev-secrets-vault.mjs` refuses to carry them in *either*
+direction, and `pnpm dev` still fails loudly if either is missing.
 
-The real fix is a **dev-scoped Resend key** — same provider, same domain, same code path, so it is parity
-rather than a substitute — at which point it joins the vault and this paragraph goes away. Until then
-`scripts/dev-secrets-vault.mjs` refuses to carry it in either direction, and `pnpm dev` still fails loudly
-if it is missing.
+| Not shared | Why |
+| --- | --- |
+| `RESEND_API_KEY` | **Blast radius.** It is the same key production sends with. This vault's protection is a passphrase, and repo read access yields the ciphertext and the wrapped key together — so the passphrase is the only thing between a repo reader and a production capability, attackable offline. Fine for a Stripe *test-mode* key or an OAuth client whose callbacks are `localhost`; not fine for something that can send mail as webhook.co. Compliance-by-design puts production secrets in a KMS, not an offline-attackable git blob. |
+| `STRIPE_WEBHOOK_SIGNING_SECRET` | **Machine scope.** A registered Stripe endpoint POSTs to a public URL and can never reach localhost, so the local receiver is fed by the CLI's tunnel and `.dev.vars` holds the CLI's *own* `whsec_` (`stripe listen --print-secret`). Sharing one machine's value hands every other machine a secret its own `stripe listen` will never mint — `400 invalid signature`, with nothing pointing at the cause. |
+
+The second is the same shape as the `STRIPE_METER_EVENT_NAME` bug: a value that merely *looks* global. When
+adding a name, "is it a secret" is the wrong question — ask **what it opens**, and **whether it is the same
+value on every machine**.
+
+> ⚠️ **`sops` does not look where you think it does.** It resolves its default age key path with Go's
+> `os.UserConfigDir` — `~/Library/Application Support/sops/age` on macOS, `~/.config/sops/age` on Linux.
+> This script writes the key to one path everywhere, so it passes `SOPS_AGE_KEY_FILE` explicitly. Without
+> that, `--pull` failed on macOS with *"identity did not match any of the recipients"* — a message that
+> accuses the key of being wrong when it was merely somewhere else.
 
 The age **public** key is a recipient and lives in `internal/.sops.yaml`. The **private** key is wrapped
 with a passphrase and committed alongside it, so everything is in the one repo and the only thing carried

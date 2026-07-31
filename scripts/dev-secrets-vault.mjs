@@ -3,24 +3,28 @@
 //
 // WHAT THIS IS FOR, and what it deliberately is NOT. Of the values `pnpm dev:secrets` writes, most need no
 // sharing at all: the `generated` ones are random per machine, and the `local` ones are non-secret literals
-// already in the committed examples. What is left is a small set of real third-party credentials — the
-// Google and GitHub OAuth pairs, Resend, Turnstile, and the Stripe test-mode values. Those are the only
-// thing a second machine cannot produce for itself, and hunting five vendor dashboards is the friction this
-// removes.
+// already in the committed examples. What is left is nine real third-party credentials — the Google and
+// GitHub OAuth pairs, Turnstile, and the Stripe test-mode values. Those are the only thing a second machine
+// cannot produce for itself, and hunting four vendor dashboards is the friction this removes.
 //
-// WHY ENCRYPTED RATHER THAN A PLAIN FILE IN A PRIVATE REPO. `RESEND_API_KEY` is the SAME key production
-// uses, and GitHub secret scanning runs on this org with push protection on. Vendors participate in that
-// programme, so committing a live key can get it revoked BY THE VENDOR — a production incident caused by a
-// convenience commit. It is also the thing AGENTS.md names outright: secrets never in source or plaintext
-// config. Ciphertext is the only form git should ever see.
+// TWO credentials are deliberately NOT carried, for two different reasons — see NOT_SHAREABLE. Read it
+// before adding anything: "is it a secret" is the wrong question, "what does it open, and is it the same
+// value on every machine" is the right one.
+//
+// WHY ENCRYPTED RATHER THAN A PLAIN FILE IN A PRIVATE REPO. GitHub secret scanning runs on this org with
+// push protection on, and vendors participate in that programme, so committing a live key can get it
+// revoked BY THE VENDOR — a production incident caused by a convenience commit. It is also the thing
+// AGENTS.md names outright: secrets never in source or plaintext config. Ciphertext is the only form git
+// should ever see.
 //
 // THE KEY. sops+age uses a keypair. The PUBLIC key is a recipient and belongs in `.sops.yaml`, committed.
-// The PRIVATE key is wrapped with a passphrase (`age -p`) and committed too — so everything lives in the
-// one internal repo, and the only thing carried between machines is a passphrase in your head.
+// The PRIVATE key is wrapped with a passphrase (`age -p`) and committed too, so everything lives in the one
+// internal repo and the passphrase is the only thing carried out of band.
 //
 //   ⚠️ That means repo read access yields both the ciphertext AND the wrapped key, so an attacker can
 //   attack the passphrase offline. The passphrase is doing all the work: use five or six random words,
-//   and nothing you have typed anywhere else. This is a deliberate trade for keeping one repo.
+//   and nothing you have typed anywhere else. This is a deliberate trade for keeping one repo, and it is
+//   why a credential with production blast radius must never go in here.
 //
 // Commands (init/unlock are INTERACTIVE — age reads the passphrase from the terminal, never from a flag,
 // an env var, or this script):
@@ -49,7 +53,24 @@ export function internalRepo(env = process.env) {
 export const SOPS_CONFIG = (internal) => join(internal, ".sops.yaml");
 export const CIPHERTEXT = (internal) => join(internal, "secrets", "dev-secrets.enc.env");
 export const WRAPPED_KEY = (internal) => join(internal, "secrets", "age-key.txt.age");
-const LOCAL_KEY = join(homedir(), ".config", "sops", "age", "keys.txt");
+export const LOCAL_KEY = join(homedir(), ".config", "sops", "age", "keys.txt");
+
+/**
+ * The environment every `sops` call runs with — pinning SOPS_AGE_KEY_FILE to the key we actually wrote.
+ *
+ * sops resolves its default age key path with Go's `os.UserConfigDir`, which is
+ * `~/Library/Application Support/sops/age` on macOS and `~/.config/sops/age` on Linux. This script writes
+ * the key to ONE path on every platform, so on macOS sops looked somewhere the key had never been and
+ * `--pull` failed with "identity did not match any of the recipients" — a message that points at the key
+ * being WRONG when it was merely elsewhere. Telling sops the location outright is both platform-proof and
+ * a great deal easier to read than a per-OS path table.
+ *
+ * A caller who already set SOPS_AGE_KEY_FILE keeps it: someone whose identity lives somewhere else should
+ * not have it silently replaced by ours.
+ */
+export function sopsEnv(env = process.env) {
+  return { ...env, SOPS_AGE_KEY_FILE: env.SOPS_AGE_KEY_FILE ?? LOCAL_KEY };
+}
 
 /**
  * The secret names worth sharing: `external` everywhere they appear, and not a mode flag.
@@ -91,20 +112,31 @@ export function sharedSecretNames(appNames = APP_NAMES) {
 }
 
 /**
- * Credentials this vault refuses to carry because the SAME value is live in production.
+ * Credentials this vault refuses to carry, and WHY — the reason is the point, because the two exclusions
+ * below fail for completely different reasons and a bare name list would flatten that into "don't".
  *
- * The vault's threat model is "a private repo, plus a passphrase in your head". That is a fine trade for a
- * Stripe *test-mode* key or an OAuth client for `localhost` callbacks — the blast radius of losing one is a
- * local dev environment. It is NOT a fine trade for a credential that can send mail as webhook.co, because
- * repo read access yields the ciphertext AND the wrapped key together, so the passphrase is the only thing
- * standing between a repo reader and a production capability. Compliance-by-design puts production secrets
- * in a KMS, and an offline-attackable git blob is not that.
- *
- * `RESEND_API_KEY` is currently one key shared by local dev and prod. The fix is a dev-scoped Resend key
- * rather than a weaker vault; until that exists, this stays a documented manual step and the other ten
- * credentials still travel. Removing a name from here is a decision about blast radius, not a cleanup.
+ * Removing an entry here is a decision about blast radius or about machine-scope. It is never a cleanup.
  */
-export const NOT_SHAREABLE = new Set(["RESEND_API_KEY"]);
+export const NOT_SHAREABLE = new Map([
+  [
+    "RESEND_API_KEY",
+    // Blast radius. The vault's protection is a passphrase, and repo read access yields the ciphertext AND
+    // the wrapped key together — so the passphrase is the only thing between a repo reader and this
+    // capability, attackable offline. Fine for a Stripe TEST key or an OAuth client whose callbacks are
+    // localhost; not fine for one that can send mail as webhook.co. Compliance-by-design says production
+    // secrets live in a KMS, and an offline-attackable git blob is not one.
+    "it is the same key production sends with — a prod capability does not belong in a passphrase-protected git blob",
+  ],
+  [
+    "STRIPE_WEBHOOK_SIGNING_SECRET",
+    // Machine scope. A registered Stripe endpoint POSTs to a public URL and can never reach localhost, so
+    // the local receiver is fed by the CLI's outbound tunnel and `.dev.vars` holds the CLI's OWN whsec_
+    // (`stripe listen --print-secret`). Distributing one machine's value hands every other machine a
+    // secret its own `stripe listen` will never mint: 400 invalid signature, with no obvious cause. Same
+    // shape as the STRIPE_METER_EVENT_NAME bug — a value that merely LOOKS global.
+    "each machine's `stripe listen` mints its own; a shared one guarantees 400 invalid signature",
+  ],
+]);
 
 /** Parse a .dev.vars into name → value. Splits on the FIRST `=` (base64 padding, URLs with queries). */
 export function parseEnv(text) {
@@ -235,9 +267,9 @@ function cmdInit(internal) {
   console.log(`   recipient written to ${SOPS_CONFIG(internal)}`);
   console.log("\n🔒 Now choose a passphrase to wrap the private key.");
   console.log("   Five or six random words. Nothing you have typed anywhere else.");
-  console.log(
-    "   It is the ONLY thing protecting these credentials — it is not stored anywhere.\n",
-  );
+  console.log("   It is the ONLY thing protecting these credentials: the wrapped key is committed");
+  console.log("   beside the ciphertext, so anyone who can read the repo can attack it offline.");
+  console.log("   Keep it wherever you keep your other secrets — losing it orphans the vault.\n");
   if (run("age", ["-p", "-a", "-o", WRAPPED_KEY(internal), LOCAL_KEY]).status !== 0)
     process.exit(1);
   console.log(`\n✅ wrapped key written to ${WRAPPED_KEY(internal)}`);
@@ -272,6 +304,11 @@ function cmdPush(internal) {
     console.error("\n✖ no shared credentials found in any .dev.vars — nothing to push.\n");
     process.exit(1);
   }
+  // Say what is NOT travelling, and why. Silence here would read as "the vault has everything", and the
+  // next person would spend the debugging time working out why their Stripe webhooks 400.
+  for (const [name, why] of NOT_SHAREABLE) {
+    console.log(`   not shared: ${name} — ${why}`);
+  }
   mkdirSync(join(internal, "secrets"), { recursive: true });
   // Encrypt from STDIN — the plaintext never touches disk.
   //
@@ -297,7 +334,7 @@ function cmdPush(internal) {
       "secrets/dev-secrets.enc.env",
       "/dev/stdin",
     ],
-    { encoding: "utf8", input: toEnv(values) },
+    { encoding: "utf8", env: sopsEnv(), input: toEnv(values) },
   );
   if (res.status !== 0) {
     console.error(`\n✖ sops failed to encrypt:\n${res.stderr}\n`);
@@ -328,7 +365,7 @@ function cmdPull(internal) {
       "dotenv",
       CIPHERTEXT(internal),
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: sopsEnv() },
   );
   if (res.status !== 0) {
     console.error(
