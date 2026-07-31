@@ -109,13 +109,30 @@ fast loop and buy nothing.
 ## Marketing site: two routes its worker adds
 
 `apps/www` runs under `next dev` for a fast content loop, but its wrangler `main` is a custom worker
-(`worker/index.ts`). `next dev` does not run it, so locally you do not get:
+(`worker/index.ts`). `next dev` does not run it, so **by default** you do not get:
 
 - the cookieless aggregate page-view write to Analytics Engine
 - the MTA-STS policy response
 
 Neither blocks content work, which is why www keeps the fast loop. `apps/auth` made the opposite trade —
 see below.
+
+**They are now one command away rather than unreachable:**
+
+```
+pnpm --filter @webhook-co/www dev:worker
+```
+
+which builds the static export and serves it through the real Worker on the same port. Measured, same
+request both ways:
+
+```
+next dev     → GET /.well-known/mta-sts.txt (Host: mta-sts.webhook.co)  404
+dev:worker   → the same request                                        200, mode: enforce
+```
+
+"Not the default" and "impossible" are different things, and only the first is a trade-off somebody chose.
+The build is why this cannot be the default: the Worker serves `./out`, so every change needs a rebuild.
 
 ---
 

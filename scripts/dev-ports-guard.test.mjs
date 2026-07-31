@@ -5,15 +5,16 @@ import { test } from "node:test";
 import { SERVICE_BINDINGS } from "./wrangler-services.mjs";
 
 import {
+  CRON_APPS,
   DEV_APPS,
   LOCAL_INGEST_BASE_URL,
   devCommand,
+  devFastCommand,
+  devWorkerCommand,
   duplicateAssignments,
   duplicatePorts,
   inspectorPortFor,
   portAssignments,
-  CRON_APPS,
-  devFastCommand,
 } from "./dev-ports.mjs";
 import {
   appsMissingDevScript,
@@ -306,4 +307,48 @@ test("web's committed dev scripts match the derived commands", () => {
   assert.equal(pkg.scripts["dev:fast"], devFastCommand("web"));
   // The opt-in name is gone: leaving `dev:bindings` behind would imply bindings are still the exception.
   assert.equal(pkg.scripts["dev:bindings"], undefined);
+});
+
+// --- Exercising a Worker that the fast loop skips ------------------------------------------------
+// `apps/www` runs under `next dev`, which never loads its wrangler `main`, so the two routes that Worker
+// adds — the cookieless page-view write and the MTA-STS policy response — do not exist locally AT ALL.
+// The fast loop is the right default for a content site, but "not the default" and "impossible" are
+// different things, and only the first is a trade-off. `dev:worker` builds the static export and serves it
+// through the real Worker, so the gap is one command away instead of unreachable.
+test("an app whose committed Worker its default skips can still run it on demand", () => {
+  const cmd = devWorkerCommand("www");
+  assert.ok(cmd, "www's worker routes are unreachable locally with no way to exercise them");
+  assert.match(
+    cmd,
+    /next build/,
+    "the Worker serves ./out — without a build it has nothing to serve",
+  );
+  assert.match(
+    cmd,
+    /wrangler dev/,
+    "it must be wrangler, not next dev — next dev cannot load a main",
+  );
+  assert.match(cmd, new RegExp(`--port ${DEV_APPS.www.port}\\b`));
+  assert.ok(
+    cmd.indexOf("next build") < cmd.indexOf("wrangler dev"),
+    "building after serving would serve a stale ./out",
+  );
+});
+
+test("it is offered ONLY where the default actually skips the Worker", () => {
+  // web's default is the OpenNext preview, which runs its worker already; a second name for that would
+  // read as a capability. A wrangler app runs its main by definition.
+  assert.equal(devWorkerCommand("web"), null);
+  assert.equal(devWorkerCommand("engine"), null);
+  assert.equal(devWorkerCommand("auth"), null);
+});
+
+test("www's committed dev:worker script matches the derived command", () => {
+  const pkg = JSON.parse(
+    readFileSync(new URL("../apps/www/package.json", import.meta.url), "utf8"),
+  );
+  assert.equal(pkg.scripts["dev:worker"], devWorkerCommand("www"));
+  // …and the DEFAULT stays the fast loop. Changing that is a deliberate call, not a silent drift.
+  assert.equal(pkg.scripts.dev, devCommand("www"));
+  assert.match(pkg.scripts.dev, /next dev/);
 });
