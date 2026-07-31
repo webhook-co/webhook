@@ -1,5 +1,5 @@
 {
-  "name": "main — status checks & history (no bypass)",
+  "name": "main \u2014 status checks & history (no bypass)",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
@@ -10,25 +10,72 @@
   },
   "bypass_actors": [],
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
-    { "type": "required_linear_history" },
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    },
     {
       "type": "required_status_checks",
       "parameters": {
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "install" },
-          { "context": "lint" },
-          { "context": "format-check" },
-          { "context": "typecheck" },
-          { "context": "test" },
-          { "context": "build" },
-          { "context": "no-skipped-tests" },
-          { "context": "tsconfig-boundary" },
-          { "context": "codeql" },
-          { "context": "gitleaks" }
+          {
+            "context": "a11y-e2e"
+          },
+          {
+            "context": "auth-e2e"
+          },
+          {
+            "context": "build"
+          },
+          {
+            "context": "build-cf"
+          },
+          {
+            "context": "codeql"
+          },
+          {
+            "context": "format-check"
+          },
+          {
+            "context": "gitleaks"
+          },
+          {
+            "context": "install"
+          },
+          {
+            "context": "lighthouse"
+          },
+          {
+            "context": "lint"
+          },
+          {
+            "context": "no-skipped-tests"
+          },
+          {
+            "context": "seo-html-check"
+          },
+          {
+            "context": "test"
+          },
+          {
+            "context": "test-db"
+          },
+          {
+            "context": "tsconfig-boundary"
+          },
+          {
+            "context": "typecheck"
+          },
+          {
+            "context": "web-e2e"
+          }
         ]
       }
     }
