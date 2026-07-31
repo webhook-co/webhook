@@ -45,9 +45,31 @@ import { APP_NAMES, specsFor } from "./dev-secrets-manifest.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** The private `internal` checkout. A sibling by convention; overridable for a different layout. */
+/**
+ * The private `internal` checkout, resolved from the path of the MAIN `.git` directory.
+ *
+ * `internal` sits beside the main checkout, but almost all work here happens in git worktrees under
+ * `.claude/worktrees/`. Resolving `../internal` from wherever this script happens to live puts it at
+ * `.claude/worktrees/internal`, which exists nowhere — so the vault worked in the main checkout and failed
+ * in every worktree, with an error blaming the clone rather than the lookup.
+ *
+ * `git rev-parse --git-common-dir` reports the MAIN `.git` from any worktree, so its parent is the one
+ * anchor that does not move. Pure and separately testable, because the bug was entirely in the arithmetic.
+ */
+export function internalRepoFrom(gitCommonDir, env = process.env) {
+  if (env.WEBHOOK_INTERNAL_REPO) return env.WEBHOOK_INTERNAL_REPO;
+  return resolve(dirname(gitCommonDir), "..", "internal");
+}
+
+/** As above, asking git where the main checkout is; falls back to this file's location outside a repo. */
 export function internalRepo(env = process.env) {
-  return env.WEBHOOK_INTERNAL_REPO ?? resolve(REPO, "..", "internal");
+  if (env.WEBHOOK_INTERNAL_REPO) return env.WEBHOOK_INTERNAL_REPO;
+  const res = spawnSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: REPO,
+    encoding: "utf8",
+  });
+  const common = res.status === 0 ? res.stdout.trim() : "";
+  return common ? internalRepoFrom(common, env) : resolve(REPO, "..", "internal");
 }
 
 export const SOPS_CONFIG = (internal) => join(internal, ".sops.yaml");
