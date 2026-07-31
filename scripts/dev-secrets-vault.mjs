@@ -1,0 +1,322 @@
+#!/usr/bin/env node
+// The shared local-dev credentials, encrypted at rest in the private `internal` repo.
+//
+// WHAT THIS IS FOR, and what it deliberately is NOT. Of the values `pnpm dev:secrets` writes, most need no
+// sharing at all: the `generated` ones are random per machine, and the `local` ones are non-secret literals
+// already in the committed examples. What is left is a small set of real third-party credentials — the
+// Google and GitHub OAuth pairs, Resend, Turnstile, and the Stripe test-mode values. Those are the only
+// thing a second machine cannot produce for itself, and hunting five vendor dashboards is the friction this
+// removes.
+//
+// WHY ENCRYPTED RATHER THAN A PLAIN FILE IN A PRIVATE REPO. `RESEND_API_KEY` is the SAME key production
+// uses, and GitHub secret scanning runs on this org with push protection on. Vendors participate in that
+// programme, so committing a live key can get it revoked BY THE VENDOR — a production incident caused by a
+// convenience commit. It is also the thing AGENTS.md names outright: secrets never in source or plaintext
+// config. Ciphertext is the only form git should ever see.
+//
+// THE KEY. sops+age uses a keypair. The PUBLIC key is a recipient and belongs in `.sops.yaml`, committed.
+// The PRIVATE key is wrapped with a passphrase (`age -p`) and committed too — so everything lives in the
+// one internal repo, and the only thing carried between machines is a passphrase in your head.
+//
+//   ⚠️ That means repo read access yields both the ciphertext AND the wrapped key, so an attacker can
+//   attack the passphrase offline. The passphrase is doing all the work: use five or six random words,
+//   and nothing you have typed anywhere else. This is a deliberate trade for keeping one repo.
+//
+// Commands (init/unlock are INTERACTIVE — age reads the passphrase from the terminal, never from a flag,
+// an env var, or this script):
+//   --init     generate the keypair, wrap it, write .sops.yaml + the wrapped key   (once, ever)
+//   --unlock   unwrap the private key onto this machine                            (once per machine)
+//   --push     encrypt the credentials from your .dev.vars into the internal repo
+//   --pull     decrypt them back into every app's .dev.vars
+//
+// No secret VALUE is ever printed — only names, and whether each is present.
+
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { APP_NAMES, specsFor } from "./dev-secrets-manifest.mjs";
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** The private `internal` checkout. A sibling by convention; overridable for a different layout. */
+export function internalRepo(env = process.env) {
+  return env.WEBHOOK_INTERNAL_REPO ?? resolve(REPO, "..", "internal");
+}
+
+export const SOPS_CONFIG = (internal) => join(internal, ".sops.yaml");
+export const CIPHERTEXT = (internal) => join(internal, "secrets", "dev-secrets.enc.env");
+export const WRAPPED_KEY = (internal) => join(internal, "secrets", "age-key.txt.age");
+const LOCAL_KEY = join(homedir(), ".config", "sops", "age", "keys.txt");
+
+/**
+ * The secret names worth sharing: `external` everywhere they appear, and not a mode flag.
+ *
+ * Two exclusions, both load-bearing:
+ *
+ *  - **mode FLAGS.** `OAUTH_MODE` and `EMAIL_MODE` are scoped external because they concern a third party,
+ *    but they are switches, not credentials — and they must stay BLANK for prod parity. Distributing them
+ *    would push a degraded stack onto the next machine.
+ *
+ *  - **anything scoped `local` in ANY app.** `STRIPE_METER_EVENT_NAME` is `local` for api (a fixed literal
+ *    `pnpm dev:secrets` writes) and `external` for engine (a value from your own Stripe sandbox). Sharing
+ *    it copied api's literal over engine's independent value — caught by a round-trip diff, invisible
+ *    otherwise, because both are plausible strings. A name that is a literal SOMEWHERE is never a shared
+ *    credential; the generator already writes it.
+ *
+ * Derived from the manifest, never a second list.
+ */
+export function sharedSecretNames(appNames = APP_NAMES) {
+  const scopes = new Map();
+  for (const app of appNames) {
+    for (const spec of specsFor(app)) {
+      if (!scopes.has(spec.name)) scopes.set(spec.name, new Set());
+      scopes.get(spec.name).add(spec.scope);
+    }
+  }
+  return [...scopes]
+    .filter(([name, seen]) => seen.has("external") && !seen.has("local") && !name.endsWith("_MODE"))
+    .map(([name]) => name)
+    .sort();
+}
+
+/** Parse a .dev.vars into name → value. Splits on the FIRST `=` (base64 padding, URLs with queries). */
+export function parseEnv(text) {
+  const out = new Map();
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const at = line.indexOf("=");
+    if (at < 0) continue;
+    out.set(line.slice(0, at).trim(), line.slice(at + 1).trim());
+  }
+  return out;
+}
+
+/** Serialize name → value as dotenv. Values are written verbatim; sops encrypts each one. */
+export function toEnv(values) {
+  return [...values].map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
+}
+
+/**
+ * Collect the shared credentials from the local .dev.vars files.
+ *
+ * A name set in two apps must AGREE — a silent disagreement would publish whichever app happened to be
+ * read last, and the mismatch would then be baked into every machine that pulls.
+ */
+export function collectFromDevVars(readFile, names = sharedSecretNames(), appNames = APP_NAMES) {
+  const values = new Map();
+  const conflicts = [];
+  for (const app of appNames) {
+    const text = readFile(app);
+    if (text === null) continue;
+    const vars = parseEnv(text);
+    for (const name of names) {
+      const v = vars.get(name);
+      if (v === undefined || v === "") continue;
+      const seen = values.get(name);
+      if (seen !== undefined && seen !== v) conflicts.push(name);
+      else values.set(name, v);
+    }
+  }
+  return { values, conflicts: [...new Set(conflicts)].sort() };
+}
+
+/** Merge decrypted values into one .dev.vars body, replacing existing keys and appending new ones. */
+export function mergeIntoDevVars(text, values) {
+  let out = text;
+  const appended = [];
+  for (const [name, value] of values) {
+    const re = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=.*$`, "m");
+    if (re.test(out)) out = out.replace(re, `${name}=${value}`);
+    else appended.push(`${name}=${value}`);
+  }
+  if (appended.length > 0) out = out.replace(/\n*$/, "\n") + appended.join("\n") + "\n";
+  return out;
+}
+
+const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { stdio: "inherit", ...opts });
+
+function requireTools() {
+  for (const tool of ["age", "sops"]) {
+    if (spawnSync("which", [tool], { stdio: "ignore" }).status !== 0) {
+      console.error(`\n✖ ${tool} is not installed. \`brew install age sops\`\n`);
+      process.exit(1);
+    }
+  }
+}
+
+function devVarsPath(app) {
+  return join(REPO, "apps", app, ".dev.vars");
+}
+const readDevVars = (app) =>
+  existsSync(devVarsPath(app)) ? readFileSync(devVarsPath(app), "utf8") : null;
+
+function cmdInit(internal) {
+  if (existsSync(WRAPPED_KEY(internal))) {
+    console.error(
+      `\n✖ ${WRAPPED_KEY(internal)} already exists.\n  Re-running --init would orphan every value already ` +
+        `encrypted with the old key. Use --unlock on this machine instead.\n`,
+    );
+    process.exit(1);
+  }
+  mkdirSync(join(internal, "secrets"), { recursive: true });
+  mkdirSync(dirname(LOCAL_KEY), { recursive: true });
+  console.log("\n🔑 Generating an age keypair…");
+  if (run("age-keygen", ["-o", LOCAL_KEY]).status !== 0) process.exit(1);
+  const pub = /public key: (age1\w+)/.exec(readFileSync(LOCAL_KEY, "utf8"))?.[1];
+  if (!pub) {
+    console.error("✖ could not read the generated public key");
+    process.exit(1);
+  }
+  writeFileSync(
+    SOPS_CONFIG(internal),
+    "# Recipients for the shared local-dev credentials. The PUBLIC key belongs here; the private key is\n" +
+      "# wrapped with a passphrase in secrets/age-key.txt.age. See scripts/dev-secrets-vault.mjs.\n" +
+      `creation_rules:\n  - path_regex: secrets/.*\\.env$\n    age: ${pub}\n`,
+  );
+  console.log(`   recipient written to ${SOPS_CONFIG(internal)}`);
+  console.log("\n🔒 Now choose a passphrase to wrap the private key.");
+  console.log("   Five or six random words. Nothing you have typed anywhere else.");
+  console.log(
+    "   It is the ONLY thing protecting these credentials — it is not stored anywhere.\n",
+  );
+  if (run("age", ["-p", "-a", "-o", WRAPPED_KEY(internal), LOCAL_KEY]).status !== 0)
+    process.exit(1);
+  console.log(`\n✅ wrapped key written to ${WRAPPED_KEY(internal)}`);
+  console.log("   Commit .sops.yaml and secrets/ in the internal repo, then run --push.\n");
+}
+
+function cmdUnlock(internal) {
+  if (!existsSync(WRAPPED_KEY(internal))) {
+    console.error(
+      `\n✖ no wrapped key at ${WRAPPED_KEY(internal)} — run --init first (once, ever).\n`,
+    );
+    process.exit(1);
+  }
+  mkdirSync(dirname(LOCAL_KEY), { recursive: true });
+  console.log(`\n🔓 Unwrapping the age key onto this machine (${LOCAL_KEY})…\n`);
+  if (run("age", ["-d", "-o", LOCAL_KEY, WRAPPED_KEY(internal)]).status !== 0) {
+    console.error("\n✖ wrong passphrase, or the wrapped key is corrupt.\n");
+    process.exit(1);
+  }
+  console.log("\n✅ unlocked — `pnpm dev:secrets --pull` will now work.\n");
+}
+
+function cmdPush(internal) {
+  const { values, conflicts } = collectFromDevVars(readDevVars);
+  if (conflicts.length > 0) {
+    console.error(
+      `\n✖ these names disagree between apps: ${conflicts.join(", ")}\n  Reconcile before pushing.\n`,
+    );
+    process.exit(1);
+  }
+  if (values.size === 0) {
+    console.error("\n✖ no shared credentials found in any .dev.vars — nothing to push.\n");
+    process.exit(1);
+  }
+  mkdirSync(join(internal, "secrets"), { recursive: true });
+  // The name must satisfy the .sops.yaml creation rule (`secrets/*.env`) or sops refuses to encrypt
+  // at all — and a refusal here would leave the credentials only on this machine.
+  const plaintext = join(internal, "secrets", ".dev-secrets.plain.env");
+  writeFileSync(plaintext, toEnv(values), { mode: 0o600 });
+  const res = spawnSync(
+    "sops",
+    [
+      "--config",
+      SOPS_CONFIG(internal),
+      "-e",
+      "--input-type",
+      "dotenv",
+      "--output-type",
+      "dotenv",
+      plaintext,
+    ],
+    { encoding: "utf8" },
+  );
+  spawnSync("rm", ["-f", plaintext]); // never leave plaintext behind, even on failure
+  if (res.status !== 0) {
+    console.error(`\n✖ sops failed to encrypt:\n${res.stderr}\n`);
+    process.exit(1);
+  }
+  writeFileSync(CIPHERTEXT(internal), res.stdout);
+  console.log(`\n✅ encrypted ${values.size} credentials into ${CIPHERTEXT(internal)}`);
+  console.log(`   ${[...values.keys()].sort().join(", ")}`);
+  console.log("   Commit it in the internal repo.\n");
+}
+
+function cmdPull(internal) {
+  if (!existsSync(CIPHERTEXT(internal))) {
+    console.error(
+      `\n✖ nothing encrypted yet at ${CIPHERTEXT(internal)} — run --push on a machine that has them.\n`,
+    );
+    process.exit(1);
+  }
+  const res = spawnSync(
+    "sops",
+    [
+      "--config",
+      SOPS_CONFIG(internal),
+      "-d",
+      "--input-type",
+      "dotenv",
+      "--output-type",
+      "dotenv",
+      CIPHERTEXT(internal),
+    ],
+    { encoding: "utf8" },
+  );
+  if (res.status !== 0) {
+    console.error(
+      `\n✖ could not decrypt. Run --unlock first if this machine has never had the key.\n${res.stderr}\n`,
+    );
+    process.exit(1);
+  }
+  const values = parseEnv(res.stdout);
+  let touched = 0;
+  for (const app of APP_NAMES) {
+    const wanted = new Map();
+    for (const spec of specsFor(app)) {
+      const v = values.get(spec.name);
+      if (v !== undefined) wanted.set(spec.name, v);
+    }
+    if (wanted.size === 0) continue;
+    const path = devVarsPath(app);
+    if (!existsSync(path)) {
+      console.log(`   skipped ${app} — no .dev.vars yet (run \`pnpm dev:secrets\` first)`);
+      continue;
+    }
+    writeFileSync(path, mergeIntoDevVars(readFileSync(path, "utf8"), wanted), { mode: 0o600 });
+    console.log(`   ${app}: ${wanted.size} values`);
+    touched++;
+  }
+  console.log(`\n✅ pulled ${values.size} credentials into ${touched} apps\n`);
+}
+
+function main() {
+  const mode = process.argv[2];
+  const internal = internalRepo();
+  if (!existsSync(internal)) {
+    console.error(
+      `\n✖ the internal repo is not at ${internal}.\n  Clone it beside this one, or set WEBHOOK_INTERNAL_REPO.\n`,
+    );
+    process.exit(1);
+  }
+  requireTools();
+  if (mode === "--init") return cmdInit(internal);
+  if (mode === "--unlock") return cmdUnlock(internal);
+  if (mode === "--push") return cmdPush(internal);
+  if (mode === "--pull") return cmdPull(internal);
+  console.error(
+    "\nUsage: pnpm dev:secrets:vault --init | --unlock | --push | --pull\n\n" +
+      "  --init    once ever: make the keypair, wrap it with your passphrase\n" +
+      "  --unlock  once per machine: unwrap the key here\n" +
+      "  --push    encrypt your local credentials into the internal repo\n" +
+      "  --pull    decrypt them into every app's .dev.vars\n",
+  );
+  process.exit(1);
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) main();

@@ -106,6 +106,32 @@ accepting that you are not testing what production does.
 **Setting them:** put the value in the app's `.dev.vars`. `pnpm dev:secrets` writes a commented template
 listing exactly what each app wants and which values are required for parity.
 
+**Getting the shared credentials onto a new machine.** Most values need no sharing: the `generated` ones
+are random per machine and the `local` ones are non-secret literals already in the committed examples. What
+is left is 11 real third-party credentials — the Google and GitHub OAuth pairs, Resend, Turnstile, and the
+Stripe test-mode values.
+
+Those live **encrypted** in the private `internal` repo, via sops + age:
+
+```
+pnpm dev:secrets:vault --init     # once, ever: make the keypair, wrap it with a passphrase
+pnpm dev:secrets:vault --unlock   # once per machine: unwrap the key here
+pnpm dev:secrets:vault --push     # encrypt your local credentials into internal
+pnpm dev:secrets:vault --pull     # decrypt them into every app's .dev.vars
+```
+
+Encrypted rather than a plain file in a private repo, for a specific reason: `RESEND_API_KEY` is the **same
+key production uses**, GitHub secret scanning runs on this org with push protection on, and vendors
+participate in that programme — so committing a live key can get it revoked **by the vendor**. A production
+incident caused by a convenience commit. Ciphertext is the only form git should ever see.
+
+The age **public** key is a recipient and lives in `internal/.sops.yaml`. The **private** key is wrapped
+with a passphrase and committed alongside it, so everything is in the one repo and the only thing carried
+between machines is a passphrase.
+
+⚠️ That means repo read access yields both the ciphertext and the wrapped key, so the passphrase is doing
+all the work — five or six random words, and nothing typed anywhere else.
+
 **`pnpm dev` refuses to start without them.** `scripts/dev-preflight.mjs` runs first and fails loudly,
 naming every missing value, if an app has no `.dev.vars` or leaves a parity-required credential blank.
 
