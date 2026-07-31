@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+
+import { SERVICE_BINDINGS } from "./wrangler-services.mjs";
 
 import {
   DEV_APPS,
@@ -9,6 +12,8 @@ import {
   duplicatePorts,
   inspectorPortFor,
   portAssignments,
+  CRON_APPS,
+  devBindingsCommand,
 } from "./dev-ports.mjs";
 import {
   appsMissingDevScript,
@@ -63,10 +68,18 @@ test("auth runs the custom worker, NOT next dev — next dev omits the issuer ro
 });
 
 test("a worker app gets wrangler dev on its pinned port", () => {
+  // engine declares crons, so it also carries --test-scheduled (see scripts/dev-cron.mjs). Pinned as a
+  // whole string on purpose: this is the one test that would notice a flag silently disappearing.
   assert.equal(
     devCommand("engine"),
-    "wrangler dev --port 8787 --ip 127.0.0.1 --inspector-port 9787",
+    "wrangler dev --test-scheduled --port 8787 --ip 127.0.0.1 --inspector-port 9787",
   );
+});
+
+test("a worker app with no crons and no service bindings gets the bare command", () => {
+  // `get` calls no Worker and schedules nothing — the baseline that proves the flags above are added,
+  // not just always present.
+  assert.equal(devCommand("get"), "wrangler dev --port 8791 --ip 127.0.0.1 --inspector-port 9791");
 });
 
 test("a plain next app gets next dev on its pinned port", () => {
@@ -192,4 +205,87 @@ test("duplicatePorts actually detects a collision", () => {
   const dupes = [...seen.entries()].filter(([, apps]) => apps.length > 1);
   assert.equal(dupes.length, 1);
   assert.deepEqual(dupes[0][1], ["a", "b"]);
+});
+
+// The `-c wrangler.dev.jsonc` flag is the whole mechanism by which api and mcp get their cross-Worker
+// service bindings locally. Drop it from devCommand or from either package.json and CI stays green while
+// local dev silently returns to "bindings absent" — the exact silent regression this lane keeps finding.
+test("apps that call another Worker run against the generated dev overlay", () => {
+  for (const app of Object.keys(SERVICE_BINDINGS)) {
+    if (DEV_APPS[app]?.kind !== "worker") continue; // web is `next dev` — it cannot take -c
+    assert.match(
+      devCommand(app),
+      /-c wrangler\.dev\.jsonc/,
+      `${app} calls another Worker but does not load the dev overlay`,
+    );
+  }
+});
+
+test("an app that calls nobody gets no -c", () => {
+  assert.ok(!devCommand("engine").includes("-c "), "engine should use its committed config");
+});
+
+test("the committed package.json dev scripts MATCH devCommand", () => {
+  // devCommand is the single source of truth; a package.json that drifted from it would run something
+  // nobody derived. Checked for every worker-kind app, not just the two that gained a flag.
+  // EVERY app whose dev command is derived, not just the bare-wrangler ones. `auth` is `opennext` and
+  // was skipped by an earlier version of this loop — so dropping --test-scheduled from its package.json
+  // would have left CI green with auth's cron unreachable locally. Only `next` apps are exempt: they run
+  // `next dev`, which is not wrangler and takes none of these flags.
+  for (const [app, spec] of Object.entries(DEV_APPS)) {
+    if (spec.kind === "next") continue;
+    const pkg = JSON.parse(
+      readFileSync(new URL(`../apps/${app}/package.json`, import.meta.url), "utf8"),
+    );
+    assert.equal(pkg.scripts.dev, devCommand(app), `${app}/package.json dev script drifted`);
+  }
+});
+
+test("every cron app's COMMITTED script carries --test-scheduled", () => {
+  // devCommand() being right is not enough — turbo runs what package.json says.
+  for (const app of Object.keys(DEV_APPS)) {
+    if (!CRON_APPS.has(app) || DEV_APPS[app].kind === "next") continue;
+    const pkg = JSON.parse(
+      readFileSync(new URL(`../apps/${app}/package.json`, import.meta.url), "utf8"),
+    );
+    assert.match(
+      pkg.scripts.dev,
+      /--test-scheduled/,
+      `${app} declares a cron but its committed dev script cannot fire it`,
+    );
+  }
+});
+
+// `next dev` is not wrangler: it takes no -c, so an app running under it CANNOT have a service binding.
+// For apps/web that means its 10 bindings are absent and the readers DEGRADE rather than throwing —
+// silent, which is the failure mode this lane keeps finding. `dev:bindings` runs the same code path
+// production does, at the cost of fast refresh, so it is opt-in rather than the default.
+test("a Next app WITH service bindings gets a bindings-mode command", () => {
+  const cmd = devBindingsCommand("web");
+  assert.ok(cmd, "web has 10 service bindings but no way to run with them");
+  assert.match(cmd, /-c wrangler\.dev\.jsonc/, "bindings mode must load the generated overlay");
+  assert.match(cmd, new RegExp(`--port ${DEV_APPS.web.port}\\b`));
+  assert.match(
+    cmd,
+    /opennextjs-cloudflare preview/,
+    "bindings mode must use the preview, not next dev",
+  );
+});
+
+test("bindings mode is offered only where it changes something", () => {
+  // www is a Next app with NO service bindings; the workers already load the overlay in their normal
+  // dev command. Offering a second mode there would be noise pretending to be capability.
+  assert.equal(devBindingsCommand("www"), null);
+  assert.equal(devBindingsCommand("engine"), null);
+  assert.equal(devBindingsCommand("auth"), null);
+});
+
+test("web's committed dev:bindings script matches the derived command", () => {
+  const pkg = JSON.parse(
+    readFileSync(new URL("../apps/web/package.json", import.meta.url), "utf8"),
+  );
+  assert.equal(pkg.scripts["dev:bindings"], devBindingsCommand("web"));
+  // …and the DEFAULT stays the fast loop. Changing that is a deliberate call, not a silent drift.
+  assert.equal(pkg.scripts.dev, devCommand("web"));
+  assert.match(pkg.scripts.dev, /next dev/);
 });

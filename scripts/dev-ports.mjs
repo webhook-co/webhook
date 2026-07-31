@@ -21,6 +21,12 @@
 // slower one that doesn't. `pnpm --filter auth dev:fast` is the opt-in fast path for pure page work; it
 // runs `next dev` and therefore has NO issuer routes, which is fine as long as you chose it knowingly.
 
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { SERVICE_BINDINGS } from "./wrangler-services.mjs";
+
 /**
  * @typedef {object} DevApp
  * @property {number} port          The pinned local port.
@@ -142,15 +148,48 @@ export function duplicateAssignments(apps = DEV_APPS) {
  * @param {string} app
  * @returns {string}
  */
+
+/**
+ * Apps whose committed wrangler config declares a cron trigger — DISCOVERED, so a newly scheduled Worker
+ * gets its local trigger automatically rather than being silently unreachable.
+ */
+const APPS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "apps");
+
+export const CRON_APPS = new Set(
+  readdirSync(APPS_DIR)
+    .sort()
+    .filter((app) => {
+      let text;
+      try {
+        text = readFileSync(join(APPS_DIR, app, "wrangler.jsonc"), "utf8");
+      } catch {
+        return false;
+      }
+      return /"crons"\s*:\s*\[\s*"/.test(text);
+    }),
+);
+
 export function devCommand(app) {
   const spec = DEV_APPS[app];
   if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
   if (spec.kind === "next") return `next dev -p ${spec.port}`;
   const inspector = `--inspector-port ${inspectorPortFor(app)}`;
   if (spec.kind === "opennext") {
-    return `opennextjs-cloudflare build && opennextjs-cloudflare preview -- --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
+    // Flags after `--` are forwarded to the wrangler dev the preview runs, so a scheduled OpenNext
+    // Worker (auth) gets its local cron trigger the same way a bare wrangler one does.
+    const previewScheduled = CRON_APPS.has(app) ? " --test-scheduled" : "";
+    return `opennextjs-cloudflare build && opennextjs-cloudflare preview --${previewScheduled} --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
   }
-  return `wrangler dev --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
+  // Apps that CALL another Worker run against the generated dev overlay, which carries the service
+  // bindings the committed config deliberately omits (a committed binding to a not-yet-live Worker would
+  // block a cold deploy — see scripts/gen-wrangler-dev.mjs). `wrangler dev` resolves them across separate
+  // dev sessions via its dev registry, which is why `pnpm dev` starts every app.
+  const config = SERVICE_BINDINGS[app] ? " -c wrangler.dev.jsonc" : "";
+  // `--test-scheduled` exposes /__scheduled?cron=<expr>, which invokes the Worker's REAL scheduled()
+  // handler. Without it a cron has no local trigger at all — you could only read the code or wait an
+  // hour. Only for Workers that actually declare a cron; see scripts/dev-cron.mjs (`pnpm cron`).
+  const scheduled = CRON_APPS.has(app) ? " --test-scheduled" : "";
+  return `wrangler dev${config}${scheduled} --port ${spec.port} --ip 127.0.0.1 ${inspector}`;
 }
 
 /** Ports assigned more than once. Empty is the only acceptable answer. */
@@ -163,4 +202,31 @@ export function duplicatePorts() {
   return [...seen.entries()]
     .filter(([, apps]) => apps.length > 1)
     .map(([port, apps]) => ({ port, apps }));
+}
+
+/**
+ * The command that runs a Next-kind app under the OpenNext preview instead of `next dev`, so its service
+ * bindings resolve.
+ *
+ * `next dev` is not wrangler: it takes no `-c`, so an app running under it CANNOT have a service binding.
+ * For `apps/web` that means its 10 bindings — session handoff, account deletion, connected apps, delivery
+ * dispatch, ingest-URL reveal, cache eviction — are absent, and the readers check structurally and DEGRADE
+ * rather than throwing. Silent, in other words.
+ *
+ * The preview is the same code path production runs. It costs fast refresh: every change needs a rebuild
+ * (~14s for web), which is why it is an OPT-IN rather than the default for the app people iterate on most.
+ * `apps/auth` made the opposite trade, because under `next dev` its entire issuer surface simply does not
+ * exist — unusable rather than merely reduced.
+ *
+ * @returns {string | null} null when the app has no bindings to gain.
+ */
+export function devBindingsCommand(app) {
+  const spec = DEV_APPS[app];
+  if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
+  if (spec.kind !== "next" || !SERVICE_BINDINGS[app]) return null;
+  const scheduled = CRON_APPS.has(app) ? " --test-scheduled" : "";
+  return (
+    "opennextjs-cloudflare build && opennextjs-cloudflare preview -- " +
+    `-c wrangler.dev.jsonc${scheduled} --port ${spec.port} --ip 127.0.0.1 --inspector-port ${spec.port + INSPECTOR_OFFSET}`
+  );
 }

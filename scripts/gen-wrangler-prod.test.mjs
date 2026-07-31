@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
+
+import { blankComments } from "./wrangler-services.mjs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -333,7 +335,10 @@ function readProdRaw(app) {
 }
 
 /** The `binding` names inside the FIRST services array of some JSONC text. */
-function serviceBindings(raw) {
+function serviceBindings(rawText) {
+  // Comments are blanked first: two committed configs carry a DOCUMENTATION comment showing a
+  // `"services": [...]` line, and counting it as a key is exactly the confusion this suite exists to catch.
+  const raw = blankComments(rawText);
   const at = raw.search(/"services"\s*:\s*\[/);
   if (at < 0) return [];
   const open = raw.indexOf("[", at);
@@ -356,16 +361,27 @@ function committedBindings(app) {
 test("no generated config declares `services` more than once", () => {
   gen();
   for (const app of APPS) {
-    const count = (readProdRaw(app).match(/"services"\s*:/g) ?? []).length;
+    const count = (blankComments(readProdRaw(app)).match(/"services"\s*:/g) ?? []).length;
     assert.ok(count <= 1, `${app}: ${count} services keys — which one wins is parser-dependent`);
   }
 });
 
-// Anti-vacuity for the merge test below: if NO config committed a services block,
-// "the merge preserves committed bindings" would hold by having nothing to preserve.
-test("at least one committed config carries a services block (else the merge test is vacuous)", () => {
+// NOTE, and it corrects an earlier claim in this file: NO committed config declares a real `services`
+// block. Two carry a DOCUMENTATION comment showing one, and an earlier version of this suite counted that
+// comment as a key — which is how "the generated config has `services` twice" was concluded. A comment is
+// not a key; every JSONC parser ignores it.
+//
+// So the merge path below is vacuous against the real files, on purpose: there is nothing committed to
+// preserve. It is exercised for real, on a synthetic committed block, in gen-wrangler-dev.test.mjs
+// ("a binding committed but absent from the table is KEPT"). This test pins the fact rather than
+// asserting a premise that is no longer true.
+test("no committed config declares a real services block (only doc comments do)", () => {
   const withServices = APPS.filter((a) => committedBindings(a).length > 0);
-  assert.ok(withServices.length > 0, "no committed services block found anywhere");
+  assert.deepEqual(
+    withServices,
+    [],
+    "a committed services block appeared — the merge path now matters",
+  );
 });
 
 test("the merge drops nothing that was committed", () => {

@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.playwright.json",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.pg.config.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "dev:bindings": "opennextjs-cloudflare build && opennextjs-cloudflare preview -- -c wrangler.dev.jsonc --port 3000 --ip 127.0.0.1 --inspector-port 4000"
   },
   "dependencies": {
     "@webhook-co/contract": "workspace:*",
