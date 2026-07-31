@@ -71,15 +71,6 @@ describe("auth CSP", () => {
   });
 });
 
-describe("auth security headers", () => {
-  // FedCM is gated by `identity-credentials-get`. It already defaults to `self` for a top-level document,
-  // so this pins today's behaviour against a future tightening that would silently kill One Tap.
-  it("permits the FedCM credential request, and still denies camera/mic/geolocation", () => {
-    const value = new Map(SECURITY_HEADERS.map((h) => [h.key, h.value])).get("Permissions-Policy");
-    expect(value).toBe("camera=(), microphone=(), geolocation=(), identity-credentials-get=(self)");
-  });
-});
-
 /** Every http(s) origin named anywhere in a policy string. */
 const originsIn = (csp: string) => new Set(csp.match(/https?:\/\/[^\s;]+/g) ?? []);
 
@@ -130,5 +121,14 @@ describe("auth security headers", () => {
     expect(byKey.get("Permissions-Policy")).toContain("geolocation=()");
     expect(byKey.get("Strict-Transport-Security")).toContain("max-age=");
     expect(byKey.has("Content-Security-Policy")).toBe(true);
+  });
+
+  // FedCM is gated by `identity-credentials-get`. It already defaults to `self` for a top-level document,
+  // so this pins today's behaviour against a future tightening that would silently kill One Tap.
+  it("permits the FedCM credential request, and still denies camera/mic/geolocation", () => {
+    const byKey = new Map(SECURITY_HEADERS.map((h) => [h.key, h.value]));
+    expect(byKey.get("Permissions-Policy")).toBe(
+      "camera=(), microphone=(), geolocation=(), identity-credentials-get=(self)",
+    );
   });
 });
