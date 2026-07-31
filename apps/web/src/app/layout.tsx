@@ -25,14 +25,17 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${GeistSans.variable} ${GeistMono.variable}`}
       suppressHydrationWarning
     >
-      <head>
-        {/* Set the theme before paint to avoid a light-to-dark flash. This inline <script> is harmless in
-            production (it runs once on parse). In `next dev` ONLY, React 19 logs a "scripts inside React
-            components" warning when the not-found render path client-renders the layout — a dev-overlay
-            cosmetic that does not affect the deployed app. See docs/adr/0077. */}
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-      </head>
       <body>
+        {/* Sets the theme before paint, to avoid a light-to-dark flash.
+            FIRST CHILD OF <body>, never inside <head>. React 19 HOISTS a <script> rendered into the
+            tree, so an inline <script> in <head> is relocated between the server HTML and the hydrated
+            DOM — a STRUCTURAL mismatch that `suppressHydrationWarning` cannot cover, since it only
+            forgives an element's own attributes and text. On apps/auth, which had the identical shape,
+            that threw a recoverable React #418 on EVERY page load in production. The previous comment
+            here called the related React 19 warning "a dev-overlay cosmetic that does not affect the
+            deployed app"; that was measured on apps/auth and found to be false, so this moved too.
+            Running here still beats first paint of any visible content, so there is still no flash. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         {/* Mounted at the ROOT, not in the org shell, and that placement is the point.
             A bfcache restore repaints a page from memory with NO request, NO server render and therefore NO
             session check — so the DAL gate, which is the only thing standing between a signed-out browser and

@@ -3,6 +3,7 @@ import { memoryAdapter } from "better-auth/adapters/memory";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildAuthConfig } from "./auth";
+import { SIGNIN_METHOD_BY_PATH } from "./signin-telemetry";
 import { ONE_TAP_CALLBACK_URL_PATH } from "./urls";
 
 import type { AuthConfigDeps, AuthConfigInput } from "./auth";
@@ -348,6 +349,80 @@ describe("One Tap — what lands in the database", () => {
     const user = (db.user as Array<Record<string, unknown>>)[0];
     expect(user?.firstName).toBe("Ada");
     expect(user?.lastName).toBe("Lovelace");
+  });
+});
+
+// THE ACCOUNT-TAKEOVER GATE, end to end. A correctly SIGNED token whose `email_verified` is false must
+// not produce a user. better-auth checks that flag only when linking to an existing row, never when
+// creating one — so without our refusal hook this token would mint a first-class account bearing an
+// address its holder has not proven, with their Google `sub` permanently linked to it.
+describe("One Tap — an unverified Google email cannot create an account", () => {
+  it("REFUSES a validly-signed token with email_verified: false", async () => {
+    const { auth, db } = makeInstance();
+    const token = await idToken({ claims: { email_verified: false } });
+
+    const res = await auth.handler(callback({ idToken: token }));
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(db.user).toHaveLength(0);
+    expect(db.account).toHaveLength(0);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  // The claim can arrive as a string from some OIDC providers; better-auth coerces with toBoolean, and
+  // a coerced-false must be refused exactly like a real false.
+  it("REFUSES a string 'false' claim too", async () => {
+    const { auth, db } = makeInstance();
+    const res = await auth.handler(
+      callback({ idToken: await idToken({ claims: { email_verified: "false" } }) }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(db.user).toHaveLength(0);
+  });
+
+  it("REFUSES a token with no email_verified claim at all", async () => {
+    const { auth, db } = makeInstance();
+    const res = await auth.handler(
+      callback({ idToken: await idToken({ claims: { email_verified: undefined } }) }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(db.user).toHaveLength(0);
+  });
+
+  it("still admits the ordinary verified signup — the gate is not a blanket refusal", async () => {
+    const { auth, db } = makeInstance();
+    expect((await auth.handler(callback({ idToken: await idToken() }))).status).toBe(200);
+    expect(db.user).toHaveLength(1);
+  });
+});
+
+// The telemetry path map is a CONTRACT WITH BETTER-AUTH, and its own unit test could only compare
+// literals to literals — it restated the map rather than checking it. An upstream rename would silently
+// zero those counters with a green suite. These read the paths off a REAL instance's registered
+// endpoints, which is the only thing that actually notices.
+describe("sign-in telemetry — the path map matches better-auth's registered endpoints", () => {
+  const pathOf = (key: string) => {
+    const { auth } = makeInstance();
+    return (auth.api as unknown as Record<string, { path?: string }>)[key]?.path;
+  };
+
+  it.each([
+    ["oneTapCallback", "/one-tap/callback"],
+    // The PATTERN, not a concrete provider — a concrete string here would never match in production.
+    ["callbackOAuth", "/callback/:id"],
+    ["magicLinkVerify", "/magic-link/verify"],
+  ])("%s is still registered at %s", (key, expected) => {
+    expect(pathOf(key)).toBe(expected);
+  });
+
+  it("every key in SIGNIN_METHOD_BY_PATH is a path better-auth actually registers", () => {
+    const { auth } = makeInstance();
+    const registered = new Set(
+      Object.values(auth.api as unknown as Record<string, { path?: string }>)
+        .map((e) => e?.path)
+        .filter((p): p is string => typeof p === "string"),
+    );
+    for (const path of Object.keys(SIGNIN_METHOD_BY_PATH)) expect(registered).toContain(path);
   });
 });
 

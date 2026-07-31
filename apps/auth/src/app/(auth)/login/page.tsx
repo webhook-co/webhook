@@ -69,6 +69,15 @@ function BrandVisual() {
   );
 }
 
+/** The two server-decided inputs the login form needs, resolved concurrently. */
+async function loginConfig() {
+  const [providers, googleClientId] = await Promise.all([
+    socialProvidersForLogin(),
+    googleOneTapClientId(),
+  ]);
+  return { providers, googleClientId };
+}
+
 export default async function LoginPage({
   searchParams,
 }: {
@@ -106,10 +115,10 @@ export default async function LoginPage({
         </p>
       }
     >
-      <LoginActions
-        providers={await socialProvidersForLogin()}
-        googleClientId={await googleOneTapClientId()}
-      />
+      {/* CONCURRENT, not sequential. JSX props evaluate in order, so awaiting both inline made the
+          One Tap client-id resolution (which adds a Secrets Store read) wait on the provider lookup —
+          two serial round-trips on the signed-out render of the product's front door. */}
+      <LoginActions {...await loginConfig()} />
     </AuthShell>
   );
 }

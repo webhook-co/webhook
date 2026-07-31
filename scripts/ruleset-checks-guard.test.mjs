@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  jobsWithRewrittenNames,
   reportableChecks,
   requiredContexts,
   unreportableContexts,
@@ -113,4 +114,57 @@ test("the real ci.yml parses into a plausible number of jobs", () => {
 
 test("auth-e2e is required — the login page's only real-browser gate", () => {
   assert.ok(requiredContexts().includes("auth-e2e"));
+});
+
+// GitHub rewrites the reported check name for two job shapes, so a plain `name:` comparison silently
+// cannot match them — and the guard would report green while the ruleset waits forever.
+test("detects a matrix job, whose check name GitHub rewrites", () => {
+  const repo = fixture({
+    contexts: ["install"],
+    workflow: `jobs:
+  install:
+    name: install
+    runs-on: ubuntu-latest
+  fanned:
+    name: fanned
+    strategy:
+      matrix:
+        node: [20, 22]
+`,
+  });
+  assert.deepEqual(jobsWithRewrittenNames(repo, [".github/workflows/ci.yml"]), [
+    ".github/workflows/ci.yml:fanned",
+  ]);
+});
+
+test("detects a reusable-workflow job", () => {
+  const repo = fixture({
+    contexts: ["install"],
+    workflow: `jobs:
+  install:
+    name: install
+    runs-on: ubuntu-latest
+  delegated:
+    uses: ./.github/workflows/other.yml
+`,
+  });
+  assert.deepEqual(jobsWithRewrittenNames(repo, [".github/workflows/ci.yml"]), [
+    ".github/workflows/ci.yml:delegated",
+  ]);
+});
+
+test("a job key with a trailing comment is still a job (no false alarm)", () => {
+  const repo = fixture({
+    contexts: ["commented"],
+    workflow: `jobs:
+  commented: # this is fine
+    name: commented
+    runs-on: ubuntu-latest
+`,
+  });
+  assert.deepEqual(unreportableContexts(repo, [".github/workflows/ci.yml"]), []);
+});
+
+test("the real repo uses neither rewritten shape today", () => {
+  assert.deepEqual(jobsWithRewrittenNames(), []);
 });

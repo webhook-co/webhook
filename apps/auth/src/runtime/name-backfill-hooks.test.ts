@@ -361,3 +361,47 @@ describe("withNameBackfill — composition with an existing user.create.before",
     expect(await call(hooks, { firstName: "Ada", lastName: "Lovelace" })).toBeUndefined();
   });
 });
+
+// Shapes better-auth would choke on if passed back verbatim. `"data" in null` THROWS, so returning a
+// prior hook's `null` unchanged turns a signup into a 500 — the one failure mode the module header
+// promises cannot happen ("every failure degrades to splitName, never to corruption").
+describe("withNameBackfill — a prior hook returning an odd shape", () => {
+  const call = (hooks: ReturnType<typeof withNameBackfill>, user: unknown) =>
+    (
+      hooks.user?.create?.before as unknown as (
+        u: unknown,
+        c: unknown,
+      ) => Promise<{ data?: Record<string, unknown> } | false | undefined>
+    )(user, null);
+
+  it.each([
+    ["null", null],
+    ["a bare object with no data key", {}],
+    ["a string", "nope"],
+    ["a number", 0],
+    ["true", true],
+  ])("treats %s as 'change nothing' and still back-fills", async (_label, priorReturn) => {
+    const hooks = withNameBackfill({
+      user: { create: { before: async () => priorReturn } },
+    } as never);
+
+    const result = await call(hooks, { name: "Ada Lovelace" });
+    expect(result).toEqual({ data: { firstName: "Ada", lastName: "Lovelace" } });
+  });
+
+  it("never returns a non-{data} shape back to better-auth", async () => {
+    const hooks = withNameBackfill({
+      user: { create: { before: async () => null } },
+    } as never);
+    // Nothing to back-fill AND a junk prior result: the only safe answer is undefined.
+    const result = await call(hooks, { firstName: "Ada", lastName: "Lovelace" });
+    expect(result).toBeUndefined();
+  });
+
+  it("propagates a rejected prior hook rather than swallowing it", async () => {
+    const hooks = withNameBackfill({
+      user: { create: { before: async () => Promise.reject(new Error("policy gate failed")) } },
+    } as never);
+    await expect(call(hooks, { name: "Ada Lovelace" })).rejects.toThrow("policy gate failed");
+  });
+});
