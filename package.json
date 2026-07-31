@@ -64,7 +64,8 @@
     "dev-preflight": "node scripts/dev-preflight.mjs",
     "dev-superuser-guard": "node scripts/dev-superuser-guard.mjs",
     "gen-wrangler-dev": "node scripts/gen-wrangler-dev.mjs",
-    "cron": "node scripts/dev-cron.mjs"
+    "cron": "node scripts/dev-cron.mjs",
+    "dev:secrets:vault": "node scripts/dev-secrets-vault.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.19.0",

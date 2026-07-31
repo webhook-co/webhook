@@ -107,6 +107,45 @@ accepting that you are not testing what production does.
 **Setting them:** put the value in the app's `.dev.vars`. `pnpm dev:secrets` writes a commented template
 listing exactly what each app wants and which values are required for parity.
 
+**Getting the shared credentials onto a new machine.** Most values need no sharing: the `generated` ones
+are random per machine and the `local` ones are non-secret literals already in the committed examples. What
+is left is 11 real third-party credentials — the Google and GitHub OAuth pairs, Resend, Turnstile, and the
+Stripe test-mode values.
+
+Those live **encrypted** in the private `internal` repo, via sops + age:
+
+```
+pnpm dev:secrets:vault --init     # once, ever: make the keypair, wrap it with a passphrase
+pnpm dev:secrets:vault --unlock   # once per machine: unwrap the key here
+pnpm dev:secrets:vault --push     # encrypt your local credentials into internal
+pnpm dev:secrets:vault --pull     # decrypt them into every app's .dev.vars
+```
+
+Encrypted rather than a plain file in a private repo for a specific reason: GitHub secret scanning runs on
+this org with push protection on, and vendors participate in that programme — so committing a live key can
+get it revoked **by the vendor**. A production incident caused by a convenience commit. Ciphertext is the
+only form git should ever see.
+
+**`RESEND_API_KEY` is deliberately NOT in the vault**, and is the one credential still fetched by hand. It
+is currently the *same key production sends with*, and this vault's protection is a passphrase: repo read
+access yields the ciphertext and the wrapped key together, so the passphrase is the only thing between a
+repo reader and a production capability. That trade is fine for a Stripe **test-mode** key or an OAuth
+client whose callbacks are `localhost` — losing one costs a dev environment. It is not fine for something
+that can send mail as webhook.co, and compliance-by-design puts production secrets in a KMS rather than an
+offline-attackable git blob.
+
+The real fix is a **dev-scoped Resend key** — same provider, same domain, same code path, so it is parity
+rather than a substitute — at which point it joins the vault and this paragraph goes away. Until then
+`scripts/dev-secrets-vault.mjs` refuses to carry it in either direction, and `pnpm dev` still fails loudly
+if it is missing.
+
+The age **public** key is a recipient and lives in `internal/.sops.yaml`. The **private** key is wrapped
+with a passphrase and committed alongside it, so everything is in the one repo and the only thing carried
+between machines is a passphrase.
+
+⚠️ That means repo read access yields both the ciphertext and the wrapped key, so the passphrase is doing
+all the work — five or six random words, and nothing typed anywhere else.
+
 **`pnpm dev` refuses to start without them.** `scripts/dev-preflight.mjs` runs first and fails loudly,
 naming every missing value, if an app has no `.dev.vars` or leaves a parity-required credential blank.
 
