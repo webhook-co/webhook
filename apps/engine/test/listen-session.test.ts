@@ -158,6 +158,31 @@ async function openSession(
   return { stub, res };
 }
 
+/**
+ * The alarm AND the live socket count, read in ONE durable-object call.
+ *
+ * These are read together because they are the two halves of the same question. `alarm()` early-returns
+ * WITHOUT re-arming when `ctx.getWebSockets()` is empty — so a bare `getAlarm()` that comes back null has
+ * two very different explanations ("the loop correctly stopped" vs "the socket vanished underneath us"),
+ * and a bare `.not.toBeNull()` cannot tell them apart. This suite has flaked exactly once in CI with
+ * `expected null not to be null`, and was not reproducible in 11 local runs (8 isolated, 3 full-suite).
+ * Reporting the socket count means the NEXT occurrence is evidence rather than another round of guessing.
+ */
+async function alarmState(
+  stub: DurableObjectStub,
+): Promise<{ alarm: number | null; sockets: number }> {
+  return runInDurableObject(stub, async (_i, s) => ({
+    alarm: await s.storage.getAlarm(),
+    sockets: s.getWebSockets().length,
+  }));
+}
+
+/** `getAlarm()` must be armed — and say what the socket count was if it is not. */
+async function expectArmed(stub: DurableObjectStub, why: string): Promise<void> {
+  const { alarm, sockets } = await alarmState(stub);
+  expect(alarm, `${why} — alarm not armed (live sockets: ${sockets})`).not.toBeNull();
+}
+
 describe("ListenSession — connect + stream", () => {
   it("accepts the WebSocket and streams a ready frame then event frames", async () => {
     const b = newBinding();
@@ -471,13 +496,13 @@ describe("ListenSession — fail-safe alarm + idle", () => {
 
     const ran = await runDurableObjectAlarm(stub); // must not throw
     expect(ran).toBe(true);
-    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+    await expectArmed(stub, "the poll loop must be armed");
   });
 
   it("stops polling once the last socket closes", async () => {
     const b = newBinding();
     const { stub } = await openSession(b);
-    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+    await expectArmed(stub, "the poll loop must be armed");
 
     await runInDurableObject(stub, async (inst, state) => {
       await (inst as ListenSession).webSocketClose(state.getWebSockets()[0], 1000, "", true);
@@ -617,7 +642,7 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
 
     expect(checked).toBe(true); // the seam WAS consulted (not skipped) — else "revoked" is the only guard
     expect(closeCode).toBe(0); // and it kept streaming
-    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+    await expectArmed(stub, "the poll loop must be armed");
   });
 
   // The CLI/bearer path carries no userId (the api key is the revocable credential). The membership check
@@ -634,7 +659,7 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
     await runDurableObjectAlarm(stub);
 
     expect(checked).toBe(false); // never consulted for a userless binding
-    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+    await expectArmed(stub, "the poll loop must be armed");
   });
 
   // Regression guard for the fail-open throttle: a THROWING membership check must not be retried on the very
@@ -655,7 +680,7 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
 
     expect(calls).toBe(1); // NOT 2 — the throw still advanced the throttle
     // Failed open: the socket is kept and polling continues (the lifetime cap is the backstop).
-    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+    await expectArmed(stub, "the poll loop must be armed");
   });
 
   // The absolute-lifetime backstop: independent of membership, a socket older than the cap is closed so the
@@ -736,7 +761,7 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
 
     await runDurableObjectAlarm(stub);
     expect(closeCode2).toBe(0); // the reconnected socket survives — no permanent kill
-    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+    await expectArmed(stub, "the poll loop must be armed");
   });
 });
 

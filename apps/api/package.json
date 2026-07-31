@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "wrangler dev --port 8788 --ip 127.0.0.1 --inspector-port 9788",
+    "dev": "wrangler dev -c wrangler.dev.jsonc --test-scheduled --port 8788 --ip 127.0.0.1 --inspector-port 9788",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --coverage",
