@@ -21,7 +21,7 @@ export const CAPTIONS = [
   },
   { scene: "S5", from: 330, to: 360, kind: "caption", text: "captured durably before it acks" },
   { scene: "S6", from: 360, to: 450, kind: "url", text: "app.webhook.co/events" },
-  { scene: "S6", from: 400, to: 450, kind: "hero", text: "Verified at the edge. 142 providers." },
+  { scene: "S6", from: 400, to: 450, kind: "hero", text: "Verified at the edge. 144 providers." },
   { scene: "S7", from: 474, to: 540, kind: "code", text: "RAW_BODY_MODIFIED" },
   {
     scene: "S7",

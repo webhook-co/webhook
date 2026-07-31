@@ -5,9 +5,9 @@
 // the terminal (linear · verified · 0197f0c1-…) reappears on a <DashboardCard>,
 // so the event "travels surface→surface". The whole light panel wipes in from
 // the terminal's last (center) position across local f0–21 (comp f360–381),
-// eased on rails (§3.4, no bounce). A provider counter rolls 0→142, fast then
+// eased on rails (§3.4, no bounce). A provider counter rolls 0→144, fast then
 // eased, local f40–70 (comp f400–430); the kinetic line "Verified at the edge.
-// 142 providers." settles in dark ink beneath. 142 is the film's only real
+// 144 providers." settles in dark ink beneath. 144 is the film's only real
 // number (brief §1). Authored in scene-local frames.
 
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
@@ -36,7 +36,12 @@ const EVENT = {
 } as const;
 
 // The one real number in the film (brief §1). The counter rolls 0 → this.
-const PROVIDER_COUNT = 142;
+//
+// Read OUT OF the caption rather than written twice: these two render side by side — the counter
+// ticks up and the line settles beneath it — so a stale literal here would put a different number
+// on screen than the sentence directly below it. `captions.test.ts` pins the caption text, so if
+// this regex ever stops matching, that test goes red before a render can show a 0.
+const PROVIDER_COUNT = Number(HERO_TEXT.match(/(\d+)\s+providers/)?.[1] ?? 0);
 const COUNT_START = 40; // local f40 (comp f400)
 const COUNT_END = 70; // local f70 (comp f430)
 
@@ -160,7 +165,7 @@ export function S6({ format }: S6Props) {
           </div>
         </div>
 
-        {/* "Verified at the edge. 142 providers." — dark ink on the light page. */}
+        {/* "Verified at the edge. 144 providers." — dark ink on the light page. */}
         <div style={{ color: colors.pageInk }}>
           <KineticLine
             text={HERO_TEXT}

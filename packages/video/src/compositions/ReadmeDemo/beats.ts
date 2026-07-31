@@ -43,7 +43,7 @@ export const CAPTIONS: readonly Caption[] = [
   {
     from: 150,
     durationInFrames: 150,
-    text: "with its signature checked — 141 providers built in",
+    text: "with its signature checked — 144 providers built in",
   },
 ] as const;
 

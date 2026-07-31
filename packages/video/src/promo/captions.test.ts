@@ -16,9 +16,9 @@ describe("CAPTIONS data integrity", () => {
     expect(sig?.text).toBe("Send a webhook. Watch it land.");
   });
 
-  it("states the only real number as an exact '142 providers' claim", () => {
+  it("states the only real number as an exact '144 providers' claim", () => {
     const s6 = CAPTIONS.find((c) => c.scene === "S6" && c.kind === "hero");
-    expect(s6?.text).toBe("Verified at the edge. 142 providers.");
+    expect(s6?.text).toBe("Verified at the edge. 144 providers.");
   });
 
   it("names the failure wedge as RAW_BODY_MODIFIED", () => {
