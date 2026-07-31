@@ -325,26 +325,41 @@ test.describe("the hero inspector fits the phone it renders on", () => {
 });
 
 test.describe("no page scrolls sideways on a phone", () => {
-  // A horizontally-scrolling BODY is the classic mobile defect: one wide element (a terminal, a table,
-  // a long unbroken string) pushes the whole layout out and every line of text goes off-screen. Wide
-  // content is allowed to scroll — but INSIDE its own container, never by dragging the page with it.
-  for (const path of pages) {
-    test(`${path} does not overflow horizontally`, async ({ page }) => {
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await page.goto(path);
-      // Wait on a RENDERED ELEMENT, never `networkidle`: /play loads the Turnstile challenge and holds
-      // an SSE connection open, so the network never goes idle and the wait simply times out.
-      await page.getByRole("heading", { level: 1 }).first().waitFor();
+  /**
+   * A horizontally-scrolling BODY is the classic mobile defect: one wide element (a terminal, a
+   * table, a long unbroken string) pushes the whole layout out and every line of text goes
+   * off-screen. Wide content is allowed to scroll — but INSIDE its own container, never by dragging
+   * the page with it.
+   *
+   * THREE WIDTHS, NOT ONE. This ran only at the project's Pixel 5 default (393px) and was therefore
+   * blind to anything that happens to fit at exactly that width: `/test/github` (372px),
+   * `/test/calendly` (381px) and `/test/notion` (345px) all dragged the page sideways on a narrower
+   * phone and this guard reported green on every run. A viewport-sensitive check pinned to a single
+   * viewport is not a guard against layout, it is a guard against one phone.
+   *
+   * 320px is the floor (iPhone SE 1st gen); 360px is the most common Android width, and the width
+   * that actually caught the tutorial-prose defect.
+   */
+  for (const width of [320, 360, 393]) {
+    for (const path of pages) {
+      test(`${path} does not overflow horizontally at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 851 });
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.goto(path);
+        // Wait on a RENDERED ELEMENT, never `networkidle`: /play loads the Turnstile challenge and
+        // holds an SSE connection open, so the network never goes idle and the wait simply times out.
+        await page.getByRole("heading", { level: 1 }).first().waitFor();
 
-      const overflow = await page.evaluate(() => {
-        const doc = document.documentElement;
-        return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth };
+        const overflow = await page.evaluate(() => {
+          const doc = document.documentElement;
+          return { scrollWidth: doc.scrollWidth, clientWidth: doc.clientWidth };
+        });
+        // 1px of tolerance for sub-pixel rounding; anything more is a real overflow.
+        expect(
+          overflow.scrollWidth,
+          `${path} scrolls sideways at ${width}px (${overflow.scrollWidth}px content in a ${overflow.clientWidth}px viewport)`,
+        ).toBeLessThanOrEqual(overflow.clientWidth + 1);
       });
-      // 1px of tolerance for sub-pixel rounding; anything more is a real overflow.
-      expect(
-        overflow.scrollWidth,
-        `${path} scrolls sideways (${overflow.scrollWidth}px content in a ${overflow.clientWidth}px viewport)`,
-      ).toBeLessThanOrEqual(overflow.clientWidth + 1);
-    });
+    }
   }
 });
