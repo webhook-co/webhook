@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, cn } from "@webhook-co/ui";
+import { Button, cn, ThemeToggle } from "@webhook-co/ui";
 import { Menu, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
@@ -141,6 +141,21 @@ export function MobileNav() {
             </li>
           </ul>
         </nav>
+
+        {/* The theme toggle lives HERE below 941px, not in the bar.
+            The bar has room for the wordmark, one CTA and the burger — and no more: at 360px the
+            wordmark alone takes 153 of the 312 available px. Something had to give, and between a
+            once-ever appearance preference and the only action the page is asking for, the preference
+            is the one that can afford a tap. It is MOVED, not dropped: `nav.tsx` hides its copy below
+            941px and this one above it, so exactly one is ever in the a11y tree.
+
+            Labelled, for the same reason the repo row above is: the toggle is icon-only, and a bare
+            sun in a list of words is a puzzle. The word is not the accessible name — the button
+            carries "Switch to light/dark theme" itself — it is the sighted reader's label. */}
+        <div className="mt-2 flex items-center justify-between border-t border-hairline px-3 pt-3">
+          <span className="text-md text-fg-secondary">Theme</span>
+          <ThemeToggle />
+        </div>
 
         {/* The CTA is in the header at every width, but repeating it at the end of an opened menu is
             where a thumb already is. */}
