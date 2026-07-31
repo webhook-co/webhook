@@ -216,8 +216,9 @@ compliance-critical path running only in production.
 
 The page used to say this had "no alternative today: nobody should hold production AWS credentials to
 develop". The premise was wrong in the way this page warns about: **the credential already existed**. IAM
-user `webhook-co-claude-code` is already least-privilege — `kms:GenerateDataKey` + `kms:Decrypt`, on one
-key, and nothing else. AGENTS.md says to look for the real credential before inventing a substitute, and it
+user is already least-privilege — `kms:GenerateDataKey` + `kms:Decrypt`, on one key, and nothing else
+(the principal is named in the team's credential store, not here: this repo is public and the `no-secrets`
+rule covers account identifiers, not just secrets). AGENTS.md says to look for the real credential before inventing a substitute, and it
 was there the whole time.
 
 Verified with a real round-trip: a DEK wrapped by the KEK, unwrapped, and the two proven identical by

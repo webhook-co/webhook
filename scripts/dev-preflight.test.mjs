@@ -9,7 +9,8 @@ import {
   parseDevVars,
   requiredSpecs,
 } from "./dev-preflight.mjs";
-import { APP_NAMES } from "./dev-secrets-manifest.mjs";
+import { APP_NAMES, specsFor } from "./dev-secrets-manifest.mjs";
+import { renderExample } from "./dev-secrets.mjs";
 
 // What this prevents: a clone with no `.dev.vars` boots, serves a login page that renders perfectly,
 // and simply offers fewer ways in — because the page derives its buttons from which OAuth secrets are
@@ -240,5 +241,37 @@ test("KMS_MODE=local is the ONLY thing that relaxes them", () => {
   assert.ok(
     !isRelaxed(spec, new Map([["KMS_MODE", "aws"]])),
     "an unrecognised value must not relax either",
+  );
+});
+
+// The SHIPPED DEFAULT, which the tests above do not cover.
+//
+// They pin that the four AWS fields are required and that only `KMS_MODE=local` relaxes them. None of
+// that notices if the manifest goes back to `{ scope: "local", value: "local" }`: `pnpm dev:secrets` would
+// then WRITE `KMS_MODE=local` into every .dev.vars, preflight would relax all four, the engine would use
+// the hermetic KEK again — and all three tests above would still pass. The regression is in what we ship,
+// not in what we enforce.
+test("the engine ships KMS_MODE BLANK — local is an opt-out, never the default", () => {
+  const spec = specsFor("engine").find((s) => s.name === "KMS_MODE");
+  assert.ok(spec, "the engine no longer declares KMS_MODE at all");
+  assert.equal(
+    spec.scope,
+    "external",
+    "a `local` scope makes the generator write a value, not a blank",
+  );
+  assert.notEqual(
+    spec.value,
+    "local",
+    "shipping `local` puts every machine back on the throwaway KEK",
+  );
+
+  // The rendered artifact, not just the spec: this is what actually lands in a developer's .dev.vars.
+  const line = renderExample("engine")
+    .split("\n")
+    .find((l) => l.startsWith("KMS_MODE="));
+  assert.equal(
+    line,
+    "KMS_MODE=",
+    `the generated example ships "${line}" — the substitute, by default`,
   );
 });
