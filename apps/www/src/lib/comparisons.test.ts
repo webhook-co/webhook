@@ -266,9 +266,9 @@ describe("comparisons: the estate", () => {
   });
 
   // A true number written as a literal is just a number that hasn't rotted yet — the same reasoning
-  // `provider-count.test.ts` already applies to the homepage's one "141 providers" sentence. This
+  // `provider-count.test.ts` already applies to the homepage's one "144 providers" sentence. This
   // estate adds eight more copies of that number plus prices, retention windows, the free cap and the
-  // retry count, every one of which has a canonical source. Pinned here so adding the 142nd adapter,
+  // retry count, every one of which has a canonical source. Pinned here so adding the 145th adapter,
   // or repricing Pro, names the sentences to change instead of quietly making four public pages lie.
   //
   // Scoped to the `us` column deliberately: 141 also legitimately describes a COMPETITOR elsewhere in
@@ -295,7 +295,7 @@ describe("comparisons: the estate", () => {
     for (const c of COMPARISONS) {
       // Match EVERY "<n> providers" in the prose and exclude the competitor sentences explicitly,
       // rather than including ours by accident of which verb precedes it — reword "we ship it for
-      // 141 providers" to "across 141 providers" and a verb-keyed regex silently stops looking.
+      // 144 providers" to "across 144 providers" and a verb-keyed regex silently stops looking.
       for (const m of comparisonText(c).matchAll(
         /\b(\d+)\s+(?:named third-party platforms|providers)\b/g,
       )) {
