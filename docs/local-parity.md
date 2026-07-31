@@ -128,6 +128,20 @@ default**, and each is refused outright if it is ever seen on a deployed Worker
 | `OAUTH_MODE=optional` | providers without both halves configured are not wired; magic link still works — and with Google unwired, **no Google script loads on the login page at all** |
 | `KMS_MODE=local` | a process-local KEK instead of AWS KMS, so endpoints can be created without AWS |
 
+### `BILLING_MODE` — always different from production, on purpose
+
+Local and CI run `BILLING_MODE=test`; **production runs `BILLING_MODE=live`**. This is the one deviation on
+this page that is deliberate in *both* directions and should never be closed: `test` drives the Stripe
+sandbox, `live` moves real money, and the live keys must never reach a developer machine. The client
+asserts the key prefix matches the mode, so a sandbox key under `live` fails closed rather than charging
+anyone.
+
+What it costs you: the local billing path is genuinely exercised, but against sandbox objects — sandbox
+prices, sandbox meter, a sandbox customer portal. Behaviour that depends on a *live* Stripe object
+(a real subscription, a real invoice) is not reproducible here, and `off` makes the receiver 503 dark.
+Local inbound Stripe delivery is the CLI tunnel, never a registered endpoint — see
+`docs/local-billing-sandbox.md`.
+
 `KMS_MODE=local` is the one that has no alternative today: the engine is the sole KEK custodian and nobody
 should hold production AWS credentials to develop. The other two are conveniences, and using them means
 accepting that you are not testing what production does.
@@ -233,14 +247,14 @@ is the thing worth testing anyway.
 
 ---
 
-## Cross-worker service bindings — api and mcp done, web still absent
+## Cross-worker service bindings — all 18, locally
 
 `apps/web`, `apps/api` and `apps/mcp` reach `apps/auth` and `apps/engine` over Cloudflare **service
-bindings** — 18 of them (web 10, api 4, mcp 4).
+bindings** — 18 of them (web 10, api 4, mcp 4). `pnpm dev` now gives every app all of its own.
 
-**api and mcp now have theirs locally (8 of the 18).** `scripts/gen-wrangler-dev.mjs` writes a gitignored
-`apps/<app>/wrangler.dev.jsonc` — the committed config plus the bindings — and each app's `dev` script
-passes it with `-c`. `pnpm dev` regenerates it before starting anything.
+`scripts/gen-wrangler-dev.mjs` writes a gitignored `apps/<app>/wrangler.dev.jsonc` — the committed config
+plus the bindings — and each app's `dev` script passes it with `-c`. `pnpm dev` regenerates it before
+starting anything.
 
 They are not simply committed because Cloudflare rejects an *upload* whose service binding names a Worker
 that does not exist yet: committing all 18 would **block a cold deploy**, since a fresh environment brings
@@ -251,26 +265,9 @@ shape the deploy itself uses for `wrangler.prod.jsonc`.
 `wrangler dev` resolves a binding across **separate** dev sessions through its dev registry, keyed on the
 target's config `name`. That is why `pnpm dev` starting every app matters.
 
-**`apps/web`'s 10 need `pnpm --filter @webhook-co/web dev:bindings`.** web runs under `next dev`, which is
-not wrangler and takes no `-c` — so an app running that way *cannot* have a service binding at all. Its
-`dev:bindings` script runs the OpenNext preview instead, against the same generated overlay, and all 10
-resolve (verified with `wrangler types`; it boots in ~16s and serves).
-
-It is **opt-in rather than the default**, and that is a judgement worth stating rather than burying. The
-preview has no fast refresh: every change needs a rebuild. web is the app people iterate on most, so making
-that the default would tax every dashboard change to fix a gap that matters on a minority of them.
-`apps/auth` made the opposite call because under `next dev` its entire issuer surface does not exist —
-unusable, not merely reduced.
-
-⚠️ The honest cost of that choice: under plain `next dev` the 10 bindings are absent, and the readers check
-structurally and **degrade** rather than throwing. That is silent. If you are touching the session handoff,
-account deletion, connected apps, onboarding, email change, login methods, provider-secret sealing, delivery
-dispatch, ingest-URL reveal or cache eviction, use `dev:bindings` — the fast loop will quietly do less.
-
-**What is verified, and what is not.** `wrangler types -c wrangler.dev.jsonc` resolves all four bindings for
-each of api and mcp, and starting the engine flips them from `[not connected]` to `[connected]`. An
-end-to-end RPC call through a binding has **not** been exercised yet — it needs an authenticated route and
-seeded data. Treat the bindings as declared and linked, not as proven answerable.
+**An RPC has now actually been made through one**, which for two PRs was an assumption rather than a
+measurement — the bindings were declared and linked, and nothing had ever called one. See the closed
+apps/web entry above for the method and the numbers.
 
 ⚠️ Two traps worth knowing. A declared binding whose target is **not running** still lets the caller BOOT:
 the binding is present and the call throws `Network connection lost` only when made, so a reader that checks
@@ -303,3 +300,11 @@ never reach the page, and it means "my buttons render but One Tap doesn't" is us
 
 If you add a local substitute, a mode flag, or a dev-only shortcut, add it here. A parity gap that is written
 down is a known limitation; the same gap undocumented is a bug report waiting to happen.
+
+**That is now checked, not trusted.** `scripts/dev-parity-guard.mjs` (wired into `pnpm lint`) *discovers*
+the substitutes — every `*_MODE` flag in the secrets manifest, and every Next app whose committed Worker
+its dev command never loads — and fails if one is missing from this page. Discovery rather than a list, so
+a substitute added tomorrow is covered the moment it exists rather than when someone remembers this file.
+
+It earned its place immediately: `BILLING_MODE` had never been written down, and this page still described
+apps/web's service bindings as opt-in two PRs after they became the default. Both are fixed above.
