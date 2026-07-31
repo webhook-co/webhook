@@ -110,7 +110,8 @@ listing exactly what each app wants and which values are required for parity.
 **Getting the shared credentials onto a new machine.** Most values need no sharing: the `generated` ones
 are random per machine and the `local` ones are non-secret literals already in the committed examples. What
 is left is 11 real third-party credentials — the Google and GitHub OAuth pairs, Resend, Turnstile, and the
-Stripe test-mode values.
+Stripe test-mode values. **Ten of them** travel in the vault below; Resend is fetched by hand, for the
+reason given after it.
 
 Those live **encrypted** in the private `internal` repo, via sops + age:
 
