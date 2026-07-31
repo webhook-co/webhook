@@ -159,3 +159,45 @@ export function routeTypesInclude(text: string, route: readonly string[]): boole
   const want = `/${urlSegments(route).join("/")}`;
   return routeTypesListRoutes(text).includes(want);
 }
+
+/**
+ * The auth origin the app will ACTUALLY redirect to, given the `.dev.vars` this machine has.
+ *
+ * The probe's whole discriminator is "a 307 to the auth origin, which the catch-all cannot produce". That
+ * only works if the harness expects the origin the app really uses — and the harness does not get to
+ * choose. `getAuthBaseUrl()` resolves BINDING-FIRST (`workerEnv() ?? process.env`), and under `next dev`
+ * the binding comes from `getPlatformProxy`, which reads `apps/web/.dev.vars`. So a machine that has run
+ * `pnpm dev:secrets` redirects to http://localhost:3001 no matter what the harness puts in process.env.
+ *
+ * The symptom was maximally misleading: a route serving correctly within a second, reported after 180
+ * seconds as "never entered its route table". Green on CI, where there is no `.dev.vars` at all, and dead
+ * on every developer machine.
+ *
+ * Falling back to the harness's own origin keeps CI isolated exactly as before — an origin nothing else in
+ * the app points at — so this widens nothing where the old assumption already held.
+ */
+export function effectiveAuthOrigin(devVars: string | null, fallback: string): string {
+  const line = (devVars ?? "").split("\n").find((l) => l.trim().startsWith("AUTH_BASE_URL="));
+  const value = line ? line.slice(line.indexOf("=") + 1).trim() : "";
+  // A blank is UNSET — `pnpm dev:secrets` writes an unconfigured key as `NAME=`, and demanding a redirect
+  // to the empty string would never match.
+  if (value === "") return fallback;
+  return value.replace(/\/+$/, "");
+}
+
+/**
+ * Is this response a CONFIGURATION mismatch rather than a route table still filling in?
+ *
+ * The catch-all `(app)/[...legacy]` rejects a first segment of `org` and calls `notFound()`, so a partial
+ * table yields 404 — never a redirect. A 307 therefore proves the real route is serving; if its Location
+ * points somewhere other than the origin the harness expects, the route is fine and the EXPECTATION is
+ * wrong. Continuing to poll that for the full boot budget and then reporting "never entered its route
+ * table" sends the reader through the wrong subsystem entirely, which is precisely what happened.
+ */
+export function authOriginMismatch(
+  status: number,
+  location: string | null,
+  authOrigin: string,
+): boolean {
+  return status === 307 && location !== null && !location.startsWith(authOrigin);
+}

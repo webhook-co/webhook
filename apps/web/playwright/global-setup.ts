@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -11,7 +12,9 @@ import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
 import {
   ROUTE_TYPES_FILE,
+  authOriginMismatch,
   deepestAppRoute,
+  effectiveAuthOrigin,
   isRouteTableReady,
   probeUrlFor,
   routeTypesInclude,
@@ -124,7 +127,27 @@ async function seed(appUrl: string, ownerUrl: string): Promise<Fixture> {
 }
 
 /** Where the gate sends an unauthenticated request — see `AUTH_BASE_URL` below. */
-const AUTH_ORIGIN = "http://127.0.0.1:3199";
+const HARNESS_AUTH_ORIGIN = "http://127.0.0.1:3199";
+
+/**
+ * The origin the probe must expect — read from this machine's `.dev.vars`, not assumed.
+ *
+ * apps/web resolves AUTH_BASE_URL binding-first, and under `next dev` the binding comes from
+ * getPlatformProxy reading `.dev.vars`. So the harness cannot impose its own origin via process.env, and
+ * assuming it could made the suite unrunnable on any machine that had run `pnpm dev:secrets` — see
+ * `effectiveAuthOrigin`. Resolved ONCE at module load: the file cannot change mid-run, and re-reading it
+ * per poll would be a second way for the loop to fail.
+ */
+const AUTH_ORIGIN = effectiveAuthOrigin(
+  (() => {
+    try {
+      return readFileSync(resolve(process.cwd(), ".dev.vars"), "utf8");
+    } catch {
+      return null; // CI has none, which is the isolated case the fallback preserves
+    }
+  })(),
+  HARNESS_AUTH_ORIGIN,
+);
 
 /** What the probe saw, so a timeout can report it instead of guessing. */
 type ProbeResult = { ready: boolean; status: number; location: string | null };
@@ -273,6 +296,17 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
       }
       lastProbe = await routeTableIsComplete(probeUrlFor(deepestRoute));
       if (lastProbe.ready) return child;
+      // A 307 elsewhere is not a partial table — the catch-all 404s and cannot redirect at all — so the
+      // route is serving and the EXPECTED origin is wrong. Say so now rather than after 180s of polling
+      // under a message blaming the scan.
+      if (authOriginMismatch(lastProbe.status, lastProbe.location, AUTH_ORIGIN)) {
+        throw new Error(
+          `e2e: the deepest route IS serving — it redirected to ${lastProbe.location} — but this harness ` +
+            `expected ${AUTH_ORIGIN}. That is a configuration mismatch, not a slow route scan. apps/web ` +
+            `resolves AUTH_BASE_URL binding-first (getPlatformProxy reads apps/web/.dev.vars), so a value ` +
+            `there wins over the one this harness exports.`,
+        );
+      }
       /* serving, but the route table is still partial — keep polling */
     } catch (err) {
       if (err instanceof Error && err.message.startsWith("e2e:")) {

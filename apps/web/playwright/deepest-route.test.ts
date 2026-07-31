@@ -6,12 +6,14 @@ import { describe, expect, it } from "vitest";
 import {
   ROUTE_TYPES_FILE,
   appRoutes,
+  authOriginMismatch,
   byDepthDesc,
   deepestAppRoute,
-  routeTypesInclude,
-  routeTypesListRoutes,
+  effectiveAuthOrigin,
   isRouteTableReady,
   probeUrlFor,
+  routeTypesInclude,
+  routeTypesListRoutes,
   urlSegments,
 } from "./deepest-route";
 
@@ -216,5 +218,69 @@ describe("isRouteTableReady", () => {
   it("is not ready on other redirect codes", () => {
     expect(isRouteTableReady(308, `${AUTH}/login`, AUTH)).toBe(false);
     expect(isRouteTableReady(302, `${AUTH}/login`, AUTH)).toBe(false);
+  });
+});
+
+// ── The auth origin the probe must expect ────────────────────────────────────────────────────────────
+// The harness passed AUTH_BASE_URL to `next dev` via process.env and then demanded a 307 to that origin.
+// But apps/web resolves it BINDING-FIRST (`getAuthBaseUrl`: workerEnv() ?? process.env), and under
+// `next dev` the binding comes from getPlatformProxy — which reads `.dev.vars`. So on any machine that has
+// run `pnpm dev:secrets`, the app redirected to http://localhost:3001 while the probe waited for
+// http://127.0.0.1:3199, and the suite burned its whole 180s budget on a route that was serving correctly
+// within a second. Green on CI (no `.dev.vars` there), dead on every developer machine — the inverse of
+// the usual failure, and exactly the class this repo's local-parity work exists to remove.
+describe("effectiveAuthOrigin", () => {
+  it("uses the origin the app will ACTUALLY resolve when .dev.vars sets one", () => {
+    expect(
+      effectiveAuthOrigin("AUTH_BASE_URL=http://localhost:3001\n", "http://127.0.0.1:3199"),
+    ).toBe("http://localhost:3001");
+  });
+
+  it("falls back to the harness's isolated origin when there is no .dev.vars", () => {
+    // CI's case. Keeping the synthetic origin there preserves the property the comment relies on: an
+    // origin nothing else in the app points at, so nothing can wander off to a real auth server.
+    expect(effectiveAuthOrigin(null, "http://127.0.0.1:3199")).toBe("http://127.0.0.1:3199");
+  });
+
+  it("ignores a blank or absent binding rather than expecting an empty origin", () => {
+    // `pnpm dev:secrets` writes an unconfigured key as `NAME=`; treating "" as configured would make the
+    // probe demand a redirect to the empty string and never match.
+    expect(effectiveAuthOrigin("AUTH_BASE_URL=\n", "http://127.0.0.1:3199")).toBe(
+      "http://127.0.0.1:3199",
+    );
+    expect(effectiveAuthOrigin("OTHER=x\n", "http://127.0.0.1:3199")).toBe("http://127.0.0.1:3199");
+  });
+
+  it("strips a trailing slash so the startsWith marker cannot miss", () => {
+    expect(effectiveAuthOrigin("AUTH_BASE_URL=http://localhost:3001/\n", "http://x")).toBe(
+      "http://localhost:3001",
+    );
+  });
+});
+
+// A 307 to the WRONG origin cannot be a partial route table: the catch-all rejects `org` and calls
+// notFound(), so it emits 404 and never a redirect. Only the real route redirects — meaning the route is
+// serving and the harness simply expects the wrong origin. Polling that for 180s and then blaming the
+// scan is what cost this session an hour; it is a configuration mismatch and should say so at once.
+describe("authOriginMismatch", () => {
+  it("recognises a 307 to a different origin as a config mismatch", () => {
+    expect(authOriginMismatch(307, "http://localhost:3001/login", "http://127.0.0.1:3199")).toBe(
+      true,
+    );
+  });
+
+  it("is not triggered by the catch-all, which cannot redirect at all", () => {
+    expect(authOriginMismatch(404, null, "http://127.0.0.1:3199")).toBe(false);
+    expect(authOriginMismatch(200, null, "http://127.0.0.1:3199")).toBe(false);
+  });
+
+  it("is not triggered by the correct redirect", () => {
+    expect(authOriginMismatch(307, "http://127.0.0.1:3199/login", "http://127.0.0.1:3199")).toBe(
+      false,
+    );
+  });
+
+  it("does not fire on a 307 with no Location, which is malformed rather than mismatched", () => {
+    expect(authOriginMismatch(307, null, "http://127.0.0.1:3199")).toBe(false);
   });
 });
