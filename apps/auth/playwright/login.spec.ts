@@ -17,8 +17,26 @@ import { expect, test } from "@playwright/test";
 // this repo. Every assertion below holds without any third-party script EXECUTING: Cloudflare's is never
 // waited on, and Google's is stubbed for every test (see the beforeEach).
 
-/** Third-party origins whose console noise is not ours to gate (a CDN hiccup is not our regression). */
+/** Third-party hosts whose console noise is not ours to gate (a CDN hiccup is not our regression). */
 const THIRD_PARTY = ["challenges.cloudflare.com", "accounts.google.com"];
+
+const GOOGLE_HOST = "accounts.google.com";
+
+/**
+ * The hostname of a URL-ish string, or "" when it is not a URL.
+ *
+ * Everything here compares HOSTS exactly rather than substring-matching the URL. `url.includes(host)` is
+ * the shape CodeQL flags as incomplete URL sanitization, and it is genuinely wrong even in a test:
+ * `https://evil.test/?next=accounts.google.com` matches it. A CSP `blockedURI` is also not always a URL —
+ * it can be the literal `eval` or `inline` — hence the tolerant parse rather than a bare `new URL`.
+ */
+function hostOf(value: string): string {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return "";
+  }
+}
 
 interface CspViolation {
   violatedDirective: string;
@@ -139,8 +157,8 @@ test.describe("/login", () => {
       // Scope to OUR origin on purpose: a Cloudflare/Google CDN failure is a third-party outage, not a
       // regression in this repo, and gating on it would make the suite fail for reasons no commit caused.
       // Everything our bundle logs still fails this test.
-      const source = message.location().url;
-      if (THIRD_PARTY.some((host) => source.includes(host))) return;
+      const source = hostOf(message.location().url);
+      if (THIRD_PARTY.includes(source)) return;
       errors.push(`${source}: ${message.text()}`);
     });
 
@@ -176,20 +194,20 @@ test.describe("/login", () => {
 
     const gsiRequests: string[] = [];
     page.on("request", (r) => {
-      if (r.url().includes("accounts.google.com")) gsiRequests.push(r.url());
+      if (hostOf(r.url()) === GOOGLE_HOST) gsiRequests.push(new URL(r.url()).pathname);
     });
 
     await page.goto("/login");
     await expect(page.locator(".cf-turnstile")).toHaveCount(1);
     await page.waitForTimeout(2_000);
 
-    expect(gsiRequests.some((u) => u.includes("/gsi/client"))).toBe(true);
+    expect(gsiRequests).toContain("/gsi/client");
 
     // The specific failure this catches: a script-src that omits accounts.google.com. That produces a
     // `script-src-elem` violation naming the GSI URL and NO request at all — which is precisely how the
     // discovery pass first observed it.
     const violations = await page.evaluate(() => window.__cspViolations ?? []);
-    expect(violations.filter((v) => v.blockedURI.includes("accounts.google.com"))).toEqual([]);
+    expect(violations.filter((v) => hostOf(v.blockedURI) === GOOGLE_HOST)).toEqual([]);
   });
 
   test("reaches Google ONLY for the GSI endpoints, nothing else", async ({ page }) => {
@@ -200,8 +218,7 @@ test.describe("/login", () => {
     // starts beaconing somewhere else on this page fails loudly.
     const attempted: string[] = [];
     page.on("request", (r) => {
-      const u = new URL(r.url());
-      if (u.hostname === "accounts.google.com") attempted.push(u.pathname);
+      if (hostOf(r.url()) === GOOGLE_HOST) attempted.push(new URL(r.url()).pathname);
     });
 
     await page.goto("/login");
