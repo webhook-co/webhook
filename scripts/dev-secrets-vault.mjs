@@ -240,7 +240,12 @@ export function pullSet(values, specNames, shared = sharedSecretNames(), app = n
     // different secrets, and both Workers read TURNSTILE_SECRET_KEY — so one value per NAME would hand
     // play auth's secret and fail every challenge with no useful error.
     const scoped = app === null ? undefined : values.get(appScopedKey(app, name));
-    const v = scoped ?? values.get(name);
+    // If ANY app has a scoped entry for this name, the name is per-app and a bare global entry is STALE —
+    // left by a vault pushed before the split. Falling back to it would hand this app another app's
+    // secret, which is the precise failure the split exists to prevent. Discovered from the ciphertext
+    // itself, so it needs no list of "names that differ": a correct push never leaves both forms.
+    const isPerApp = [...values.keys()].some((k) => k.endsWith(`__${name}`));
+    const v = scoped ?? (isPerApp ? undefined : values.get(name));
     if (v === undefined || v === "") continue;
     out.set(name, v);
   }

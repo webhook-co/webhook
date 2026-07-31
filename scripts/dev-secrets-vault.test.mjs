@@ -249,10 +249,35 @@ test("pull prefers the app-scoped value over the global one", () => {
     [["TURNSTILE_SECRET_KEY", "play-only"]],
     "play received another app's secret",
   );
+  // …and auth gets NOTHING from this vault, not the global. A global sitting beside a scoped entry can
+  // only be a leftover from a push that predates the split — a correct push writes one form or the other,
+  // never both — so honouring it would hand auth whatever value happened to be there. See the stale-entry
+  // test below. An app-scoped-free vault still falls back to the global, which is the ordinary case.
+  assert.deepEqual([...pullSet(vault, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "auth")], []);
+  const ordinary = new Map([["TURNSTILE_SECRET_KEY", "global"]]);
   assert.deepEqual(
-    [...pullSet(vault, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "auth")],
+    [...pullSet(ordinary, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "auth")],
     [["TURNSTILE_SECRET_KEY", "global"]],
-    "an app with no app-scoped entry must still get the global one",
+    "a name nobody has split must still travel globally",
+  );
+});
+
+test("a STALE global entry never leaks into an app that has its own", () => {
+  // A vault pushed BEFORE the split carries a bare TURNSTILE_SECRET_KEY. Falling back to it for an app
+  // with no scoped entry would hand that app another app's secret — the exact failure the split prevents,
+  // arriving later from a committed file. Same shape as [[an-allowlist-must-be-enforced-on-read-too]].
+  const legacy = new Map([
+    ["TURNSTILE_SECRET_KEY", "auths-old-global"],
+    ["AUTH__TURNSTILE_SECRET_KEY", "auths-own"],
+  ]);
+  assert.deepEqual(
+    [...pullSet(legacy, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "play")],
+    [],
+    "play took a stale global secret belonging to auth",
+  );
+  assert.deepEqual(
+    [...pullSet(legacy, ["TURNSTILE_SECRET_KEY"], sharedSecretNames(), "auth")],
+    [["TURNSTILE_SECRET_KEY", "auths-own"]],
   );
 });
 
