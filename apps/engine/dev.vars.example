@@ -24,8 +24,20 @@ STRIPE_METER_EVENT_NAME=
 # EXTERNAL: Stripe billing-meter id from your sandbox. Pairs with STRIPE_METER_EVENT_NAME.
 STRIPE_METER_ID=
 
-# LOCAL: Selects the hermetic dev KEK custodian instead of AWS KMS. Without it, creating an endpoint needs real AWS IAM credentials. Lives ONLY here — .dev.vars is never sent by `wrangler deploy`, kmsProviderFromEnv refuses it whenever AWS KMS config is bound, and scripts/kms-mode-guard.mjs keeps it out of every committed Worker config.
-KMS_MODE=local
+# EXTERNAL: REQUIRED for prod parity — the KEK ARN. An identifier, not a secret, so the vault carries it.
+KMS_KEY_ARN=
+
+# EXTERNAL: REQUIRED for prod parity — the KEK's region (us-east-2). Not a secret; the vault carries it.
+AWS_REGION=
+
+# EXTERNAL: REQUIRED for prod parity — the IAM user scoped to kms:GenerateDataKey + kms:Decrypt on that one key. NOT vaulted: it pairs with a credential that reaches production.
+AWS_ACCESS_KEY_ID=
+
+# EXTERNAL: REQUIRED for prod parity. NOT vaulted — it grants Decrypt against the production KEK, which is a production capability regardless of how narrow the policy is.
+AWS_SECRET_ACCESS_KEY=
+
+# EXTERNAL: LEAVE BLANK so the real AWS KMS custodian runs, exactly as in production. Set it to "local" ONLY if you cannot hold AWS credentials; endpoint creation then seals under a hermetic throwaway KEK and the AWS path is never exercised. Lives ONLY here — .dev.vars is never sent by `wrangler deploy`, kmsProviderFromEnv refuses it whenever AWS KMS config is bound, and scripts/kms-mode-guard.mjs keeps it out of every committed Worker config.
+KMS_MODE=
 
 # GENERATED: The dev KEK, 32 random bytes. Stable across restarts so endpoints sealed before a restart stay openable — LocalKmsProvider.generate() would mint a fresh key each process and orphan them.
 LOCAL_KEK=

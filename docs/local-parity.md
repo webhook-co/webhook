@@ -159,7 +159,7 @@ default**, and each is refused outright if it is ever seen on a deployed Worker
 | --- | --- |
 | `EMAIL_MODE=log` | mail prints to the console, link included, instead of sending |
 | `OAUTH_MODE=optional` | providers without both halves configured are not wired; magic link still works — and with Google unwired, **no Google script loads on the login page at all** |
-| `KMS_MODE=local` | a process-local KEK instead of AWS KMS, so endpoints can be created without AWS |
+| `KMS_MODE=local` | a process-local KEK instead of AWS KMS, for a contributor who cannot hold AWS credentials — **no longer the default**, see below |
 
 ### ~~`TURNSTILE_MODE`~~ — CLOSED: the playground's captcha runs locally
 
@@ -207,9 +207,34 @@ machine. Run `stripe listen --print-secret` and use that one while forwarding. T
 wrong is `400 invalid signature` with nothing naming the cause — which is exactly why the credential vault
 refuses to carry this variable in either direction.
 
-`KMS_MODE=local` is the one that has no alternative today: the engine is the sole KEK custodian and nobody
-should hold production AWS credentials to develop. The other two are conveniences, and using them means
-accepting that you are not testing what production does.
+### ~~`KMS_MODE=local`~~ — CLOSED: local seals against the real KEK
+
+**Local dev now uses the same KEK custodian production does**, through the same `AwsKmsProvider` seam. It
+used to default to the hermetic `LocalKmsProvider`, which meant the envelope-encryption path — the one that
+seals provider secrets and ingest tokens — was never exercised before a deploy. That was the
+compliance-critical path running only in production.
+
+The page used to say this had "no alternative today: nobody should hold production AWS credentials to
+develop". The premise was wrong in the way this page warns about: **the credential already existed**. IAM
+user `webhook-co-claude-code` is already least-privilege — `kms:GenerateDataKey` + `kms:Decrypt`, on one
+key, and nothing else. AGENTS.md says to look for the real credential before inventing a substitute, and it
+was there the whole time.
+
+Verified with a real round-trip: a DEK wrapped by the KEK, unwrapped, and the two proven identical by
+encrypting with one and decrypting with the other.
+
+⚠️ **What a machine holds is the ability to wrap and unwrap, not the key** — the KEK never leaves AWS. It
+is still a production capability, so `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are **excluded from the
+credential vault** for the same reason `RESEND_API_KEY` is: a passphrase sitting beside the ciphertext is
+not where a production capability belongs. `KMS_KEY_ARN` and `AWS_REGION` do travel — an ARN and a region
+name are identifiers, and withholding them would be friction without security.
+
+`KMS_MODE=local` survives as the opt-out for a contributor who cannot hold AWS credentials. The engine
+**refuses** it outright when any AWS field is bound, so the two configurations cannot be half-applied —
+four tests cover that fence, including the partial-config case.
+
+The remaining two flags are conveniences, and using them means accepting that you are not testing what
+production does.
 
 **Setting them:** put the value in the app's `.dev.vars`. `pnpm dev:secrets` writes a commented template
 listing exactly what each app wants and which values are required for parity.

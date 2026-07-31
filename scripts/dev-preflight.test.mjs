@@ -197,3 +197,48 @@ test("a blank play secret with the challenge ON is reported by findings()", () =
     "the playground would mint with an unverifiable challenge and nothing would say so",
   );
 });
+
+// The engine's KEK custodian, mirroring the dmarc Resend and play Turnstile pins. This PR's load-bearing
+// change is that real AWS KMS is now the local DEFAULT — drop `parityRequired` or break `relaxedBy` and
+// local dev silently returns to sealing under a throwaway KEK, with the vault, example and kms-provider
+// suites all still green. The runtime fence does not help: it only fires once a provider is constructed.
+const AWS_KMS_SPECS = ["KMS_KEY_ARN", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
+
+test("every AWS KMS field is ENFORCED for the engine, with the same opt-out", () => {
+  const required = requiredSpecs("engine");
+  for (const name of AWS_KMS_SPECS) {
+    const spec = required.find((s) => s.name === name);
+    assert.ok(spec, `${name} blank would still start \`pnpm dev\` — local would not use real KMS`);
+    assert.deepEqual(
+      spec.relaxedBy,
+      { name: "KMS_MODE", value: "local" },
+      `${name} must be relaxed by the documented opt-out and nothing else`,
+    );
+  }
+});
+
+test("a blank KMS_MODE means REAL AWS, so the four fields are demanded", () => {
+  // Blank is the parity path here, which inverts the usual convention — the substitute is the flag, not
+  // its absence. If blank started relaxing them, the default would quietly become the throwaway KEK again.
+  const problems = findings([{ app: "engine", exists: true, source: "KMS_MODE=\n" }]);
+  const missing = problems.flatMap((p) => p.missing ?? []);
+  for (const name of AWS_KMS_SPECS) {
+    assert.ok(missing.includes(name), `${name} was not demanded when KMS_MODE is blank`);
+  }
+});
+
+test("KMS_MODE=local is the ONLY thing that relaxes them", () => {
+  const spec = requiredSpecs("engine").find((s) => s.name === "KMS_KEY_ARN");
+  assert.ok(
+    isRelaxed(spec, new Map([["KMS_MODE", "local"]])),
+    "the documented opt-out does not work",
+  );
+  assert.ok(
+    !isRelaxed(spec, new Map([["KMS_MODE", ""]])),
+    "blank must NOT relax — blank is the parity path",
+  );
+  assert.ok(
+    !isRelaxed(spec, new Map([["KMS_MODE", "aws"]])),
+    "an unrecognised value must not relax either",
+  );
+});

@@ -66,12 +66,14 @@ test("never shares a name that is a LOCAL literal in any app", () => {
 
 // The exact set, not a floor. A floor of 6 passed while every STRIPE_* name silently dropped out of
 // discovery — the tool would still report success, just quietly stop sharing half of what it claims to.
-test("the shared set is exactly the documented 9 names", () => {
+test("the shared set is exactly the documented 11 names", () => {
   assert.deepEqual(sharedSecretNames(), [
+    "AWS_REGION",
     "GITHUB_CLIENT_ID",
     "GITHUB_CLIENT_SECRET",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
+    "KMS_KEY_ARN",
     "STRIPE_METER_ID",
     "STRIPE_PLANS",
     "STRIPE_PORTAL_CONFIGURATION_ID",
@@ -360,4 +362,25 @@ test("collecting skips apps with no .dev.vars, and blank values", () => {
     "a blank must not overwrite a real value",
   );
   assert.deepEqual(conflicts, []);
+});
+
+// The KEK custodian's credential reaches production, so it must never enter a passphrase-protected vault
+// — the same test applied to RESEND_API_KEY. Its non-secret companions must still travel, or closing the
+// KMS parity gap would cost four manual values instead of two.
+test("the AWS credential pair is excluded, but its identifiers still travel", () => {
+  const shared = sharedSecretNames();
+  for (const secret of ["AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID"]) {
+    assert.ok(!shared.includes(secret), `${secret} reaches production and must not be vaulted`);
+    assert.deepEqual(
+      [...pullSet(new Map([[secret, "leaked"]]), [secret])],
+      [],
+      `${secret} pulled anyway`,
+    );
+  }
+  for (const id of ["KMS_KEY_ARN", "AWS_REGION"]) {
+    assert.ok(
+      shared.includes(id),
+      `${id} is an identifier, not a secret — withholding it is pure friction`,
+    );
+  }
 });
