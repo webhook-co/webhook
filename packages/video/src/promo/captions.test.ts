@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CAPTIONS, EVENTS_TABLE } from "./captions";
+import { CAPTIONS, EVENTS_TABLE, S6_HERO_TEXT, S6_PROVIDER_COUNT } from "./captions";
 import { FLOW_NODES_DEFAULT } from "./components/FlowDiagram";
 
 // These strings render on screen and must stay byte-for-byte with brief §6.1.
@@ -19,6 +19,15 @@ describe("CAPTIONS data integrity", () => {
   it("states the only real number as an exact '144 providers' claim", () => {
     const s6 = CAPTIONS.find((c) => c.scene === "S6" && c.kind === "hero");
     expect(s6?.text).toBe("Verified at the edge. 144 providers.");
+  });
+
+  // The string pin above does NOT protect the counter: S6 derives the number it rolls up to out of
+  // this caption, and a reword to "144 signature schemes" would update the caption AND the pin
+  // together, stay green, and leave the counter with nothing to parse. Asserting the derived VALUE
+  // is what closes that — and it fails loudly, because the derivation throws rather than yielding 0.
+  it("exposes a counter value the S6 scene can actually render, matching the caption", () => {
+    expect(S6_PROVIDER_COUNT).toBe(144);
+    expect(S6_HERO_TEXT).toContain(String(S6_PROVIDER_COUNT));
   });
 
   it("names the failure wedge as RAW_BODY_MODIFIED", () => {

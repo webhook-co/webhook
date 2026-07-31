@@ -12,7 +12,7 @@
 
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 
-import { CAPTIONS } from "../captions";
+import { CAPTIONS, S6_HERO_TEXT, S6_PROVIDER_COUNT } from "../captions";
 import { DashboardCard } from "../components/DashboardCard";
 import { DotsBackground } from "../components/DotsBackground";
 import { KineticLine } from "../components/KineticLine";
@@ -25,7 +25,7 @@ interface S6Props {
 }
 
 const URL_TEXT = CAPTIONS.find((c) => c.scene === "S6" && c.kind === "url")?.text ?? "";
-const HERO_TEXT = CAPTIONS.find((c) => c.scene === "S6" && c.kind === "hero")?.text ?? "";
+const HERO_TEXT = S6_HERO_TEXT;
 
 // The same event as the terminal side (S3/S4), byte-for-byte.
 const EVENT = {
@@ -37,11 +37,10 @@ const EVENT = {
 
 // The one real number in the film (brief §1). The counter rolls 0 → this.
 //
-// Read OUT OF the caption rather than written twice: these two render side by side — the counter
-// ticks up and the line settles beneath it — so a stale literal here would put a different number
-// on screen than the sentence directly below it. `captions.test.ts` pins the caption text, so if
-// this regex ever stops matching, that test goes red before a render can show a 0.
-const PROVIDER_COUNT = Number(HERO_TEXT.match(/(\d+)\s+providers/)?.[1] ?? 0);
+// Derived from the caption in `captions.ts` rather than written a second time here — the counter and
+// the caption render together, so two literals would eventually disagree on screen. See
+// `S6_PROVIDER_COUNT` there for why the derivation throws rather than defaulting.
+const PROVIDER_COUNT = S6_PROVIDER_COUNT;
 const COUNT_START = 40; // local f40 (comp f400)
 const COUNT_END = 70; // local f70 (comp f430)
 
