@@ -62,6 +62,22 @@ repointing them needed no new provisioning.
 
 ---
 
+## ~~D1 had no schema locally~~ — CLOSED
+
+`pnpm dev` started `apps/dmarc` against a D1 database with **no tables in it**. `d1 migrations apply` lived
+only in `.github/workflows/deploy-dmarc.yml`, so production had the schema and no local machine ever did —
+nothing in `pnpm dev` or `pnpm dev:db` applied it, and nothing said so.
+
+It surfaced only once `pnpm cron` gave the cron a local trigger at all:
+
+```
+pnpm cron dmarc → D1_ERROR: no such table: alert_state
+```
+
+`scripts/dev-d1.mjs` (`pnpm dev:d1`, and run by `pnpm dev` before anything starts) applies them. It
+discovers the databases from the committed wrangler configs rather than naming dmarc, so a second D1 user
+is covered the day it appears. Idempotent — wrangler keeps its own applied ledger.
+
 ## ~~apps/web runs without its service bindings~~ — CLOSED
 
 **`pnpm dev` now runs apps/web under the OpenNext preview with all 10 service bindings.** It used to run
@@ -219,6 +235,14 @@ between machines is a passphrase.
 
 ⚠️ That means repo read access yields both the ciphertext and the wrapped key, so the passphrase is doing
 all the work — five or six random words, and nothing typed anywhere else.
+
+**Every runnable app is now in the manifest.** It used to cover five while eleven booted, so
+`pnpm dev:secrets` never wrote the other six a `.dev.vars` and preflight never checked one — while printing
+a green "local secrets present for 5 apps", which read as completeness and vouched for under half the
+stack. `apps/dmarc` showed the cost: it reads `RESEND_API_KEY`, and `pnpm cron dmarc` failed on a Resend
+401. Four apps (`www`, `play`, `get`, `telemetry`) genuinely need nothing and now say so with an empty
+list — a decision, rather than an omission that looks identical from outside. Preflight states the
+denominator: *7 of 11 apps (4 need none)*.
 
 **`pnpm dev` refuses to start without them.** `scripts/dev-preflight.mjs` runs first and fails loudly,
 naming every missing value, if an app has no `.dev.vars` or leaves a parity-required credential blank.

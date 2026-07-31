@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  APPS_COVERED,
   APPS_NEEDING_SECRETS,
   findings,
   isRelaxed,
   parseDevVars,
   requiredSpecs,
 } from "./dev-preflight.mjs";
+import { APP_NAMES } from "./dev-secrets-manifest.mjs";
 
 // What this prevents: a clone with no `.dev.vars` boots, serves a login page that renders perfectly,
 // and simply offers fewer ways in — because the page derives its buttons from which OAuth secrets are
@@ -120,4 +122,45 @@ test("the check is not vacuous — an empty file yields findings for every app",
   assert.equal(out.length, APPS_NEEDING_SECRETS.length, "every app should report something");
   for (const f of out)
     assert.ok((f.missing ?? []).length > 0, `${f.app} reported no missing names`);
+});
+
+// --- Coverage of the derived app lists ----------------------------------------------------------
+// These constants used to be `[...APP_NAMES]` and the tests asserted `length >= 5`, which stayed true
+// while six apps were missing from the manifest entirely. A floor cannot notice an omission.
+
+test("apps that declare secrets are required; apps that declare none are not", () => {
+  for (const app of ["dmarc", "health"]) {
+    assert.ok(
+      APPS_NEEDING_SECRETS.includes(app),
+      `${app} declares secrets but is not required to have them`,
+    );
+  }
+  for (const app of ["www", "play", "get", "telemetry"]) {
+    assert.ok(
+      !APPS_NEEDING_SECRETS.includes(app),
+      `${app} needs no secrets but is required to supply some`,
+    );
+  }
+});
+
+test("the denominator is every app the manifest covers", () => {
+  assert.deepEqual([...APPS_COVERED].sort(), [...APP_NAMES].sort());
+  assert.ok(
+    APPS_COVERED.length > APPS_NEEDING_SECRETS.length,
+    "no app needs nothing — is coverage a subset again?",
+  );
+});
+
+test("dmarc's Resend key is ENFORCED, not merely described as required", () => {
+  // The note said "REQUIRED for prod parity" while the flag was absent, so preflight waved a blank key
+  // through and the Resend 401 stayed reachable — a claim outrunning the code.
+  const spec = requiredSpecs("dmarc").find((s) => s.name === "RESEND_API_KEY");
+  assert.ok(spec, "a blank RESEND_API_KEY would still start `pnpm dev` for dmarc");
+  assert.deepEqual(
+    spec.relaxedBy,
+    { name: "EMAIL_MODE", value: "log" },
+    "an external must have an opt-out",
+  );
+  assert.ok(isRelaxed(spec, new Map([["EMAIL_MODE", "log"]])), "the opt-out does not relax it");
+  assert.ok(!isRelaxed(spec, new Map([["EMAIL_MODE", ""]])), "a blank flag must NOT relax it");
 });

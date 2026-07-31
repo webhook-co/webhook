@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { APP_NAMES, sharedNames, specsFor } from "./dev-secrets-manifest.mjs";
+import { DEV_APPS } from "./dev-ports.mjs";
 import {
   checkExamples,
   generateDevVars,
@@ -479,4 +480,38 @@ test("checkExamples flags a drifted KEY SET, not only a drifted value", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- Coverage: no runnable app may be silently absent from the manifest -------------------------
+// `dev-preflight` reported "✅ local secrets present for 5 apps" while ELEVEN apps boot under `pnpm dev`.
+// Six were not in the manifest at all, so `pnpm dev:secrets` never wrote them a .dev.vars and preflight
+// never checked one — a green message vouching for 45% of the stack. apps/dmarc proved it was not
+// theoretical: it declares RESEND_API_KEY in its Env and `pnpm cron dmarc` died on a Resend 401.
+//
+// Absence must therefore be impossible. An app that needs nothing says so with an empty spec list; an app
+// nobody has considered fails this test.
+test("every runnable app is covered by the manifest", () => {
+  const runnable = Object.keys(DEV_APPS);
+  const missing = runnable.filter((a) => !APP_NAMES.includes(a));
+  assert.deepEqual(
+    missing,
+    [],
+    `these apps boot under \`pnpm dev\` but the manifest has never heard of them: ${missing.join(", ")}`,
+  );
+  assert.ok(
+    runnable.length >= 11,
+    `only ${runnable.length} runnable apps — the check may be vacuous`,
+  );
+});
+
+test("an app that needs no secrets says so explicitly", () => {
+  // The distinction that matters: "considered, needs nothing" vs "never considered". Both look like an
+  // empty .dev.vars from outside, and only one of them is a decision.
+  const empty = APP_NAMES.filter((a) => specsFor(a).length === 0);
+  assert.ok(
+    empty.length > 0,
+    "no app declares an empty spec list — has coverage regressed to a subset?",
+  );
+  for (const app of empty)
+    assert.doesNotThrow(() => specsFor(app), `${app} is not declared at all`);
 });

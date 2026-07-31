@@ -31,8 +31,18 @@ import { APP_NAMES, specsFor } from "./dev-secrets-manifest.mjs";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 
-/** Apps that need a .dev.vars, discovered from the manifest rather than hand-listed. */
-export const APPS_NEEDING_SECRETS = Object.freeze([...APP_NAMES]);
+/**
+ * Apps that need a `.dev.vars`, discovered from the manifest rather than hand-listed.
+ *
+ * The manifest now covers every runnable app, and some legitimately declare NOTHING (www, play, get and
+ * telemetry read no secrets at all). Those must not be required to have a file — but they are still
+ * counted, because the reason this list is derived is that the previous version described five apps
+ * while eleven were running.
+ */
+export const APPS_NEEDING_SECRETS = Object.freeze(APP_NAMES.filter((a) => specsFor(a).length > 0));
+
+/** Every app the manifest has considered, including those that need nothing. The denominator. */
+export const APPS_COVERED = Object.freeze([...APP_NAMES]);
 
 /**
  * Parse a .dev.vars into name → value.
@@ -125,7 +135,13 @@ function run() {
 
   const problems = findings(readEntries());
   if (problems.length === 0) {
-    console.log(`✅ local secrets present for ${APPS_NEEDING_SECRETS.length} apps — starting dev`);
+    // State the denominator. "secrets present for 5 apps" read as completeness while eleven apps were
+    // booting and six had never been considered — a true sentence that meant far less than it looked.
+    const none = APPS_COVERED.length - APPS_NEEDING_SECRETS.length;
+    console.log(
+      `✅ local secrets present for ${APPS_NEEDING_SECRETS.length} of ${APPS_COVERED.length} apps ` +
+        `(${none} need none) — starting dev`,
+    );
     return;
   }
 

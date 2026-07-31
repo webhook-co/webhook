@@ -198,6 +198,70 @@ describe("scheduled health check", () => {
 
   // An empty database is the alarming end of the scale, not the quiet one: it means the pipeline has
   // never once worked. Scoring "no rows" as healthy is precisely how a dead feed hides.
+  // --- EMAIL_MODE=log, the local-dev opt-out -----------------------------------------------------
+  // The manifest marks RESEND_API_KEY parityRequired with `relaxedBy: EMAIL_MODE=log`, which is a promise
+  // that the flag actually does something. Without these, the branch was ungated: a `return` in the wrong
+  // place would make the opt-out behave like a FAILED send and silently re-alert forever.
+
+  it("prints the alert instead of sending it under EMAIL_MODE=log", async () => {
+    const sent = captureSends();
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((m: unknown) => void logged.push(String(m)));
+    const pk = await seedReport({
+      reportId: "log-1",
+      windowEnd: nowSec() - DAY,
+      disposition: "reject",
+      dkim: "fail",
+      spf: "fail",
+      count: 5,
+    });
+
+    await worker.scheduled({} as ScheduledController, { ...env, EMAIL_MODE: "log" } as never);
+
+    expect(sent).toHaveLength(0);
+    expect(logged.join("\n")).toContain("EMAIL_MODE=log");
+    expect(logged.join("\n")).toContain("203.0.113.9");
+    // The load-bearing half: a printed alert counts as DELIVERED, so the cursor advances and the next
+    // tick does not re-alert. An early return here would have left it at 0 — the failed-send behaviour.
+    expect(await state("last_alerted_report_pk")).toBe(String(pk));
+  });
+
+  it("still sends when EMAIL_MODE is blank, which is UNSET rather than a typo", async () => {
+    // `pnpm dev:secrets` writes an unconfigured flag as `EMAIL_MODE=`. If blank took the log branch,
+    // every generated .dev.vars would silently stop mail — the opposite of the parity this flag protects.
+    const sent = captureSends();
+    await seedReport({
+      reportId: "blank-1",
+      windowEnd: nowSec() - DAY,
+      disposition: "reject",
+      dkim: "fail",
+      spf: "fail",
+      count: 2,
+    });
+
+    await worker.scheduled({} as ScheduledController, { ...env, EMAIL_MODE: "" } as never);
+
+    expect(sent).toHaveLength(1);
+  });
+
+  it("refuses an EMAIL_MODE it does not recognise rather than sending anyway", async () => {
+    // `EMAIL_MODE=Log` must not fall through to a real send: an operator who believes mail is being
+    // printed would be mailing people. Fail loudly, in the safe direction.
+    captureSends();
+    await seedReport({
+      reportId: "typo-1",
+      windowEnd: nowSec() - DAY,
+      disposition: "reject",
+      dkim: "fail",
+      spf: "fail",
+      count: 1,
+    });
+
+    await expect(
+      worker.scheduled({} as ScheduledController, { ...env, EMAIL_MODE: "Log" } as never),
+    ).rejects.toThrow(/EMAIL_MODE/);
+  });
+
   it("treats an empty database as stale rather than healthy", async () => {
     const sent = captureSends();
 
