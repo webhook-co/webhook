@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   collectFromDevVars,
+  internalRepoFrom,
   LOCAL_KEY,
   sopsEnv,
   mergeIntoDevVars,
@@ -172,6 +173,30 @@ test("an explicit SOPS_AGE_KEY_FILE from the caller still wins", () => {
   // silently overridden by ours.
   const env = sopsEnv({ SOPS_AGE_KEY_FILE: "/elsewhere/keys.txt" });
   assert.equal(env.SOPS_AGE_KEY_FILE, "/elsewhere/keys.txt");
+});
+
+// The vault lives beside the MAIN checkout, and this repo is worked on almost entirely in git worktrees
+// under .claude/worktrees/. Resolving "../internal" from the current directory puts it at
+// .claude/worktrees/internal, which exists nowhere — so the tool worked in the founder's main checkout and
+// failed in every worktree. `git rev-parse --git-common-dir` always points at the MAIN .git, whatever tree
+// you are standing in, so its parent is the one stable anchor.
+test("the internal repo resolves beside the MAIN checkout, from inside a worktree", () => {
+  assert.equal(
+    internalRepoFrom("/w/webhook/.git", {}),
+    "/w/internal",
+    "resolved relative to the worktree instead of the main checkout",
+  );
+});
+
+test("it resolves the same from the main checkout itself", () => {
+  assert.equal(internalRepoFrom("/w/webhook/.git", {}), "/w/internal");
+});
+
+test("an explicit WEBHOOK_INTERNAL_REPO always wins", () => {
+  assert.equal(
+    internalRepoFrom("/w/webhook/.git", { WEBHOOK_INTERNAL_REPO: "/elsewhere/internal" }),
+    "/elsewhere/internal",
+  );
 });
 
 test("parseEnv splits on the FIRST = and ignores comments", () => {
