@@ -592,3 +592,13 @@ describe("buildAuthConfig — sign-in telemetry", () => {
     expect(hooks?.user?.create?.after).toBe(userAfter);
   });
 });
+
+// Better Auth computes skipOriginCheck as `advanced.disableOriginCheck ?? (isTest() ? true : false)`,
+// where isTest() is `NODE_ENV === "test" || TEST`. Left implicit, a stray env var in a deployed
+// environment silently removes both the untrusted-Origin rejection and the off-origin callbackURL
+// rejection — the open-redirect guard the one-tap plugin depends on — with no warning.
+describe("buildAuthConfig — origin check", () => {
+  it("pins origin + callbackURL validation ON rather than inheriting the isTest() default", () => {
+    expect(buildAuthConfig(input(), cfgDeps()).advanced?.disableOriginCheck).toBe(false);
+  });
+});

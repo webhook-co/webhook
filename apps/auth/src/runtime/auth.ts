@@ -290,6 +290,20 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
       // No `crossSubDomainCookies` — the cookie stays host-only; the auth.→app. handoff is the backchannel
       // session-exchange.
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+      // Origin + callbackURL validation, PINNED rather than inherited — and this one is not a style
+      // preference. Better Auth computes `skipOriginCheck` as
+      //   `advanced.disableOriginCheck ?? (isTest() ? true : false)`
+      // and `isTest()` is `NODE_ENV === "test" || TEST` (@better-auth/core env-impl). So the protection
+      // that rejects an untrusted `Origin` AND an off-origin `callbackURL` — the open-redirect guard the
+      // one-tap plugin's own schema comment says it depends on — silently disappears the moment either
+      // variable is set, with no warning and no failing test. Production does not set them today, so
+      // nothing is broken; the point is that nothing *pins* that, and the failure is invisible.
+      //
+      // It also had a second cost: with the default active under `NODE_ENV=test`, no test in this repo
+      // could observe the guard at all. The contract test that asserts an off-origin callbackURL is
+      // refused only became possible once this was explicit — the gate was untestable precisely because
+      // it was implicitly disabled in exactly the environment where we test.
+      disableOriginCheck: false,
     },
     // Explicitly DB-validated sessions: cookieCache off so a revoked session dies immediately (pinned
     // against Better Auth's default of caching for non-stateful instances).
