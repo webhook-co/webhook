@@ -406,10 +406,33 @@ export const APPS = {
   // Bindings only (ASSETS, WWW_ANALYTICS) — no vars, no secrets.
   www: { shared: [], own: [] },
 
-  // Every var it reads (TURNSTILE_MODE, PLAY_TTL_MS, PLAY_MAX_ACTIVE, PLAY_MAX_PER_IP) is supplied by its
-  // committed wrangler `vars`. TURNSTILE_SECRET_KEY is optional and only consulted when the mode is "on",
-  // which locally it is not — see docs/local-parity.md, that gap is recorded rather than filled here.
-  play: { shared: [], own: [] },
+  play: {
+    shared: [],
+    own: [
+      {
+        name: "TURNSTILE_MODE",
+        scope: "local",
+        value: "on",
+        // `local` rather than `external`, and deliberately NOT blank. The committed wrangler var is "off"
+        // because the workerd tests mint without a challenge and must keep doing so; `.dev.vars` overrides
+        // it for `wrangler dev` only. So here "blank" would mean the DEGRADED state, inverting the usual
+        // convention — which is why this one is a literal the generator writes rather than a flag you leave
+        // empty. Set it to "off" by hand if you have no play Turnstile secret.
+        note: 'Set to "on" so the playground mint runs the REAL Turnstile challenge, as production does. The committed wrangler var stays "off" for the workerd tests; this overrides it for `wrangler dev` only. Set "off" if you have no play Turnstile secret.',
+      },
+      {
+        name: "TURNSTILE_SECRET_KEY",
+        scope: "external",
+        parityRequired: true,
+        relaxedBy: { name: "TURNSTILE_MODE", value: "off" },
+        // ⚠️ NOT the same value as apps/auth's, despite the identical name. `webhook-auth login` and
+        // `webhook-play mint` are separate Turnstile widgets with separate secrets and separate sitekeys
+        // (verified against the Cloudflare API). The vault stores this one app-scoped for exactly that
+        // reason — see collectFromDevVars. Copying auth's here fails every challenge with no useful error.
+        note: "REQUIRED for prod parity — the playground's mint challenge. The `webhook-play mint` widget (NOT the auth one) allows localhost, so the real challenge runs here exactly as in production. PLAY_TTL_MS / PLAY_MAX_ACTIVE / PLAY_MAX_PER_IP come from the committed wrangler vars and need no entry.",
+      },
+    ],
+  },
 
   // No Env interface and no `env.` reads.
   get: { shared: [], own: [] },

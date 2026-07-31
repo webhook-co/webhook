@@ -2,3 +2,9 @@
 # Run `pnpm dev:secrets` to write the real apps/play/.dev.vars with generated values.
 # Never paste a secret into this file: it is committed, and this repo is public.
 # Key names and their meaning live in scripts/dev-secrets-manifest.mjs.
+
+# LOCAL: Set to "on" so the playground mint runs the REAL Turnstile challenge, as production does. The committed wrangler var stays "off" for the workerd tests; this overrides it for `wrangler dev` only. Set "off" if you have no play Turnstile secret.
+TURNSTILE_MODE=on
+
+# EXTERNAL: REQUIRED for prod parity — the playground's mint challenge. The `webhook-play mint` widget (NOT the auth one) allows localhost, so the real challenge runs here exactly as in production. PLAY_TTL_MS / PLAY_MAX_ACTIVE / PLAY_MAX_PER_IP come from the committed wrangler vars and need no entry.
+TURNSTILE_SECRET_KEY=

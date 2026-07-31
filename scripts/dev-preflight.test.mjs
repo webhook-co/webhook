@@ -129,13 +129,15 @@ test("the check is not vacuous — an empty file yields findings for every app",
 // while six apps were missing from the manifest entirely. A floor cannot notice an omission.
 
 test("apps that declare secrets are required; apps that declare none are not", () => {
-  for (const app of ["dmarc", "health"]) {
+  // play joined this list when its Turnstile challenge was turned on locally — it needs the
+  // `webhook-play mint` widget's OWN secret, which is not auth's value despite the identical name.
+  for (const app of ["dmarc", "health", "play"]) {
     assert.ok(
       APPS_NEEDING_SECRETS.includes(app),
       `${app} declares secrets but is not required to have them`,
     );
   }
-  for (const app of ["www", "play", "get", "telemetry"]) {
+  for (const app of ["www", "get", "telemetry"]) {
     assert.ok(
       !APPS_NEEDING_SECRETS.includes(app),
       `${app} needs no secrets but is required to supply some`,

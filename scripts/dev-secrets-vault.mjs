@@ -184,9 +184,13 @@ export function toEnv(values) {
  * A name set in two apps must AGREE — a silent disagreement would publish whichever app happened to be
  * read last, and the mismatch would then be baked into every machine that pulls.
  */
+export function appScopedKey(app, name) {
+  return `${app.toUpperCase()}__${name}`;
+}
+
 export function collectFromDevVars(readFile, names = sharedSecretNames(), appNames = APP_NAMES) {
-  const values = new Map();
-  const conflicts = [];
+  // First pass: every value each app holds for each name.
+  const byName = new Map();
   for (const app of appNames) {
     const text = readFile(app);
     if (text === null) continue;
@@ -194,12 +198,25 @@ export function collectFromDevVars(readFile, names = sharedSecretNames(), appNam
     for (const name of names) {
       const v = vars.get(name);
       if (v === undefined || v === "") continue;
-      const seen = values.get(name);
-      if (seen !== undefined && seen !== v) conflicts.push(name);
-      else values.set(name, v);
+      if (!byName.has(name)) byName.set(name, new Map());
+      byName.get(name).set(app, v);
     }
   }
-  return { values, conflicts: [...new Set(conflicts)].sort() };
+
+  // Second pass: one global entry where every app agrees, app-scoped entries where they do not.
+  const values = new Map();
+  const perApp = new Map();
+  const split = [];
+  for (const [name, holders] of byName) {
+    const distinct = new Set(holders.values());
+    if (distinct.size <= 1) {
+      values.set(name, [...distinct][0]);
+      continue;
+    }
+    split.push(name);
+    for (const [app, v] of holders) perApp.set(appScopedKey(app, name), v);
+  }
+  return { values, perApp, split: split.sort(), conflicts: [] };
 }
 
 /**
@@ -212,12 +229,18 @@ export function collectFromDevVars(readFile, names = sharedSecretNames(), appNam
  * file, long after the code was fixed. Blank-skipping mirrors `collectFromDevVars` for the same reason:
  * `!== undefined` counts "" as present, and merging that would blank a working credential.
  */
-export function pullSet(values, specNames, shared = sharedSecretNames()) {
+export function pullSet(values, specNames, shared = sharedSecretNames(), app = null) {
   const allow = new Set(shared);
   const out = new Map();
   for (const name of specNames) {
+    // The allowlist is checked against the BARE name, so an app-scoped key cannot be used to smuggle an
+    // unshareable name (RESEND_API_KEY, the Stripe whsec) back past NOT_SHAREABLE.
     if (!allow.has(name)) continue;
-    const v = values.get(name);
+    // App-scoped wins. `webhook-auth login` and `webhook-play mint` are different Turnstile widgets with
+    // different secrets, and both Workers read TURNSTILE_SECRET_KEY — so one value per NAME would hand
+    // play auth's secret and fail every challenge with no useful error.
+    const scoped = app === null ? undefined : values.get(appScopedKey(app, name));
+    const v = scoped ?? values.get(name);
     if (v === undefined || v === "") continue;
     out.set(name, v);
   }
@@ -315,13 +338,19 @@ function cmdUnlock(internal) {
 }
 
 function cmdPush(internal) {
-  const { values, conflicts } = collectFromDevVars(readDevVars);
-  if (conflicts.length > 0) {
-    console.error(
-      `\n✖ these names disagree between apps: ${conflicts.join(", ")}\n  Reconcile before pushing.\n`,
+  const { values, perApp, split } = collectFromDevVars(readDevVars);
+  // A name whose values genuinely differ per app is stored app-scoped rather than refused. Said out loud
+  // every time: a disagreement that is a MISTAKE looks identical to one that is legitimate, and the only
+  // thing standing between the two is somebody reading this line.
+  for (const name of split) {
+    const apps = [...perApp.keys()]
+      .filter((k) => k.endsWith(`__${name}`))
+      .map((k) => k.slice(0, -`__${name}`.length).toLowerCase());
+    console.log(
+      `   per-app: ${name} differs across ${apps.join(", ")} — stored separately for each`,
     );
-    process.exit(1);
   }
+  for (const [k, v] of perApp) values.set(k, v);
   if (values.size === 0) {
     console.error("\n✖ no shared credentials found in any .dev.vars — nothing to push.\n");
     process.exit(1);
@@ -396,7 +425,9 @@ function cmdPull(internal) {
     process.exit(1);
   }
   const values = parseEnv(res.stdout);
-  const ignored = [...values.keys()].filter((n) => !sharedSecretNames().includes(n));
+  const shared = sharedSecretNames();
+  const bare = (k) => (k.includes("__") ? k.slice(k.indexOf("__") + 2) : k);
+  const ignored = [...values.keys()].filter((n) => !shared.includes(bare(n)));
   if (ignored.length > 0) {
     // Never silent: a name in the vault that the allowlist no longer shares is a stale entry someone
     // should clear with a fresh --push, and the pull is deliberately not honouring it.
@@ -410,6 +441,8 @@ function cmdPull(internal) {
     const wanted = pullSet(
       values,
       specsFor(app).map((s) => s.name),
+      sharedSecretNames(),
+      app,
     );
     if (wanted.size === 0) continue;
     const path = devVarsPath(app);
