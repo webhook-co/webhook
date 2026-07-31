@@ -2,7 +2,7 @@
   "name": "@webhook-co/root",
   "version": "0.0.0",
   "private": true,
-  "description": "Open-core webhook infrastructure \u2014 receive, inspect, replay-to-localhost, and reliably deliver webhooks.",
+  "description": "Open-core webhook infrastructure — receive, inspect, replay-to-localhost, and reliably deliver webhooks.",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.25.0",
@@ -15,7 +15,7 @@
     "dev:db": "scripts/dev-db.sh",
     "dev": "node scripts/dev-preflight.mjs && node scripts/gen-wrangler-dev.mjs && turbo run dev --filter='./apps/*' --concurrency=12",
     "dev:secrets": "node scripts/dev-secrets.mjs",
-    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run no-early-db-close && pnpm run cap-cron-sync-guard && pnpm run cron-dispatch-guard && pnpm run subrequest-budget-guard && pnpm run deploy-token-pr-guard && pnpm run hyperdrive-binding-guard && pnpm run tracing-safety-guard && pnpm run remote-db-test-guard && pnpm run workflow-timeout-guard && pnpm run overrides-guard && pnpm run ruleset-checks-guard && pnpm run adr-no-dup && pnpm run docs-nav-guard && pnpm run docs-structured-data-guard && pnpm run content-dup-guard && pnpm run readyz-coverage-guard && pnpm run deploy-env-parity-guard && pnpm run mcp-registry-guard && pnpm run trigger-copy-guard && pnpm run plugin-manifest-guard && pnpm run plugin-test-cases-guard && pnpm run dev-mode-guard && pnpm run dev-secrets-guard && pnpm run dev-flag-parity-guard && pnpm run dev-ports-guard && pnpm run dev-origins-guard && pnpm run dev-superuser-guard && pnpm run test:scripts",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run no-early-db-close && pnpm run cap-cron-sync-guard && pnpm run cron-dispatch-guard && pnpm run subrequest-budget-guard && pnpm run deploy-token-pr-guard && pnpm run hyperdrive-binding-guard && pnpm run tracing-safety-guard && pnpm run remote-db-test-guard && pnpm run workflow-timeout-guard && pnpm run overrides-guard && pnpm run ruleset-checks-guard && pnpm run adr-no-dup && pnpm run docs-nav-guard && pnpm run docs-structured-data-guard && pnpm run content-dup-guard && pnpm run readyz-coverage-guard && pnpm run deploy-env-parity-guard && pnpm run mcp-registry-guard && pnpm run trigger-copy-guard && pnpm run plugin-manifest-guard && pnpm run plugin-test-cases-guard && pnpm run dev-mode-guard && pnpm run dev-secrets-guard && pnpm run dev-flag-parity-guard && pnpm run dev-ports-guard && pnpm run dev-origins-guard && pnpm run dev-superuser-guard && pnpm run dev-parity-guard && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -66,7 +66,8 @@
     "dev-superuser-guard": "node scripts/dev-superuser-guard.mjs",
     "gen-wrangler-dev": "node scripts/gen-wrangler-dev.mjs",
     "cron": "node scripts/dev-cron.mjs",
-    "dev:secrets:vault": "node scripts/dev-secrets-vault.mjs"
+    "dev:secrets:vault": "node scripts/dev-secrets-vault.mjs",
+    "dev-parity-guard": "node scripts/dev-parity-guard.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.19.0",
