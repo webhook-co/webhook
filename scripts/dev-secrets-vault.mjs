@@ -124,6 +124,28 @@ export function collectFromDevVars(readFile, names = sharedSecretNames(), appNam
   return { values, conflicts: [...new Set(conflicts)].sort() };
 }
 
+/**
+ * What a pull may apply to ONE app: the intersection of the allowlist, that app's own declared vars,
+ * and the values the vault actually carries.
+ *
+ * The allowlist has to be enforced here and not only on push, because the ciphertext is COMMITTED and so
+ * outlives the allowlist that produced it. A vault written before a name was reclassified still carries
+ * that name; trusting the file would re-apply it — reintroducing the STRIPE_METER_EVENT_NAME bug from a
+ * file, long after the code was fixed. Blank-skipping mirrors `collectFromDevVars` for the same reason:
+ * `!== undefined` counts "" as present, and merging that would blank a working credential.
+ */
+export function pullSet(values, specNames, shared = sharedSecretNames()) {
+  const allow = new Set(shared);
+  const out = new Map();
+  for (const name of specNames) {
+    if (!allow.has(name)) continue;
+    const v = values.get(name);
+    if (v === undefined || v === "") continue;
+    out.set(name, v);
+  }
+  return out;
+}
+
 /** Merge decrypted values into one .dev.vars body, replacing existing keys and appending new ones. */
 export function mergeIntoDevVars(text, values) {
   let out = text;
@@ -291,13 +313,21 @@ function cmdPull(internal) {
     process.exit(1);
   }
   const values = parseEnv(res.stdout);
+  const ignored = [...values.keys()].filter((n) => !sharedSecretNames().includes(n));
+  if (ignored.length > 0) {
+    // Never silent: a name in the vault that the allowlist no longer shares is a stale entry someone
+    // should clear with a fresh --push, and the pull is deliberately not honouring it.
+    console.log(
+      `   ignoring ${ignored.length} vault entries no longer shareable: ${ignored.join(", ")}`,
+    );
+  }
   let touched = 0;
+  const applied = new Set();
   for (const app of APP_NAMES) {
-    const wanted = new Map();
-    for (const spec of specsFor(app)) {
-      const v = values.get(spec.name);
-      if (v !== undefined) wanted.set(spec.name, v);
-    }
+    const wanted = pullSet(
+      values,
+      specsFor(app).map((s) => s.name),
+    );
     if (wanted.size === 0) continue;
     const path = devVarsPath(app);
     // Read FIRST rather than stat-then-read: the stat is a check-then-use window, and a missing file
@@ -310,10 +340,12 @@ function cmdPull(internal) {
       continue;
     }
     writeFileSync(path, mergeIntoDevVars(current, wanted), { mode: 0o600 });
+    for (const name of wanted.keys()) applied.add(name);
     console.log(`   ${app}: ${wanted.size} values`);
     touched++;
   }
-  console.log(`\n✅ pulled ${values.size} credentials into ${touched} apps\n`);
+  // Count what was APPLIED, not what the file held — otherwise an ignored entry still reads as delivered.
+  console.log(`\n✅ pulled ${applied.size} credentials into ${touched} apps\n`);
 }
 
 function main() {

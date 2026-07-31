@@ -5,6 +5,7 @@ import {
   collectFromDevVars,
   mergeIntoDevVars,
   parseEnv,
+  pullSet,
   sharedSecretNames,
   toEnv,
 } from "./dev-secrets-vault.mjs";
@@ -50,10 +51,75 @@ test("never shares a name that is a LOCAL literal in any app", () => {
   assert.deepEqual(mixed, [], "an empty app list must produce an empty set, not everything");
 });
 
-test("the set is non-empty and every name is a plain env identifier", () => {
-  const names = sharedSecretNames();
-  assert.ok(names.length >= 6, `only ${names.length} shared names — discovery may have broken`);
-  for (const n of names) assert.match(n, /^[A-Z][A-Z0-9_]*$/, `${n} is not an env identifier`);
+// The exact set, not a floor. A floor of 6 passed while every STRIPE_* name silently dropped out of
+// discovery — the tool would still report success, just quietly stop sharing half of what it claims to.
+test("the shared set is exactly the documented 11 names", () => {
+  assert.deepEqual(sharedSecretNames(), [
+    "GITHUB_CLIENT_ID",
+    "GITHUB_CLIENT_SECRET",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "RESEND_API_KEY",
+    "STRIPE_METER_ID",
+    "STRIPE_PLANS",
+    "STRIPE_PORTAL_CONFIGURATION_ID",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SIGNING_SECRET",
+    "TURNSTILE_SECRET_KEY",
+  ]);
+  for (const n of sharedSecretNames()) {
+    assert.match(n, /^[A-Z][A-Z0-9_]*$/, `${n} is not an env identifier`);
+  }
+});
+
+// --- Pull applies the SAME allowlist push does ----------------------------------------------------
+// The ciphertext is committed, so it outlives the allowlist that produced it. A vault written before a
+// name was reclassified still carries that name, and a pull that trusts the file's contents would
+// re-apply it — reintroducing precisely the STRIPE_METER_EVENT_NAME bug, from a file, months later.
+// The allowlist has to be enforced on the way OUT as well as the way in.
+
+const APP_SPECS = ["GOOGLE_CLIENT_ID", "OAUTH_MODE", "STRIPE_METER_EVENT_NAME", "RESEND_API_KEY"];
+
+test("pull ignores a name the vault carries but the allowlist does not", () => {
+  const vault = new Map([
+    ["GOOGLE_CLIENT_ID", "real"],
+    ["OAUTH_MODE", "degraded"],
+    ["STRIPE_METER_EVENT_NAME", "api-literal"],
+  ]);
+  assert.deepEqual(
+    [...pullSet(vault, APP_SPECS)],
+    [["GOOGLE_CLIENT_ID", "real"]],
+    "a stale or hand-added name in the ciphertext was applied to .dev.vars",
+  );
+});
+
+test("pull skips a blank, so it cannot clobber a real local value", () => {
+  // `!== undefined` treats "" as present. Merging that would blank a working credential and the only
+  // symptom would be a provider quietly vanishing from /login.
+  assert.deepEqual([...pullSet(new Map([["RESEND_API_KEY", ""]]), APP_SPECS)], []);
+});
+
+test("pull still delivers every allowlisted name the app actually declares", () => {
+  // Anti-vacuity: the two tests above would also pass if pullSet returned nothing at all.
+  const vault = new Map([
+    ["GOOGLE_CLIENT_ID", "a"],
+    ["RESEND_API_KEY", "b"],
+    ["TURNSTILE_SECRET_KEY", "not-this-app"],
+  ]);
+  assert.deepEqual(
+    [...pullSet(vault, APP_SPECS)].sort(),
+    [
+      ["GOOGLE_CLIENT_ID", "a"],
+      ["RESEND_API_KEY", "b"],
+    ],
+    "a name this app declares and the allowlist shares was not delivered",
+  );
+});
+
+test("push and pull agree on what is shareable", () => {
+  // Two independent filters that must not drift apart: anything push would publish, pull must accept.
+  const vault = new Map(sharedSecretNames().map((n) => [n, "v"]));
+  assert.deepEqual([...pullSet(vault, sharedSecretNames()).keys()], sharedSecretNames());
 });
 
 test("parseEnv splits on the FIRST = and ignores comments", () => {
