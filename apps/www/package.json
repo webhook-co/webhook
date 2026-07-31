@@ -20,7 +20,8 @@
     "check:export": "node scripts/check-export.mjs",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run",
-    "gen:brand-mail": "node scripts/gen-brand-mail-assets.mjs"
+    "gen:brand-mail": "node scripts/gen-brand-mail-assets.mjs",
+    "dev:worker": "next build && wrangler dev --port 3002 --ip 127.0.0.1 --inspector-port 4002"
   },
   "dependencies": {
     "@webhook-co/shared": "workspace:*",

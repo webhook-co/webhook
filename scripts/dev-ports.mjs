@@ -234,6 +234,31 @@ export function duplicatePorts() {
  * would read as a capability rather than what it is. Use it for pure UI work, where no service binding is
  * in the path; anything touching login, endpoints, or delivery wants the default.
  */
+/**
+ * Run a Next app's committed Worker on demand, for the one app whose default skips it.
+ *
+ * `next dev` never loads a wrangler `main`, so for `apps/www` the two routes its Worker adds — the
+ * cookieless page-view write to Analytics Engine and the MTA-STS policy response — do not exist locally at
+ * all. Keeping the fast loop as the default is the right call for a content site; leaving those routes
+ * UNREACHABLE is not. "Not the default" and "impossible" are different things, and only the first is a
+ * trade-off somebody chose.
+ *
+ * The Worker serves the static export through its ASSETS binding, so the build has to happen first — a
+ * `wrangler dev` against a stale or absent `./out` would serve yesterday's site and look like it worked.
+ *
+ * Returns null where the default ALREADY runs the Worker: web's default is the OpenNext preview, and a
+ * wrangler app runs its main by definition. A second name for the same thing reads as a capability.
+ */
+export function devWorkerCommand(app) {
+  const spec = DEV_APPS[app];
+  if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
+  if (spec.kind !== "next" || SERVICE_BINDINGS[app]) return null;
+  return (
+    `next build && wrangler dev --port ${spec.port} --ip 127.0.0.1 ` +
+    `--inspector-port ${spec.port + INSPECTOR_OFFSET}`
+  );
+}
+
 export function devFastCommand(app) {
   const spec = DEV_APPS[app];
   if (!spec) throw new Error(`dev-ports: unknown app "${app}"`);
