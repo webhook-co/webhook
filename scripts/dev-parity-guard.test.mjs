@@ -19,6 +19,27 @@ test("discovery finds every mode flag in the manifest", () => {
   }
 });
 
+// The first version of this guard read ONLY the secrets manifest, and so reported "all substitutes are
+// recorded" while missing TURNSTILE_MODE entirely — a flag that lives in apps/play/wrangler.jsonc, is
+// "off" locally and "on" in production, and was nowhere on the page. A guard is only as honest as its
+// narrowest input: scope the discovery and it cannot fail.
+test("discovery reads mode flags out of wrangler vars, not just the manifest", () => {
+  const ids = discoverSubstitutes().map((s) => s.id);
+  assert.ok(
+    ids.includes("TURNSTILE_MODE"),
+    "a *_MODE flag declared in a wrangler config was missed",
+  );
+  assert.ok(
+    ids.includes("BILLING_MODE"),
+    "BILLING_MODE is declared in both places and must survive dedup",
+  );
+});
+
+test("a mode flag declared in BOTH places is reported once", () => {
+  const ids = discoverSubstitutes().map((s) => s.id);
+  assert.equal(ids.filter((i) => i === "BILLING_MODE").length, 1);
+});
+
 test("discovery is not a hand-kept list", () => {
   // Feed it a manifest containing a flag that does not exist in this repo. A list would ignore it.
   const found = discoverSubstitutes({

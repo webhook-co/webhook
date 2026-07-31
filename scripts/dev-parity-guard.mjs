@@ -43,6 +43,21 @@ export function workerBypassed(devCmd, wranglerMain) {
   return Boolean(wranglerMain) && devCmd.trimStart().startsWith("next dev");
 }
 
+/**
+ * Mode flags declared in an app's committed wrangler `vars`.
+ *
+ * The first version of this guard read only the secrets manifest, and therefore reported "all substitutes
+ * are recorded" while missing `TURNSTILE_MODE` completely — it lives in `apps/play/wrangler.jsonc`, is
+ * `"off"` by default and `"on"` in the production env block, and was nowhere on the page. A guard is only
+ * as honest as its narrowest input; scoping the discovery to one file made it unable to fail.
+ *
+ * Read with a regex rather than a JSONC parse on purpose: we want the flag NAMES, and a name is unambiguous
+ * even inside a comment — over-reporting here costs a doc line, while under-reporting costs a silent gap.
+ */
+export function wranglerModeFlags(text) {
+  return [...new Set((text.match(/"([A-Z][A-Z0-9_]*_MODE)"/g) ?? []).map((m) => m.slice(1, -1)))];
+}
+
 function mainOf(app) {
   try {
     const text = readFileSync(new URL(`../apps/${app}/wrangler.jsonc`, import.meta.url), "utf8");
@@ -79,6 +94,26 @@ export function discoverSubstitutes({
   }
 
   for (const app of Object.keys(apps)) {
+    let config;
+    try {
+      config = readFileSync(new URL(`../apps/${app}/wrangler.jsonc`, import.meta.url), "utf8");
+    } catch {
+      // A runnable app need not have a wrangler config (the Next ones under `next dev` do not use one
+      // for their dev command). Nothing to discover here, not an error.
+      config = "";
+    }
+    for (const flag of wranglerModeFlags(config)) {
+      // `found` is keyed by name, so a flag declared in BOTH the manifest and a wrangler config is one
+      // substitute, not two. First writer wins and the reason stays whichever is more specific.
+      if (found.has(flag)) continue;
+      found.set(flag, {
+        id: flag,
+        token: flag,
+        kind: "mode-flag",
+        why: `a switch that makes local behave unlike production (declared in apps/${app}/wrangler.jsonc)`,
+      });
+    }
+
     const declared = main(app);
     if (!workerBypassed(devCommand(app), declared)) continue;
     found.set(`apps/${app}`, {
