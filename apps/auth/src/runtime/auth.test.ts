@@ -486,3 +486,88 @@ describe("makeAuth", () => {
     await expect(made.close()).resolves.toBeUndefined();
   });
 });
+
+// --- Google One Tap -----------------------------------------------------------------------------------
+// The one-tap plugin mounts a PUBLIC, unauthenticated POST endpoint that performs an outbound fetch to
+// Google's JWKS, so "is it mounted at all" is a security-relevant question and not just a feature flag.
+// It is wired only when Google is fully configured AND the resolved client id is shaped like one — the
+// same predicate the login page's browser gate uses, so the endpoint's existence and the prompt's
+// existence cannot disagree.
+describe("buildAuthConfig — Google One Tap", () => {
+  // A realistically-shaped id: the SECRETS fixture's "google-id" is a placeholder that (correctly) does
+  // not pass the shape guard, which is itself pinned by a test below.
+  const CLIENT_ID = "231453726280-abc123def456.apps.googleusercontent.com";
+  const withOneTap: ResolvedAuthSecrets = { ...SECRETS, googleClientId: CLIENT_ID };
+
+  const oneTapPlugin = (secrets: ResolvedAuthSecrets) =>
+    buildAuthConfig({ baseURL: "https://auth.webhook.co", secrets }, cfgDeps()).plugins?.find(
+      (p) => p.id === "one-tap",
+    );
+
+  it("wires the plugin when Google is fully configured", () => {
+    expect(oneTapPlugin(withOneTap)).toBeDefined();
+  });
+
+  // The audience is what makes a stolen id token minted for ANOTHER Google app useless here. The plugin
+  // would otherwise fall back to `socialProviders.google.clientId` implicitly; pin it explicitly so the
+  // audience survives a refactor of the social-provider map.
+  it("pins the audience explicitly from the resolved secret", () => {
+    const options = (oneTapPlugin(withOneTap) as { options?: { clientId?: string } } | undefined)
+      ?.options;
+    expect(options?.clientId).toBe(CLIENT_ID);
+  });
+
+  // Signups are allowed by design (the founder chose prompt + tap-to-confirm WITH signup). Pin it: a
+  // stray `disableSignup: true` would turn One Tap into a silent no-op for every new user.
+  it("does not disable signup", () => {
+    const options = (
+      oneTapPlugin(withOneTap) as { options?: { disableSignup?: boolean } } | undefined
+    )?.options;
+    expect(options?.disableSignup).toBeFalsy();
+  });
+
+  it("does NOT wire the plugin under OAUTH_MODE=optional (no Google app at all)", () => {
+    expect(
+      oneTapPlugin({ ...withOneTap, googleClientId: "", googleClientSecret: "" }),
+    ).toBeUndefined();
+  });
+
+  // The id alone cannot complete a sign-in — the callback needs the provider pair. A mounted endpoint
+  // with no secret is an unauthenticated JWKS-fetching endpoint that can never succeed.
+  it("does NOT wire the plugin when the client secret is missing", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientSecret: "" })).toBeUndefined();
+  });
+
+  // Same predicate as the browser gate. A malformed id means we could not confirm the audience, so the
+  // endpoint must not exist rather than exist with an audience nothing can satisfy.
+  it("does NOT wire the plugin when the client id is not shaped like one", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientId: "google-id" })).toBeUndefined();
+  });
+
+  it("does NOT wire the plugin when the client id is a Google client SECRET", () => {
+    expect(oneTapPlugin({ ...withOneTap, googleClientId: "GOCSPX-1a2b3c4d5e6f" })).toBeUndefined();
+  });
+
+  it("trims the resolved id before pinning it as the audience", () => {
+    const options = (
+      oneTapPlugin({ ...withOneTap, googleClientId: ` ${CLIENT_ID}\n` }) as
+        { options?: { clientId?: string } } | undefined
+    )?.options;
+    expect(options?.clientId).toBe(CLIENT_ID);
+  });
+
+  // The plugin contributes NO schema key, so it adds no columns and the Better Auth drift guard — which
+  // reads only apps/auth/src/auth.ts — stays correct without knowing this plugin exists. If a future
+  // upstream version starts declaring a schema, this fails and tells us a migration is now required.
+  it("contributes no schema (so no migration and no drift-guard blind spot)", () => {
+    expect(oneTapPlugin(withOneTap)).not.toHaveProperty("schema");
+  });
+
+  it("keeps magic-link and the captcha alongside it", () => {
+    const plugins = buildAuthConfig(
+      { baseURL: "https://auth.webhook.co", secrets: { ...withOneTap, turnstileSecretKey: "0xS" } },
+      cfgDeps(),
+    ).plugins;
+    expect(plugins?.map((p) => p.id).sort()).toEqual(["captcha", "magic-link", "one-tap"]);
+  });
+});

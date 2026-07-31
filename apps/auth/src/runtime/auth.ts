@@ -21,7 +21,7 @@ import {
   stampSignupMilestone,
 } from "@webhook-co/db";
 import { betterAuth } from "better-auth";
-import { captcha } from "better-auth/plugins";
+import { captcha, oneTap } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
@@ -30,6 +30,7 @@ import { resolveEmailMode } from "@webhook-co/shared/email-transport";
 
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
+import { isGoogleClientId } from "./google-client-id";
 import { withNameBackfill } from "./name-backfill-hooks";
 import {
   APP_BASE_URL,
@@ -138,6 +139,47 @@ function captchaPlugins(baseURL: string, secrets: ResolvedAuthSecrets) {
 }
 
 /**
+ * Build the Google One Tap plugin list — mounted only when Google is FULLY configured and the resolved
+ * client id is actually shaped like one.
+ *
+ * "Is it mounted" is a security question here, not a feature flag. The plugin exposes a PUBLIC,
+ * unauthenticated `POST /one-tap/callback` whose first act on any well-formed input is an outbound fetch
+ * to Google's JWKS — reachable by anyone, with a trivially forgeable JWT header. So the endpoint should
+ * exist exactly when the feature does and not one deploy longer. Three gates, all of which must hold:
+ *
+ *   - A client SECRET. Without it the callback can never complete a sign-in, so mounting would leave an
+ *     unauthenticated JWKS-fetching endpoint that is guaranteed to fail. Same reasoning as
+ *     `socialProviders` refusing a half-configured pair.
+ *   - A client id that PASSES `isGoogleClientId`. This is the identical predicate the login page's
+ *     browser gate uses (login/one-tap-config.ts), which is the point: the prompt and the endpoint key
+ *     off one shared check of one shared secret, so they cannot drift into "prompt with no endpoint" or
+ *     "endpoint with no UI that can reach it".
+ *   - Both resolved non-empty, which `OAUTH_MODE=optional` makes false for a contributor with no Google
+ *     OAuth app — they get no endpoint and no prompt, and sign in by magic link.
+ *
+ * The audience is pinned EXPLICITLY. The plugin would otherwise fall back to
+ * `socialProviders.google.clientId` implicitly (`options?.clientId || googleProvider?.clientId`), which
+ * happens to resolve to the same value today. Stating it here is what makes a stolen id token minted for
+ * some other Google app useless against us survive a refactor of the social-provider map above.
+ *
+ * `disableSignup` is deliberately unset: One Tap is prompt-plus-tap-to-confirm WITH signup allowed
+ * (founder decision), and the plugin reads `options?.disableSignup || googleProvider?.disableSignUp`, so
+ * leaving both unset is the "signups allowed" state.
+ *
+ * NOT captcha-gated, unlike the magic-link send, and that is considered rather than overlooked: a garbage
+ * captcha token would only trade a Google-certs fetch for a Cloudflare siteverify fetch, the login page
+ * renders one Turnstile widget whose single-use token the magic-link submit already consumes, and
+ * magic-link's actual justification (it emails an attacker-chosen third party) does not transfer here.
+ * The abuse ceiling is handled where it belongs — a durable edge throttle in issuer-handler.ts. See
+ * ADR-0133; reversing this is a one-line change to the captcha `endpoints` array.
+ */
+function oneTapPlugins(secrets: ResolvedAuthSecrets) {
+  const clientId = secrets.googleClientId.trim();
+  if (!secrets.googleClientSecret || !isGoogleClientId(clientId)) return [];
+  return [oneTap({ clientId })];
+}
+
+/**
  * Build the social-provider map, including only the providers that are FULLY configured.
  *
  * In production both are always configured (readAuthEnv requires all four secrets, and resolveAuthSecrets
@@ -212,7 +254,12 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     },
     socialProviders: socialProviders(secrets),
     // Captcha first (its onRequest gate runs before the magic-link send handler), then magic-link.
-    plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
+    // One Tap mounts its own endpoint and carries no request hooks, so its position is immaterial.
+    plugins: [
+      ...captchaPlugins(baseURL, secrets),
+      ...oneTapPlugins(secrets),
+      magicLink(magicLinkOptions(deps)),
+    ],
     // Compose the account OAuth-token stripping (data minimization — see account-token-hooks.ts) into the
     // signup→bootstrap hooks here, so EVERY auth instance persists no provider tokens regardless of caller.
     //

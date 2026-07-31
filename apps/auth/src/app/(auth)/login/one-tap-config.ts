@@ -4,6 +4,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { readSecretBinding } from "@webhook-co/shared";
 
 import { configuredSocialProviders } from "@/runtime/env";
+import { isGoogleClientId } from "@/runtime/google-client-id";
 
 /**
  * The Google OAuth client id the login page hands to Google Identity Services, resolved on the SERVER
@@ -62,23 +63,4 @@ export async function googleOneTapClientId(): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/**
- * Whether a resolved value is shaped like a Google OAuth client id.
- *
- * This is a mis-provisioning guard, not a security boundary — Google rejects a wrong audience on its
- * own. It exists for one specific, plausible deploy fault: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
- * are adjacent keys in every config file this repo has, and swapping them would otherwise render the
- * CLIENT SECRET into an HTML attribute on a public, signed-out page for every visitor. Google secrets
- * carry a `GOCSPX-` prefix and can never match this, so one regex converts a credential disclosure into
- * "One Tap quietly does not appear".
- *
- * Both live formats are accepted: the current `<project-number>-<random>.apps.googleusercontent.com`
- * and the legacy suffix-less `<project-number>.apps.googleusercontent.com`. Over-strictness has a real
- * cost — a valid id that fails here means One Tap silently never renders — which is why the caller logs
- * the rejection rather than swallowing it.
- */
-function isGoogleClientId(value: string): boolean {
-  return /^\d+(-[a-z0-9]+)?\.apps\.googleusercontent\.com$/.test(value);
 }
