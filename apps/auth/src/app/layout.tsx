@@ -20,10 +20,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${GeistSans.variable} ${GeistMono.variable}`}
       suppressHydrationWarning
     >
-      <head>
+      <body>
+        {/* FIRST child of <body>, not inside <head>. React 19 HOISTS a <script> rendered into the
+            tree, so a raw inline <script> in <head> is relocated between the server HTML and the
+            hydrated DOM — a STRUCTURAL mismatch, which `suppressHydrationWarning` cannot cover
+            (it only forgives an element's own attributes and text). That threw a recoverable
+            React #418 on EVERY page of this app. Here the script still runs before any visible
+            content is parsed, so the pre-paint stamp is unchanged and there is still no flash. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-      </head>
-      <body>{children}</body>
+        {children}
+      </body>
     </html>
   );
 }

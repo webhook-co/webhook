@@ -150,6 +150,21 @@ test.describe("/login", () => {
     expect(violations.filter(isKnown).length).toBeLessThanOrEqual(1);
   });
 
+  // UNCAUGHT EXCEPTIONS are a SEPARATE channel from console messages, and this suite watched only the
+  // latter until an uncaught React hydration error (#418) was found firing on every page load in
+  // production while this file stayed green. `page.on("pageerror")` is the channel a thrown error uses;
+  // `page.on("console")` never sees it. A gate that cannot see a page throwing is not a gate.
+  test("throws no uncaught page errors", async ({ page }) => {
+    const thrown: string[] = [];
+    page.on("pageerror", (error) => thrown.push(error.message));
+
+    await page.goto("/login");
+    await expect(page.locator(".cf-turnstile")).toHaveCount(1);
+    await page.waitForTimeout(2_000);
+
+    expect(thrown).toEqual([]);
+  });
+
   test("logs no console errors from our own code", async ({ page }) => {
     const errors: string[] = [];
     page.on("console", (message) => {

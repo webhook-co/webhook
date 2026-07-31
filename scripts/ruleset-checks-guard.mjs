@@ -82,7 +82,9 @@ export function reportableChecks(repo = REPO, workflows = workflowFiles(repo)) {
     let currentJob = null;
     for (const line of lines.slice(jobsAt + 1)) {
       if (/^\S/.test(line)) break; // dedented out of `jobs:` entirely
-      const job = line.match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
+      // Tolerate a trailing comment on the job key. Without this a perfectly valid `  build: # notes`
+      // reads as "not a job", the guard cries wolf, and the reflex fix for a false alarm is to weaken it.
+      const job = line.match(/^ {2}([A-Za-z0-9_-]+):\s*(?:#.*)?$/);
       if (job) {
         if (currentJob) names.add(currentJob.name ?? currentJob.key);
         currentJob = { key: job[1], name: null };
@@ -96,6 +98,45 @@ export function reportableChecks(repo = REPO, workflows = workflowFiles(repo)) {
     if (currentJob) names.add(currentJob.name ?? currentJob.key);
   }
   return names;
+}
+
+/**
+ * Job keys whose reported check name GitHub REWRITES, so a plain `name:` comparison cannot match.
+ *
+ *   - a `strategy: matrix` job reports as `name (value)` per combination;
+ *   - a job with a top-level `uses:` (a reusable workflow) reports as `caller / callee-job`.
+ *
+ * No workflow here uses either today, so the guard is accurate as written — but if one lands, requiring
+ * that check would wedge the repo in exactly the way this guard exists to prevent, and the guard would
+ * report green. Detecting the shape and refusing to vouch for it is the honest behaviour.
+ */
+export function jobsWithRewrittenNames(repo = REPO, workflows = workflowFiles(repo)) {
+  const found = [];
+  for (const file of workflows) {
+    let text;
+    try {
+      text = readFileSync(join(repo, file), "utf8");
+    } catch {
+      continue;
+    }
+    const lines = text.split("\n");
+    const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+    if (jobsAt === -1) continue;
+    let key = null;
+    for (const line of lines.slice(jobsAt + 1)) {
+      if (/^\S/.test(line)) break;
+      const job = line.match(/^ {2}([A-Za-z0-9_-]+):\s*(?:#.*)?$/);
+      if (job) {
+        key = job[1];
+        continue;
+      }
+      if (key && /^ {4}(strategy:|uses:)/.test(line)) {
+        found.push(`${file}:${key}`);
+        key = null;
+      }
+    }
+  }
+  return found;
 }
 
 /** Required contexts with no job that could ever report them. These wedge the repo. */
@@ -122,6 +163,17 @@ function main() {
         `Every context in ${RULESET} must match a job's \`name:\` in some ${WORKFLOW_DIR}/*.yml.\n` +
         `Left unfixed, GitHub waits forever for a check that never arrives, and \`bypass_actors\` is ` +
         `empty — so every PR is unmergeable with no error naming the cause.`,
+    );
+    process.exit(1);
+  }
+  const rewritten = jobsWithRewrittenNames();
+  if (rewritten.length > 0) {
+    console.error(
+      `These jobs report under a name GitHub REWRITES (matrix → "name (value)", reusable workflow →\n` +
+        `"caller / callee"), which this guard cannot match:\n` +
+        `${rewritten.map((j) => `  - ${j}`).join("\n")}\n\n` +
+        `If any of them is (or becomes) a required check, the ruleset will wait forever for a context\n` +
+        `that never arrives. Teach the guard the rewritten shape before requiring one.`,
     );
     process.exit(1);
   }
