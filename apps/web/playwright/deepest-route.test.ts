@@ -7,6 +7,7 @@ import {
   ROUTE_TYPES_FILE,
   appRoutes,
   authOriginMismatch,
+  awaitRouteScan,
   byDepthDesc,
   deepestAppRoute,
   effectiveAuthOrigin,
@@ -345,5 +346,52 @@ describe("origin comparison is exact, not prefix-based", () => {
     // one, which is a worse trade than the timeout it avoids.
     expect(authOriginMismatch(307, "/login", "http://localhost:3001")).toBe(false);
     expect(isRouteTableReady(307, "/login", "http://localhost:3001")).toBe(false);
+  });
+});
+
+// ── Which of the two scan failures happened ────────────────────────────────────────────────────────
+// A CI failure on 2026-08-01 reported `last probe: 404 (no Location)` for the full 180s: the catch-all
+// answered throughout, so the deep route never served. But "never served" has two very different causes
+// and the message cannot tell them apart —
+//
+//   · the SCAN never reached the route (next dev is still walking src/app), or
+//   · the scan finished and the route registered, but it never compiled/served.
+//
+// One is a slow filesystem walk, the other is a compile problem. They point at different subsystems, and
+// guessing between them is how a flake stays open. The gate now reports which it saw.
+describe("awaitRouteScan reports WHY it gave up", () => {
+  const route = ["org", "[orgId]"];
+  const listed = 'type Routes = "/org/[orgId]" | "/other"';
+
+  it("says `listed` when the route reaches the types file", async () => {
+    expect(await awaitRouteScan(async () => listed, route, { budgetMs: 50, sleepMs: 1 })).toBe(
+      "listed",
+    );
+  });
+
+  it("says `absent` when the types file never appears — the gate was INERT", async () => {
+    // Not a failure: the file is undocumented and version-dependent, so this degrades to "probe anyway".
+    // But it means the gate contributed nothing, which is worth knowing before blaming the scan.
+    const missing = async () => {
+      throw new Error("ENOENT");
+    };
+    expect(await awaitRouteScan(missing, route, { budgetMs: 30, sleepMs: 1 })).toBe("absent");
+  });
+
+  it("says `missing-route` when the file is readable but never lists the route", async () => {
+    // The genuinely diagnostic case: next dev IS writing its route table and this route is not in it, so
+    // the scan really did not reach it within the budget.
+    const other = async () => 'type Routes = "/other"';
+    expect(await awaitRouteScan(other, route, { budgetMs: 30, sleepMs: 1 })).toBe("missing-route");
+  });
+
+  it("returns as soon as the route appears, rather than burning the budget", async () => {
+    let calls = 0;
+    const eventually = async () => {
+      calls += 1;
+      return calls < 3 ? 'type Routes = "/other"' : listed;
+    };
+    expect(await awaitRouteScan(eventually, route, { budgetMs: 5_000, sleepMs: 1 })).toBe("listed");
+    expect(calls).toBe(3);
   });
 });
