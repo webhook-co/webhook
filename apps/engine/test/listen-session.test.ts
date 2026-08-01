@@ -9,7 +9,7 @@ import {
   type Cursor,
   type EventSummary,
 } from "@webhook-co/shared";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { ItemWithCursor } from "@webhook-co/db";
 
@@ -117,7 +117,31 @@ async function ackCursor(cur: Cursor): Promise<string> {
   return JSON.stringify({ type: "ack", cursor: await encodeCursor(cur, cursorKey) });
 }
 
-function connect(
+/**
+ * Every session opened by a test, retained until that test ends. **Load-bearing, not bookkeeping.**
+ *
+ * `connect` returns a Response carrying the CLIENT end of the WebSocketPair. In production that end is
+ * held by a real remote peer for the life of the session. A test that destructures only `{ stub }` drops
+ * it unreferenced, and workerd is then free to collect it — which tears the pair down, fires
+ * `webSocketClose` on the DO, and `stopIfIdle` deletes the alarm. `getAlarm()` then reads null for a
+ * reason that has nothing whatsoever to do with the code under test.
+ *
+ * That is the "expected null not to be null" failure seen once in CI on 2026-07-29 and never reproduced
+ * on an idle laptop — it is a GC race, so it needs a busy machine. Measured directly, connecting and
+ * firing the alarm under heap churn:
+ *
+ *     client end dropped   → 25 nulls in 200 runs (12.5%), socket already gone before the alarm
+ *     Response retained    →  0 nulls in 300 runs
+ *
+ * Retaining the Response is what a real peer does for us. `afterEach` releases them so a long file does
+ * not pile up live sessions.
+ */
+const liveSessions: Response[] = [];
+afterEach(() => {
+  liveSessions.length = 0;
+});
+
+async function connect(
   stub: DurableObjectStub,
   b: Binding,
   opts: { since?: string; sinceSpec?: string } = {},
@@ -132,7 +156,10 @@ function connect(
   if (b.userId) headers[HDR.USER] = b.userId;
   if (opts.since) headers[HDR.SINCE] = opts.since;
   if (opts.sinceSpec) headers[HDR.SINCE_SPEC] = opts.sinceSpec;
-  return stub.fetch("https://engine.example/listen", { headers });
+  const res = await stub.fetch("https://engine.example/listen", { headers });
+  // Retain BEFORE returning: a caller that ignores the Response must still not lose the socket.
+  if (res.webSocket) liveSessions.push(res);
+  return res;
 }
 
 /** The DO with the --since resolver seam exposed for injection (no live Postgres in the pool). */
@@ -164,9 +191,12 @@ async function openSession(
  * These are read together because they are the two halves of the same question. `alarm()` early-returns
  * WITHOUT re-arming when `ctx.getWebSockets()` is empty — so a bare `getAlarm()` that comes back null has
  * two very different explanations ("the loop correctly stopped" vs "the socket vanished underneath us"),
- * and a bare `.not.toBeNull()` cannot tell them apart. This suite has flaked exactly once in CI with
- * `expected null not to be null`, and was not reproducible in 11 local runs (8 isolated, 3 full-suite).
- * Reporting the socket count means the NEXT occurrence is evidence rather than another round of guessing.
+ * and a bare `.not.toBeNull()` cannot tell them apart.
+ *
+ * That distinction is what identified the 2026-07-29 CI flake: every null came with a socket count of
+ * ZERO, which ruled out anything happening inside `alarm()` and pinned it to the client end being
+ * collected — see `liveSessions`. The count stays reported because it is the discriminator: a future
+ * null with `sockets: 1` would be a genuinely different bug, in the poll loop rather than the harness.
  */
 async function alarmState(
   stub: DurableObjectStub,
@@ -485,6 +515,39 @@ describe("ListenSession — cursor + at-least-once", () => {
     });
     expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toBeUndefined();
   });
+});
+
+// The harness property every alarm assertion in this file silently depends on. Without these two, the
+// `liveSessions` retention is an invisible crutch: delete it and the suite goes back to failing roughly
+// once per few hundred CI runs, in a different test each time, with a message that blames the poll loop.
+describe("test harness — the client end outlives the assertion", () => {
+  it("retains the Response even when the caller destructures only the stub", async () => {
+    // Deterministic half: proves the retention is WIRED. `openSession` throws away `res` exactly as the
+    // alarm tests do, so if `connect` stopped retaining, this fails on every machine, immediately.
+    const before = liveSessions.length;
+    const { stub } = await openSession(newBinding());
+    expect(liveSessions.length, "connect must retain the session's client end").toBe(before + 1);
+    expect(
+      liveSessions.at(-1)?.webSocket,
+      "the retained Response must carry the socket",
+    ).toBeTruthy();
+    // And the socket is the DO's, not just an object we are holding.
+    expect(await runInDurableObject(stub, (_i, s) => s.getWebSockets().length)).toBe(1);
+  });
+
+  it("keeps the socket attached across heap churn, so the alarm stays armed", async () => {
+    // Probabilistic half: proves the retention WORKS. Dropping the Response measured 12.5% loss per
+    // iteration under this churn, so 40 iterations catch a regression ~99.5% of the time — while a
+    // workerd that stops collecting early only makes this greener, never spuriously red.
+    for (let i = 0; i < 40; i++) {
+      const { stub } = await openSession(newBinding());
+      for (let j = 0; j < 40; j++) new Array(20_000).fill(j);
+      await scheduler.wait(0);
+      const { alarm, sockets } = await alarmState(stub);
+      expect(sockets, `iteration ${i}: the client end was collected mid-test`).toBe(1);
+      expect(alarm, `iteration ${i}: alarm lost with ${sockets} live socket(s)`).not.toBeNull();
+    }
+  }, 60_000);
 });
 
 describe("ListenSession — fail-safe alarm + idle", () => {
