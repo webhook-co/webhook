@@ -5,12 +5,12 @@ packages:
   - "infra"
 
 catalog:
-  remotion: 4.0.500
-  "@remotion/cli": 4.0.500
-  "@remotion/bundler": 4.0.500
-  "@remotion/renderer": 4.0.500
-  "@remotion/google-fonts": 4.0.500
-  "@remotion/tailwind-v4": 4.0.500
+  remotion: 4.0.503
+  "@remotion/cli": 4.0.503
+  "@remotion/bundler": 4.0.503
+  "@remotion/renderer": 4.0.503
+  "@remotion/google-fonts": 4.0.503
+  "@remotion/tailwind-v4": 4.0.503
   react: 19.2.7
   react-dom: 19.2.7
 
