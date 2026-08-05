@@ -71,8 +71,8 @@
     "dev:d1": "node scripts/dev-d1.mjs"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.19.0",
-    "@cloudflare/workers-types": "^5.20260729.1",
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/workers-types": "^5.20260801.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.2",
     "@vitest/coverage-v8": "^4.1.10",
@@ -85,14 +85,14 @@
     "globals": "^17.8.0",
     "husky": "^9.1.7",
     "jsonc-parser": "^3.3.1",
-    "lint-staged": "^17.2.0",
+    "lint-staged": "^17.3.0",
     "prettier": "^3.9.6",
     "tsx": "^4.23.1",
-    "turbo": "^2.10.7",
+    "turbo": "^2.10.8",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10",
-    "wrangler": "^4.115.0",
+    "wrangler": "^4.118.0",
     "yaml": "^2.9.0"
   }
 }
