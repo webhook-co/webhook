@@ -24,21 +24,48 @@ onlyBuiltDependencies:
 # pnpm 10 reads `overrides` from here (same as the settings above), not package.json.
 #   esbuild 0.28.1 -> fixes GHSA-gv7w-rqvm-qjhr (#8, high) + GHSA-g7r4-m6w7-qqqr (#7, low);
 #     within vite 8's supported "^0.27.0 || ^0.28.0", no build-API breaking changes for our targets.
-#   postcss 8.5.18 -> fixes GHSA-r28c-9q8g-f849 (#32, high; `map: { prev: ... }` auto-loading follows
+#   postcss 8.5.23 -> fixes GHSA-fxqj-rqcc-2cmp (#42, med; the INCOMPLETE fix of GHSA-6g55-p6wh-862q —
+#     an attacker-controlled `sourceMappingURL` still reads an arbitrary `.map` file when `from` is
+#     unset), and before it GHSA-r28c-9q8g-f849 (#32, high; `map: { prev: ... }` auto-loading follows
 #     a `sourceMappingURL` out of the source's directory, so compiling attacker-authored CSS discloses
 #     an arbitrary `.map` file) and, still, CVE-2026-41305 / GHSA-qx2v-qp2m-jg93 (#1, medium).
-#     BUMPED from 8.5.15, which this bare key was actively HOLDING at a vulnerable version — a bare pin
-#     rewrites every copy, so the stale value is a floor AND a ceiling. It had also drifted BELOW two
-#     consumers' declared ranges (@tailwindcss/postcss 4.3.3 wants ^8.5.16, vite 8.1.5 wants ^8.5.17);
-#     8.5.18 satisfies both, so this bump restores range compliance rather than straining it.
+#     BUMPED 8.5.18 -> 8.5.23 on 2026-08-05; before that from 8.5.15, which this bare key was actively
+#     HOLDING at a vulnerable version — a bare pin rewrites every copy, so a stale value is a floor AND
+#     a ceiling. It had also drifted BELOW two consumers' declared ranges (@tailwindcss/postcss 4.3.3
+#     wants ^8.5.16, vite 8 wants ^8.5.15); 8.5.23 satisfies both, so this bump restores range
+#     compliance rather than straining it.
 #     NB `next` declares an EXACT `postcss: 8.4.31`, which this bare key has crossed since #1; the
 #     advisory's precondition is "processing untrusted CSS" and every stylesheet compiled here is
 #     first-party, so the residual risk is build-time only.
 # The range-scoped pins below were stranded in package.json's "pnpm.overrides" (pnpm 10 stopped
 # reading that field, silently making them inert). Moved here so they apply again. Range-scoped
 # (`name@<fixed`) so only the vulnerable versions are bumped:
-#   form-data >=4.0.6 (critical + high), undici >=7.28.0 (high/med/low), tmp >=0.2.6,
+#   form-data >=4.0.6 (critical + high), undici >=7.29.0 (high/med/low), tmp >=0.2.6,
 #   uuid >=11.1.1, js-yaml >=4.3.0.
+#
+#   undici >=7.29.0 -> RETARGETED 2026-08-05 from the then-inert `<7.28.0` key (the tree sat at exactly
+#     7.28.0, which the key could not match). Clears five alerts at once: GHSA-4cwx-7wf7-3272 (#35,
+#     high; cross-user disclosure + parse-time crash via degenerate private cache directives),
+#     GHSA-8xcm-r25x-g524 (#34, med; downstream response desync via the retry interceptor),
+#     GHSA-jr45-8vmc-qm54 (#37, med; cross-user disclosure via whitespace around `=` in Cache-Control),
+#     GHSA-m8rv-5g2x-5cg5 (#38, med; CRLF injection via a blob-like body `type`) and
+#     GHSA-v3r7-h72x-cjcm (#36, med; cookie attribute injection via unsanitized domain).
+#     The tree holds TWO copies and only ONE was vulnerable: miniflare's 7.28.0 (in-band) and jsdom's
+#     8.9.0, which is already AT the 8.x fix floor (every one of the five advisories lists `>= 8.0.0,
+#     < 8.9.0 -> 8.9.0`). The `<7.29.0` key deliberately leaves the 8.x copy alone rather than dragging
+#     it anywhere. Both consumers are dev/test-only — miniflare is the local Workers runtime and jsdom
+#     the test environment — and undici is 0 of 648 inputs in the deployed MCP bundle, so nothing here
+#     is prod-reachable.
+#     ⚠ This is the ONE pin in this block that changes code we actually EXECUTE, and it crosses an
+#     EXACT declared version: miniflare 5.20260730.0-alpha declares `undici: 7.28.0` (pinned, not a
+#     range), so the override moves the local Workers runtime's HTTP stack off the version it shipped
+#     against. Verified rather than assumed, because a bad outcome here would surface as a test flake
+#     rather than a build error: apps/engine (the heaviest miniflare consumer, 35 files / 460 tests)
+#     was run 3x on each side of the bump — 460/460 passed all six times. An `EnvironmentTeardownError`
+#     ("Closing rpc while <x> was pending") appears in the log nondeterministically, but it is
+#     PRE-EXISTING and unrelated: 7.28.0 emitted it in 2 of 3 runs and 7.29.0 in 0 of 3. Do not read a
+#     single A/B sample here as causation — that count is a race, and three runs is the minimum that
+#     distinguishes it. Re-run that comparison if this key is ever retargeted again.
 #
 # CAUTION on the `name@<fixed` form: the key stops matching the moment an advisory moves its fix floor
 # ABOVE `fixed`, and pnpm reports nothing — the pin just goes silently inert. That is exactly how the
@@ -107,28 +134,41 @@ onlyBuiltDependencies:
 #     silently disables size enforcement). Only the 1.x band: express@5's body-parser@2.3.0 is already
 #     patched and the key does not match it. 1.20.6 satisfies express@4's declared ~1.20.5.
 #
-# The three pins below clear five alerts, all on transitives of ONE direct dependency —
-# apps/mcp's `@modelcontextprotocol/sdk@1.29.0`, which is already the newest published release, so
-# there is no parent bump to take instead. Reachability was measured against the real deployed
-# artifact (`wrangler deploy -c apps/mcp/wrangler.jsonc --dry-run`, 2,673,185 bytes), not inferred
-# from node_modules — only fast-uri is actually in it.
-#   fast-uri >=3.1.3 -> fixes GHSA-4c8g-83qw-93j6 (#30, high; the IDN path calls the non-existent
-#     `URL.domainToASCII`, swallows the resulting TypeError into `parsed.error`, and hands back a
-#     host still in Unicode — a check/use desync for anything gating on that host). The ONLY one of
-#     the five that ships: ajv is statically imported by the SDK's server/index.js and `require`s
-#     fast-uri at isolate init, putting 3 fast-uri modules in the Worker bundle. ajv@8.20.0 declares
-#     `fast-uri ^3.0.1`, so ^3.1.3 is an in-range patch bump. Reached only as ajv's `uriResolver`
-#     for schema `$id`/`$ref` (ajv-formats 3.0.1 implements `format: "uri"` as a regex and never
-#     calls it), and the outbound-delivery URL path does not touch ajv at all — so the HIGH rating
-#     does not carry over to this tree. NB @redocly/cli esbuild-INLINES its own copy of fast-uri
-#     3.1.2, which the lockfile records as a zero-dep leaf; no override can reach those bytes. That
-#     copy is dev-only (`pnpm --filter @webhook-co/openapi validate`) and never deployed.
-#   hono >=4.12.27 -> fixes GHSA-hvrm-45r6-mjfj (#29, med; hono/jsx leaks context across requests),
-#     GHSA-w62v-xxxg-mg59 (#28, med; JSX escaping bypass in cx()) and GHSA-xgm2-5f3f-mvvc (#27, med;
-#     the API Gateway v1 adapter drops a repeated header). None are reachable: hono is 0 of 521
-#     inputs in the deployed bundle, nothing in the tree imports hono/jsx, hono/css or
-#     hono/aws-lambda, and no tsconfig sets jsxImportSource. 4.12.27 satisfies the SDK's declared
-#     ^4.11.4 — an in-range minor, so this is a free hygiene pin.
+# The three pins below clear seven alerts, all on transitives of ONE direct dependency —
+# apps/mcp's `@modelcontextprotocol/sdk`, which is already the newest published release, so there is
+# no parent bump to take instead. Reachability is measured against the real deployed artifact
+# (`wrangler deploy -c apps/mcp/wrangler.jsonc --dry-run`), not inferred from node_modules — only
+# fast-uri is actually in it. RE-MEASURED 2026-08-05 (3,295,870 bytes, 648 inputs, up from 2,673,185
+# / 521): fast-uri 3 of 648, hono 0 of 648, @hono/node-server 0 of 648. Re-measure on every retarget
+# — a bundle that has grown by a quarter is not one whose old input census can be assumed forward.
+#   fast-uri >=3.1.5 -> RETARGETED 2026-08-05 from the then-inert `<3.1.3` key (the tree sat at 3.1.4,
+#     inside the new advisory's band and above the old key's ceiling). Fixes GHSA-7p8r-x3mc-p8w7 (#43,
+#     high; host confusion via a backslash authority introducer), and before it GHSA-4c8g-83qw-93j6
+#     (#30, high; the IDN path calls the non-existent `URL.domainToASCII`, swallows the resulting
+#     TypeError into `parsed.error`, and hands back a host still in Unicode — a check/use desync for
+#     anything gating on that host). The ONLY one of the three that ships: ajv is statically imported
+#     by the SDK's server/index.js and `require`s fast-uri at isolate init, putting 3 fast-uri modules
+#     in the Worker bundle. ajv@8.20.0 declares `fast-uri ^3.0.1`, so ^3.1.5 is an in-range patch bump.
+#     Reached only as ajv's `uriResolver` for schema `$id`/`$ref` — re-verified 2026-08-05: the only
+#     call sites are dist/compile/resolve.js (schema `$id`/`$ref`, first-party schemas) and the
+#     dist/core.js default, and ajv-formats 3.0.1 still implements `format: "uri"` as a regex and never
+#     calls it. So a request payload never reaches fast-uri's host parser, and the HIGH rating — which
+#     is about gating decisions on a parsed host — does not carry over to this tree.
+#     NB the advisory also has a `>= 4.0.0, < 4.1.2` band; no 4.x copy exists here, and `^3.1.5` keeps
+#     it that way. If one ever appears, this key will NOT cover it — add a second key.
+#     NB @redocly/cli esbuild-INLINES its own copy of fast-uri 3.1.2, which the lockfile records as a
+#     zero-dep leaf; no override can reach those bytes. That copy is dev-only
+#     (`pnpm --filter @webhook-co/openapi validate`) and never deployed.
+#   hono >=4.12.34 -> RETARGETED 2026-08-05 from the then-inert `<4.12.27` key (the tree sat at
+#     4.12.32). Fixes GHSA-8j4g-w8fx-2239 (#39, med; ReDoS in the CORS middleware via
+#     Access-Control-Request-Headers), and before it GHSA-hvrm-45r6-mjfj (#29, med; hono/jsx leaks
+#     context across requests), GHSA-w62v-xxxg-mg59 (#28, med; JSX escaping bypass in cx()) and
+#     GHSA-xgm2-5f3f-mvvc (#27, med; the API Gateway v1 adapter drops a repeated header). None are
+#     reachable: hono is 0 of 648 inputs in the deployed bundle (re-measured, not carried over — the
+#     CORS advisory is a different code path from the JSX ones the earlier census was about), nothing
+#     in the tree imports hono/jsx, hono/css or hono/aws-lambda, and no tsconfig sets jsxImportSource.
+#     Resolves to 4.13.0, which satisfies the SDK's declared ^4.11.4 and @hono/node-server's ^4.12.8 —
+#     in-range for both, so this stays a free hygiene pin.
 #   @hono/node-server >=2.0.5 -> fixes GHSA-frvp-7c67-39w9 (#26, med; serve-static path traversal on
 #     WINDOWS via an encoded backslash). This pin deliberately CROSSES A MAJOR and violates the
 #     SDK's declared `^1.19.9`: 1.19.14 is the last 1.x ever published and the fix floor is 2.0.5,
@@ -155,16 +195,16 @@ onlyBuiltDependencies:
 #   binary from every install. Drop this key once next and miniflare both ship a >=0.35 default.
 overrides:
   esbuild: 0.28.1
-  postcss: 8.5.18
+  postcss: 8.5.23
   "tmp@<0.2.6": "^0.2.6"
   "uuid@<11.1.1": "^11.1.1"
   "js-yaml@<4.3.0": "^4.3.0"
   "form-data@<4.0.6": "^4.0.6"
-  "undici@<7.28.0": "^7.28.0"
+  "undici@<7.29.0": "^7.29.0"
   "brace-expansion@<1.1.16": "^1.1.16"
   "minimatch@<4.0.0": "^5.1.9"
   "body-parser@<1.20.6": "^1.20.6"
-  "fast-uri@<3.1.3": "^3.1.3"
-  "hono@<4.12.27": "^4.12.27"
+  "fast-uri@<3.1.5": "^3.1.5"
+  "hono@<4.12.34": "^4.12.34"
   "@hono/node-server@<2.0.5": "^2.0.5"
   "sharp@<0.35.0": "^0.35.0"
