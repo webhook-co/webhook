@@ -19,6 +19,6 @@
     "@webhook-co/webhooks-spec": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260729.1"
+    "@cloudflare/workers-types": "^5.20260801.1"
   }
 }
