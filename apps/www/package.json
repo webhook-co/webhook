@@ -30,7 +30,7 @@
     "@webhook-co/webhooks-spec": "workspace:*",
     "geist": "^1.7.2",
     "lucide-react": "^1.28.0",
-    "motion": "^12.43.0",
+    "motion": "^13.0.0",
     "next": "^16.2.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
