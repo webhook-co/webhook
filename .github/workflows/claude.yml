@@ -71,7 +71,7 @@ jobs:
 
       - name: Claude
         if: steps.gate.outputs.enabled == 'true'
-        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
+        uses: anthropics/claude-code-action@6b082c41935b4c8a3b8b0ef85ba4ba4d9eeb8975 # v1
         with:
           # OAuth token (Pro/Max subscription) is preferred; the API key also works.
           # Whichever secret is unset resolves to an empty string and is ignored.

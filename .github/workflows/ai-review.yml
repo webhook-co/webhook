@@ -138,7 +138,7 @@ jobs:
         # Don't fail the check if Claude errors — including hitting the --max-turns cap.
         # A cut-off review writes no verdict line, so the gate step skips it silently.
         continue-on-error: true
-        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
+        uses: anthropics/claude-code-action@6b082c41935b4c8a3b8b0ef85ba4ba4d9eeb8975 # v1
         with:
           # OAuth token (Pro/Max subscription) is preferred; the API key also works.
           # Whichever secret is unset resolves to an empty string and is ignored.
