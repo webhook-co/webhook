@@ -15,8 +15,8 @@
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*",
-    "agents": "0.20.1",
-    "zod": "^4.4.3"
+    "agents": "0.22.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260801.1"
