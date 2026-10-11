@@ -1,3 +1,5 @@
+> **webhook.co has been wound down.** The hosted service is shut down and this repository is archived and no longer maintained. If you are interested in acquiring any of the assets, including the domain, contact [sourabh@webhook.co](mailto:sourabh@webhook.co).
+
 <p align="center">
   <a href="https://www.webhook.co"><img src="https://www.webhook.co/logo.png" alt="webhook.co" width="120" height="120" /></a>
 </p>
